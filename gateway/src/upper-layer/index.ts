@@ -145,15 +145,28 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
 
 // ---- List (scan pattern) ----
 
-export async function listNodes(projectId: string, limit: number): Promise<ScanEntry[]> {
+export interface ListFilters {
+  tag?: string;
+  status?: NodeStatus;
+}
+
+export async function listNodes(projectId: string, limit: number, filters?: ListFilters): Promise<ScanEntry[]> {
   if (!initialized) return [];
 
-  const filter = { must: [{ key: "projectId", match: { value: projectId } }] };
+  const must: Array<Record<string, unknown>> = [
+    { key: "projectId", match: { value: projectId } },
+  ];
+  if (filters?.tag) {
+    must.push({ key: "tags", match: { value: filters.tag } });
+  }
+  if (filters?.status) {
+    must.push({ key: "status", match: { value: filters.status } });
+  }
 
   const points = await scrollPoints(
     config.qdrantUrl,
     config.collection,
-    filter,
+    { must },
     limit,
     { key: "ingestedAt", direction: "desc" },
   );

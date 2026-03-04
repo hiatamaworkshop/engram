@@ -335,6 +335,68 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
 );
 
 // ============================================================
+// Tool: engram_scan
+// ============================================================
+
+server.tool(
+  "engram_scan",
+  `Lightweight listing of stored knowledge. No embedding cost — uses payload filters only.
+Use this to browse entries by tag or status without semantic search.
+For semantic search, use engram_recall instead.`,
+  {
+    projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
+    tag: z.string().optional().describe("Filter by tag (exact match, e.g. 'docker')"),
+    status: z.enum(["recent", "fixed"]).optional().describe("Filter by node status"),
+    limit: z.number().min(1).max(30).default(10).describe("Max entries to return"),
+  },
+  async ({ projectId, tag, status, limit }) => {
+    const healthy = await checkHealth(ctx);
+    if (!healthy) {
+      return {
+        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        isError: true,
+      };
+    }
+
+    const resolvedProjectId = projectId || ctx.defaultProjectId;
+    if (!resolvedProjectId) {
+      return {
+        content: [{ type: "text", text: "projectId is required. Set ENGRAM_PROJECT_ID or pass projectId explicitly." }],
+        isError: true,
+      };
+    }
+
+    try {
+      const result = await scan(ctx, resolvedProjectId, limit, tag, status);
+
+      if (result.entries.length === 0) {
+        const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
+        return {
+          content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.` }],
+        };
+      }
+
+      const lines = result.entries.map((e) => {
+        const tags = e.tags.join(", ");
+        return `[${e.id}] ${e.summary}\n    hits=${e.hitCount} w=${e.weight} status=${e.status} tags:${tags || "-"}`;
+      });
+
+      const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
+      const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length} entries:\n`;
+
+      return {
+        content: [{ type: "text", text: header + lines.join("\n\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Scan failed: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+// ============================================================
 // Resource: engram://scan/{projectId}
 // ============================================================
 

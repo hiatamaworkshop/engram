@@ -6,7 +6,7 @@ import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
-import type { RecallRequest, IngestRequest, FeedbackRequest, HealthResponse } from "./types.js";
+import type { RecallRequest, IngestRequest, FeedbackRequest, HealthResponse, NodeStatus } from "./types.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -107,7 +107,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const projectId = decodeURIComponent(scanMatch[1]);
       const parsed = new URL(url, "http://localhost");
       const limit = parseInt(parsed.searchParams.get("limit") ?? "10", 10);
-      const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30));
+      const tag = parsed.searchParams.get("tag") ?? undefined;
+      const status = parsed.searchParams.get("status") as NodeStatus | undefined;
+      const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30), tag, status);
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
@@ -140,7 +142,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         "POST /recall": "Search for relevant knowledge (query or entryId)",
         "POST /ingest": "Submit capsuleSeeds",
         "POST /feedback": "Submit weight signal (outdated, incorrect, superseded, merged)",
-        "GET  /scan/:projectId": "Lightweight listing (?limit=10)",
+        "GET  /scan/:projectId": "Lightweight listing (?limit=10&tag=xxx&status=recent|fixed)",
         "GET  /status": "Store stats (total, recent, fixed)",
         "GET  /health": "Health check",
       },

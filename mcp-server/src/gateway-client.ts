@@ -125,9 +125,14 @@ export async function scan(
   ctx: EngramContext,
   projectId: string,
   limit = 10,
+  tag?: string,
+  status?: string,
 ): Promise<ScanResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (tag) params.set("tag", tag);
+  if (status) params.set("status", status);
   const res = await fetch(
-    `${ctx.gatewayUrl}/scan/${encodeURIComponent(projectId)}?limit=${limit}`,
+    `${ctx.gatewayUrl}/scan/${encodeURIComponent(projectId)}?${params}`,
   );
   if (!res.ok) {
     throw new Error(`Gateway /scan ${res.status}: ${await res.text()}`);
