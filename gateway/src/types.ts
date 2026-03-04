@@ -32,6 +32,8 @@ export interface RecallRequest {
   entryId?: string;
   projectId?: string;
   limit?: number;
+  minWeight?: number;
+  status?: NodeStatus;
 }
 
 export interface IngestRequest {

@@ -19,11 +19,16 @@ export async function checkHealth(ctx) {
     }
 }
 // ---- Recall (search mode) ----
-export async function recallNodes(ctx, query, projectId, limit = 10) {
+export async function recallNodes(ctx, query, projectId, limit = 10, minWeight, status) {
+    const body = { query, projectId, limit };
+    if (minWeight !== undefined)
+        body.minWeight = minWeight;
+    if (status)
+        body.status = status;
     const res = await fetch(`${ctx.gatewayUrl}/recall`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, projectId, limit }),
+        body: JSON.stringify(body),
     });
     if (!res.ok) {
         throw new Error(`Gateway /recall ${res.status}: ${await res.text()}`);

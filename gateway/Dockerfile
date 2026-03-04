@@ -17,7 +17,6 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist/ ./dist/
 COPY gateway.config.json ./
-COPY extraction-rules.json ./
 
 EXPOSE 3100
 

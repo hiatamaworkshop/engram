@@ -38,4 +38,6 @@ export interface SearchOptions {
   query: string;
   projectId?: string;
   limit?: number;         // default: 10
+  minWeight?: number;     // filter: only nodes with weight >= this value
+  status?: "recent" | "fixed";  // filter: only nodes with this status
 }

@@ -91,11 +91,16 @@ export async function recallNodes(
   query: string,
   projectId?: string,
   limit = 10,
+  minWeight?: number,
+  status?: string,
 ): Promise<RecallResponse> {
+  const body: Record<string, unknown> = { query, projectId, limit };
+  if (minWeight !== undefined) body.minWeight = minWeight;
+  if (status) body.status = status;
   const res = await fetch(`${ctx.gatewayUrl}/recall`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, projectId, limit }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(`Gateway /recall ${res.status}: ${await res.text()}`);

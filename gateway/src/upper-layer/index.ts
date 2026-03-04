@@ -32,6 +32,14 @@ import {
 let config: UpperLayerConfig = { ...DEFAULT_UPPER_LAYER_CONFIG };
 let initialized = false;
 
+/** Weight added per recall hit (kept small so decay can counterbalance). */
+const RECALL_WEIGHT_BUMP = 0.1;
+
+/** Round to 2 decimal places to avoid floating-point drift. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 // ---- Init ----
 
 export async function initUpperLayer(partial?: Partial<UpperLayerConfig>): Promise<void> {
@@ -106,13 +114,21 @@ export async function ingestNodes(
 export async function searchNodes(options: SearchOptions): Promise<RecallResult[]> {
   if (!initialized) return [];
 
-  const { query, projectId, limit = 10 } = options;
+  const { query, projectId, limit = 10, minWeight, status } = options;
 
   const queryVector = await embedText(query);
 
-  const filter = projectId
-    ? { must: [{ key: "projectId", match: { value: projectId } }] }
-    : undefined;
+  const must: Array<Record<string, unknown>> = [];
+  if (projectId) {
+    must.push({ key: "projectId", match: { value: projectId } });
+  }
+  if (minWeight !== undefined) {
+    must.push({ key: "weight", range: { gte: minWeight } });
+  }
+  if (status) {
+    must.push({ key: "status", match: { value: status } });
+  }
+  const filter = must.length > 0 ? { must } : undefined;
 
   const rawHits = await searchPoints(
     config.qdrantUrl,
@@ -137,7 +153,7 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     summary: hit.payload.summary,
     tags: hit.payload.tags,
     hitCount: (hit.payload.hitCount ?? 0) + 1,  // reflect the bump
-    weight: (hit.payload.weight ?? 0) + 1,      // reflect the bump
+    weight: round2((hit.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
     status: hit.payload.status ?? "recent",
     content: hit.payload.content || undefined,
   }));
@@ -197,7 +213,7 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
     summary: point.payload.summary,
     tags: point.payload.tags,
     hitCount: (point.payload.hitCount ?? 0) + 1,
-    weight: (point.payload.weight ?? 0) + 1,
+    weight: round2((point.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
     status: (point.payload.status as NodeStatus) ?? "recent",
     content: point.payload.content || undefined,
   };
@@ -213,7 +229,7 @@ function bumpHitCounts(points: Array<{ id: string; payload: UpperLayerPointPaylo
       [point.id],
       {
         hitCount: (point.payload.hitCount ?? 0) + 1,
-        weight: (point.payload.weight ?? 0) + 1,
+        weight: round2((point.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
       } as Partial<UpperLayerPointPayload>,
     ).catch((err) => {
       console.warn(`[upper-layer] bumpHitCount failed (non-fatal): ${(err as Error).message}`);

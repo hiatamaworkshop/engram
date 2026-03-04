@@ -7,7 +7,6 @@ export interface RecallResult {
     hitCount: number;
     weight: number;
     status: NodeStatus;
-    timestamp: number;
     content?: string;
 }
 export interface RecallResponse {
@@ -56,7 +55,7 @@ export interface ScanResponse {
     total: number;
 }
 export declare function checkHealth(ctx: EngramContext): Promise<boolean>;
-export declare function recallNodes(ctx: EngramContext, query: string, projectId?: string, limit?: number): Promise<RecallResponse>;
+export declare function recallNodes(ctx: EngramContext, query: string, projectId?: string, limit?: number, minWeight?: number, status?: string): Promise<RecallResponse>;
 export declare function recallById(ctx: EngramContext, entryId: string): Promise<RecallResponse>;
 export declare function scan(ctx: EngramContext, projectId: string, limit?: number, tag?: string, status?: string): Promise<ScanResponse>;
 export declare function ingest(ctx: EngramContext, capsuleSeeds: NodeSeed[], projectId: string, trigger: IngestTrigger, sessionId?: string): Promise<IngestResponse>;

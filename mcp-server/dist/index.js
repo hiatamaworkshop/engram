@@ -36,13 +36,23 @@ Modes:
   - query: Semantic search across stored knowledge
   - entryId: Fetch a specific node by ID (from scan results)
 
-Set crossProject=true to search across ALL projects.`, {
+Set crossProject=true to search across ALL projects.
+
+WHEN TO CALL (proactive triggers):
+  - **Session start**: ALWAYS recall before diving into work. Query your current task.
+  - **Before unfamiliar code**: Recall project structure, file paths, conventions.
+  - **Before repeating a search**: If you're about to grep/glob for something you've searched before, recall first.
+  - **User says "memo/notes/記録/メモ/作業メモ/what did we do/previous session"**: Recall relevant history.
+  - **Debugging**: Recall error patterns — past you may have solved this already.
+  - **Cross-project**: When tech stack is similar, set crossProject=true to leverage other projects.`, {
     query: z.string().optional().describe("Natural language search query (omit if using entryId)"),
     entryId: z.string().optional().describe("Fetch a specific node by ID (omit if using query)"),
     crossProject: z.boolean().default(false).describe("Set true to search across all projects"),
     projectId: z.string().optional().describe("Override project scope (defaults to ENGRAM_PROJECT_ID or auto-detected)"),
     limit: z.number().min(1).max(30).default(5).describe("Max results to return"),
-}, async ({ query, entryId, crossProject, projectId: explicitProjectId, limit }) => {
+    minWeight: z.number().optional().describe("Only return nodes with weight >= this value (higher = more trusted)"),
+    status: z.enum(["recent", "fixed"]).optional().describe("Only return nodes with this status"),
+}, async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status }) => {
     const healthy = await checkHealth(ctx);
     if (!healthy) {
         return {
@@ -67,7 +77,7 @@ Set crossProject=true to search across ALL projects.`, {
                 "",
                 `hits: ${r.hitCount}  weight: ${r.weight}  status: ${r.status}`,
                 `tags: ${r.tags.join(", ") || "(none)"}`,
-                `id: ${r.id}  timestamp: ${r.timestamp}`,
+                `id: ${r.id}`,
             ].filter(Boolean).join("\n");
             return { content: [{ type: "text", text: detail }] };
         }
@@ -77,11 +87,11 @@ Set crossProject=true to search across ALL projects.`, {
                 content: [{ type: "text", text: "Provide either query (search) or entryId (fetch by ID)." }],
             };
         }
-        const response = await recallNodes(ctx, query, projectId, limit);
+        const response = await recallNodes(ctx, query, projectId, limit, minWeight, status);
         if (response.results.length === 0) {
             const scope = projectId ? ` in project:${projectId}` : "";
             return {
-                content: [{ type: "text", text: `No results found for "${query}"${scope}.` }],
+                content: [{ type: "text", text: `No results found for "${query}"${scope}.\n\nHint: No knowledge exists for this topic yet. Consider ingesting relevant knowledge with engram_ingest.` }],
             };
         }
         const formatted = response.results.map((r, i) => {
@@ -97,8 +107,18 @@ Set crossProject=true to search across ALL projects.`, {
         });
         const scope = projectId ? ` (project: ${projectId})` : " (cross-project)";
         const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
+        // Contextual hints
+        const hints = [];
+        const avgRelevance = response.results.reduce((s, r) => s + r.relevance, 0) / response.results.length;
+        if (avgRelevance < 0.3) {
+            hints.push("Low relevance scores. Use more specific keywords in summary when ingesting.");
+        }
+        if (response.results.every((r) => r.status === "recent")) {
+            hints.push("All results are recent (no fixed nodes). Recall more often to build weight and promote nodes.");
+        }
+        const hintText = hints.length > 0 ? `\n\nHint: ${hints.join(" ")}` : "";
         return {
-            content: [{ type: "text", text: header + formatted.join("\n\n") }],
+            content: [{ type: "text", text: header + formatted.join("\n\n") + hintText }],
         };
     }
     catch (err) {
@@ -126,6 +146,14 @@ WHEN TO CALL (trigger types):
   - "manual":         User explicitly says "remember this".
   - "convention":     Project convention or CLAUDE.md update.
   - "environment":    Environment config, ports, Docker setup.
+
+PROACTIVE TRIGGERS — do NOT wait to be asked:
+  - **After fixing a bug**: Ingest the error, root cause, and fix immediately.
+  - **After discovering file paths/structure**: Ingest so future sessions skip the grep.
+  - **After a design decision**: Ingest the "why" before you forget.
+  - **User says "メモ/memo/記録/notes/remember/覚えて"**: Ingest what they want remembered.
+  - **Before /compact**: Last chance — ingest key learnings NOW.
+  - The more mundane the knowledge (file paths, build commands, config locations), the MORE valuable it is.
 
 HOW TO EXTRACT capsuleSeeds:
   Review the session and create 1-8 NodeSeed objects, each capturing one distinct piece of knowledge:
@@ -169,6 +197,12 @@ GUIDANCE:
             result.merged ? `Merged with ${result.merged} existing nodes.` : null,
             result.reason ? `Detail: ${result.reason}` : null,
         ].filter(Boolean);
+        // Fetch current total for context
+        try {
+            const st = await getStatus(ctx, resolvedProjectId);
+            lines.push(`Project total: ${st.totalNodes} nodes (${st.fixedNodes} fixed, ${st.recentNodes} recent).`);
+        }
+        catch { /* non-fatal */ }
         return {
             content: [{ type: "text", text: lines.join("\n") }],
         };
@@ -206,6 +240,19 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
             for (const p of status.projects) {
                 lines.push(`  ${p.projectId} (${p.count} nodes)`);
             }
+        }
+        // Contextual hints
+        const hints = [];
+        const total = status.totalNodes ?? 0;
+        const fixed = status.fixedNodes ?? 0;
+        if (total === 0) {
+            hints.push("Empty store. Start ingesting knowledge with engram_ingest.");
+        }
+        else if (fixed === 0) {
+            hints.push("No fixed nodes yet. Recall existing knowledge to build weight and trigger promotion.");
+        }
+        if (hints.length > 0) {
+            lines.push("", `Hint: ${hints.join(" ")}`);
         }
         return {
             content: [{ type: "text", text: lines.join("\n") }],
@@ -300,7 +347,7 @@ For semantic search, use engram_recall instead.`, {
         if (result.entries.length === 0) {
             const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
             return {
-                content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.` }],
+                content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.\n\nHint: No knowledge stored yet. Use engram_ingest to add knowledge.` }],
             };
         }
         const lines = result.entries.map((e) => {
@@ -308,9 +355,19 @@ For semantic search, use engram_recall instead.`, {
             return `[${e.id}] ${e.summary}\n    hits=${e.hitCount} w=${e.weight} status=${e.status} tags:${tags || "-"}`;
         });
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
-        const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length} entries:\n`;
+        const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length}/${result.total} entries:\n`;
+        // Contextual hints
+        const hints = [];
+        const negativeWeight = result.entries.filter((e) => e.weight < 0);
+        if (negativeWeight.length > 0) {
+            hints.push(`${negativeWeight.length} nodes have negative weight and will be expired by Digestor.`);
+        }
+        if (result.entries.length < result.total) {
+            hints.push(`Showing ${result.entries.length} of ${result.total}. Increase limit to see more.`);
+        }
+        const hintText = hints.length > 0 ? `\n\nHint: ${hints.join(" ")}` : "";
         return {
-            content: [{ type: "text", text: header + lines.join("\n\n") }],
+            content: [{ type: "text", text: header + lines.join("\n\n") + hintText }],
         };
     }
     catch (err) {

@@ -23,7 +23,9 @@ import type { NodeStatus } from "./types.js";
 
 export interface DigestorConfig {
   intervalMs: number;          // batch interval (default: 10min)
-  promotionThreshold: number;  // weight needed to promote to fixed (default: 5)
+  promotionThreshold: number;  // weight needed to promote to fixed (default: 3)
+  promotionHitCount: number;   // hitCount needed to promote to fixed (default: 5)
+  decayPerBatch: number;       // weight decay per batch tick for recent nodes (default: 0.1)
   ttlSeconds: number;          // initial TTL countdown for new nodes (default: 6h = 21600s)
   idleThresholdMs: number;     // skip batch if no activity for this long (default: 30min)
   qdrantUrl: string;
@@ -32,7 +34,9 @@ export interface DigestorConfig {
 
 export const DEFAULT_DIGESTOR_CONFIG: DigestorConfig = {
   intervalMs: 600_000,         // 10 minutes
-  promotionThreshold: 5,
+  promotionThreshold: 3,
+  promotionHitCount: 5,
+  decayPerBatch: 0.1,
   ttlSeconds: 21_600,          // 6 hours
   idleThresholdMs: 1_800_000,  // 30 minutes
   qdrantUrl: "http://localhost:6333",
@@ -124,6 +128,11 @@ async function runBatch(): Promise<void> {
   }
 }
 
+/** Round to 2 decimal places to avoid floating-point drift. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 async function runProjectBatch(projectId: string): Promise<void> {
   const points = await scrollPoints(
     config.qdrantUrl,
@@ -142,24 +151,29 @@ async function runProjectBatch(projectId: string): Promise<void> {
   const decrement = Math.floor(config.intervalMs / 1000); // seconds per batch tick
   const toPromote: string[] = [];
   const toExpire: string[] = [];
-  const toTick: Map<number, string[]> = new Map(); // newTtl → pointIds
+  // Surviving nodes: grouped by (newTtl, newWeight) to batch setPayload calls
+  const toUpdate: Map<string, string[]> = new Map(); // "ttl:weight" → pointIds
 
   for (const point of points) {
     const p = point.payload as UpperLayerPointPayload;
     const weight = p.weight ?? 0;
+    const hitCount = p.hitCount ?? 0;
     const currentTtl = p.ttl ?? config.ttlSeconds; // init if missing (legacy nodes)
 
-    if (weight >= config.promotionThreshold) {
+    // Dual promotion: both weight AND hitCount must meet thresholds
+    if (weight >= config.promotionThreshold && hitCount >= config.promotionHitCount) {
       toPromote.push(point.id);
     } else {
       const newTtl = currentTtl - decrement;
-      if (newTtl <= 0 && weight <= 0) {
+      const newWeight = round2(weight - config.decayPerBatch);
+      if (newTtl <= 0 && newWeight <= 0) {
         toExpire.push(point.id);
       } else {
-        // Decrement ttl for surviving nodes
-        const group = toTick.get(newTtl) ?? [];
+        // Decrement ttl + apply weight decay for surviving nodes
+        const key = `${newTtl}:${newWeight}`;
+        const group = toUpdate.get(key) ?? [];
         group.push(point.id);
-        toTick.set(newTtl, group);
+        toUpdate.set(key, group);
       }
     }
   }
@@ -179,18 +193,19 @@ async function runProjectBatch(projectId: string): Promise<void> {
     await deletePoints(config.qdrantUrl, config.collection, toExpire);
   }
 
-  // Tick down TTL (grouped by new value to minimize API calls)
-  for (const [newTtl, ids] of toTick) {
+  // Tick down TTL + apply weight decay (grouped to minimize API calls)
+  for (const [key, ids] of toUpdate) {
+    const [ttlStr, weightStr] = key.split(":");
     await setPayload(
       config.qdrantUrl,
       config.collection,
       ids,
-      { ttl: newTtl } as Partial<UpperLayerPointPayload>,
+      { ttl: Number(ttlStr), weight: Number(weightStr) } as Partial<UpperLayerPointPayload>,
     );
   }
 
-  const ticked = [...toTick.values()].reduce((n, ids) => n + ids.length, 0);
+  const updated = [...toUpdate.values()].reduce((n, ids) => n + ids.length, 0);
   console.log(
-    `[digestor] batch: project=${projectId} scanned=${points.length} promoted=${toPromote.length} expired=${toExpire.length} ticked=${ticked}`,
+    `[digestor] batch: project=${projectId} scanned=${points.length} promoted=${toPromote.length} expired=${toExpire.length} updated=${updated}`,
   );
 }
