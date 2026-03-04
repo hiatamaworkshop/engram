@@ -10,6 +10,8 @@ export interface RecallRequest {
     entryId?: string;
     projectId?: string;
     limit?: number;
+    minWeight?: number;
+    status?: NodeStatus;
 }
 export interface IngestRequest {
     capsuleSeeds: NodeSeed[];
@@ -38,7 +40,6 @@ export interface RecallResult {
     hitCount: number;
     weight: number;
     status: NodeStatus;
-    timestamp: number;
     content?: string;
 }
 export interface RecallResponse {

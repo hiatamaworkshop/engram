@@ -169,8 +169,10 @@ recall(query, projectId?)
 
 | Tool | 役割 |
 |------|------|
-| engram_recall | セマンティック検索 / ID 指定取得 |
-| engram_ingest | capsuleSeeds 投入（Claude が分割済み） |
+| engram_pull | セマンティック検索 / ID 指定取得 |
+| engram_push | capsuleSeeds 投入（Claude が分割済み） |
+| engram_flag | 負の weight シグナル |
+| engram_ls | タグ/ステータスでリスト |
 | engram_status | 統計情報 |
 
 ## 7. 実装変更マップ

@@ -28,12 +28,16 @@ import {
   setPayload,
   checkQdrantHealth,
 } from "./qdrant-client.js";
+import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js";
 
 let config: UpperLayerConfig = { ...DEFAULT_UPPER_LAYER_CONFIG };
 let initialized = false;
 
-/** Weight added per recall hit (kept small so decay can counterbalance). */
+/** Weight added per search hit — nearby nodes get a small bump. */
 const RECALL_WEIGHT_BUMP = 0.1;
+
+/** Weight added per focused recall (entryId fetch) — intentional access. */
+const FOCUSED_WEIGHT_BUMP = 1;
 
 /** Round to 2 decimal places to avoid floating-point drift. */
 function round2(n: number): number {
@@ -142,9 +146,9 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
   const minRelevance = 1 - config.maxDistance;
   const hits = rawHits.filter((hit) => hit.score >= minRelevance);
 
-  // hitCount++ for relevant hits only (fire-and-forget)
-  if (hits.length > 0) {
-    bumpHitCounts(hits);
+  // Queue hit bumps — Digestor flushes at next batch tick
+  for (const hit of hits) {
+    queueBump(hit.id, 1, RECALL_WEIGHT_BUMP);
   }
 
   return hits.map((hit) => ({
@@ -152,7 +156,7 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     relevance: hit.score,
     summary: hit.payload.summary,
     tags: hit.payload.tags,
-    hitCount: (hit.payload.hitCount ?? 0) + 1,  // reflect the bump
+    hitCount: (hit.payload.hitCount ?? 0) + 1,
     weight: round2((hit.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
     status: hit.payload.status ?? "recent",
     content: hit.payload.content || undefined,
@@ -204,8 +208,8 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
   const point = await getPointById(config.qdrantUrl, config.collection, entryId);
   if (!point) return null;
 
-  // hitCount++ (fire-and-forget)
-  bumpHitCounts([point]);
+  // Queue focused bump — Digestor flushes at next batch tick
+  queueBump(point.id, 1, FOCUSED_WEIGHT_BUMP);
 
   return {
     id: point.id,
@@ -213,28 +217,10 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
     summary: point.payload.summary,
     tags: point.payload.tags,
     hitCount: (point.payload.hitCount ?? 0) + 1,
-    weight: round2((point.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
+    weight: round2((point.payload.weight ?? 0) + FOCUSED_WEIGHT_BUMP),
     status: (point.payload.status as NodeStatus) ?? "recent",
     content: point.payload.content || undefined,
   };
-}
-
-// ---- Hit count bump (fire-and-forget) ----
-
-function bumpHitCounts(points: Array<{ id: string; payload: UpperLayerPointPayload }>): void {
-  for (const point of points) {
-    setPayload(
-      config.qdrantUrl,
-      config.collection,
-      [point.id],
-      {
-        hitCount: (point.payload.hitCount ?? 0) + 1,
-        weight: round2((point.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
-      } as Partial<UpperLayerPointPayload>,
-    ).catch((err) => {
-      console.warn(`[upper-layer] bumpHitCount failed (non-fatal): ${(err as Error).message}`);
-    });
-  }
 }
 
 // ---- Feedback (weight adjustment) ----
@@ -309,12 +295,16 @@ export function getUpperLayerStats(): {
 export async function listProjects(): Promise<Array<{ projectId: string; count: number }>> {
   if (!initialized) return [];
 
-  // Scroll all points with only projectId payload to collect unique projects
+  // Try Digestor cache first
+  const cached = getCachedProjectList();
+  if (cached) return cached;
+
+  // Fallback: scroll all points
   const points = await scrollPoints(
     config.qdrantUrl,
     config.collection,
-    {},  // no filter — all points
-    1000, // generous limit
+    {},
+    1000,
     undefined,
   );
 
@@ -336,6 +326,11 @@ export async function getNodeCounts(projectId?: string): Promise<{
 }> {
   if (!initialized) return { total: 0, recent: 0, fixed: 0 };
 
+  // Try Digestor cache first
+  const cached = getCachedCounts(projectId);
+  if (cached) return cached;
+
+  // Fallback: direct DB query
   const projectFilter = projectId
     ? [{ key: "projectId", match: { value: projectId } }]
     : [];

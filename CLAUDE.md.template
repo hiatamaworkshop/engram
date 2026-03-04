@@ -1,8 +1,8 @@
 # Engram — Cross-session memory
 
 ## Compact / Session End
-When a session ends or /compact is triggered, call `engram_ingest` with capsuleSeeds.
-Before ingesting, recall `engram_ingest formatting rules` from project `_engram_system` for detailed guidance.
+When a session ends or /compact is triggered, call `engram_push` with capsuleSeeds.
+Before ingesting, pull `ingest formatting rules` from project `_engram_system` for detailed guidance.
 
 ### Quick reference
 - 1 seed = 1 knowledge unit (do not mix topics)

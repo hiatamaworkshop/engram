@@ -1,6 +1,8 @@
 export interface DigestorConfig {
     intervalMs: number;
     promotionThreshold: number;
+    promotionHitCount: number;
+    decayPerBatch: number;
     ttlSeconds: number;
     idleThresholdMs: number;
     qdrantUrl: string;
@@ -19,3 +21,16 @@ export declare function startDigestor(partial: Partial<DigestorConfig> & {
 export declare function updateTtl(ttlSeconds: number): void;
 export declare function getTtlSeconds(): number;
 export declare function stopDigestor(): void;
+/** Queue a hit/weight bump — accumulated in memory, flushed at next batch tick. */
+export declare function queueBump(pointId: string, hitDelta: number, weightDelta: number): void;
+/** Get cached counts. Returns null if cache is stale or missing. */
+export declare function getCachedCounts(projectId?: string): {
+    total: number;
+    recent: number;
+    fixed: number;
+} | null;
+/** Get cached project listing. Returns null if stale or missing. */
+export declare function getCachedProjectList(): Array<{
+    projectId: string;
+    count: number;
+}> | null;

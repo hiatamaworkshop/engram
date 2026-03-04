@@ -16,8 +16,17 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_UPPER_LAYER_CONFIG } from "./types.js";
 import { configureEmbedding, embedText, embedTexts, isReady } from "./embedding.js";
 import { ensureCollection, upsertPoints, searchPoints, scrollPoints, countPoints, getPointById, setPayload, checkQdrantHealth, } from "./qdrant-client.js";
+import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js";
 let config = { ...DEFAULT_UPPER_LAYER_CONFIG };
 let initialized = false;
+/** Weight added per search hit — nearby nodes get a small bump. */
+const RECALL_WEIGHT_BUMP = 0.1;
+/** Weight added per focused recall (entryId fetch) — intentional access. */
+const FOCUSED_WEIGHT_BUMP = 1;
+/** Round to 2 decimal places to avoid floating-point drift. */
+function round2(n) {
+    return Math.round(n * 100) / 100;
+}
 // ---- Init ----
 export async function initUpperLayer(partial) {
     config = { ...DEFAULT_UPPER_LAYER_CONFIG, ...partial };
@@ -37,7 +46,6 @@ export async function initUpperLayer(partial) {
 export async function ingestNodes(nodes, projectId, trigger = "session-end", sessionId = "unknown") {
     if (!initialized || nodes.length === 0)
         return { ingested: 0 };
-    const now = Date.now();
     const texts = nodes.map((n) => n.summary || "");
     // Batch embed
     const vectors = await embedTexts(texts);
@@ -56,8 +64,6 @@ export async function ingestNodes(nodes, projectId, trigger = "session-end", ses
             status: "recent",
             hitCount: 0,
             weight: 0,
-            ingestedAt: now,
-            lastAccessedAt: now,
         },
     }));
     // Upsert
@@ -69,28 +75,35 @@ export async function ingestNodes(nodes, projectId, trigger = "session-end", ses
 export async function searchNodes(options) {
     if (!initialized)
         return [];
-    const { query, projectId, limit = 10 } = options;
+    const { query, projectId, limit = 10, minWeight, status } = options;
     const queryVector = await embedText(query);
-    const filter = projectId
-        ? { must: [{ key: "projectId", match: { value: projectId } }] }
-        : undefined;
+    const must = [];
+    if (projectId) {
+        must.push({ key: "projectId", match: { value: projectId } });
+    }
+    if (minWeight !== undefined) {
+        must.push({ key: "weight", range: { gte: minWeight } });
+    }
+    if (status) {
+        must.push({ key: "status", match: { value: status } });
+    }
+    const filter = must.length > 0 ? { must } : undefined;
     const rawHits = await searchPoints(config.qdrantUrl, config.collection, queryVector, filter, limit);
     // Filter out noise below minimum relevance threshold
     const minRelevance = 1 - config.maxDistance;
     const hits = rawHits.filter((hit) => hit.score >= minRelevance);
-    // hitCount++ for relevant hits only (fire-and-forget)
-    if (hits.length > 0) {
-        bumpHitCounts(hits);
+    // Queue hit bumps — Digestor flushes at next batch tick
+    for (const hit of hits) {
+        queueBump(hit.id, 1, RECALL_WEIGHT_BUMP);
     }
     return hits.map((hit) => ({
         id: hit.id,
         relevance: hit.score,
         summary: hit.payload.summary,
         tags: hit.payload.tags,
-        hitCount: (hit.payload.hitCount ?? 0) + 1, // reflect the bump
-        weight: (hit.payload.weight ?? 0) + 1, // reflect the bump
+        hitCount: (hit.payload.hitCount ?? 0) + 1,
+        weight: round2((hit.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
         status: hit.payload.status ?? "recent",
-        timestamp: hit.payload.ingestedAt,
         content: hit.payload.content || undefined,
     }));
 }
@@ -106,7 +119,7 @@ export async function listNodes(projectId, limit, filters) {
     if (filters?.status) {
         must.push({ key: "status", match: { value: filters.status } });
     }
-    const points = await scrollPoints(config.qdrantUrl, config.collection, { must }, limit, { key: "ingestedAt", direction: "desc" });
+    const points = await scrollPoints(config.qdrantUrl, config.collection, { must }, limit);
     return points.map((p) => ({
         id: p.id,
         summary: p.payload.summary,
@@ -123,32 +136,18 @@ export async function getNodeById(entryId) {
     const point = await getPointById(config.qdrantUrl, config.collection, entryId);
     if (!point)
         return null;
-    // hitCount++ (fire-and-forget)
-    bumpHitCounts([point]);
+    // Queue focused bump — Digestor flushes at next batch tick
+    queueBump(point.id, 1, FOCUSED_WEIGHT_BUMP);
     return {
         id: point.id,
         relevance: 1,
         summary: point.payload.summary,
         tags: point.payload.tags,
         hitCount: (point.payload.hitCount ?? 0) + 1,
-        weight: (point.payload.weight ?? 0) + 1,
+        weight: round2((point.payload.weight ?? 0) + FOCUSED_WEIGHT_BUMP),
         status: point.payload.status ?? "recent",
-        timestamp: point.payload.ingestedAt,
         content: point.payload.content || undefined,
     };
-}
-// ---- Hit count bump (fire-and-forget) ----
-function bumpHitCounts(points) {
-    const now = Date.now();
-    for (const point of points) {
-        setPayload(config.qdrantUrl, config.collection, [point.id], {
-            hitCount: (point.payload.hitCount ?? 0) + 1,
-            weight: (point.payload.weight ?? 0) + 1,
-            lastAccessedAt: now,
-        }).catch((err) => {
-            console.warn(`[upper-layer] bumpHitCount failed (non-fatal): ${err.message}`);
-        });
-    }
 }
 // ---- Feedback (weight adjustment) ----
 const WEIGHT_DELTAS = {
@@ -195,10 +194,12 @@ export function getUpperLayerStats() {
 export async function listProjects() {
     if (!initialized)
         return [];
-    // Scroll all points with only projectId payload to collect unique projects
-    const points = await scrollPoints(config.qdrantUrl, config.collection, {}, // no filter — all points
-    1000, // generous limit
-    undefined);
+    // Try Digestor cache first
+    const cached = getCachedProjectList();
+    if (cached)
+        return cached;
+    // Fallback: scroll all points
+    const points = await scrollPoints(config.qdrantUrl, config.collection, {}, 1000, undefined);
     const counts = new Map();
     for (const p of points) {
         const pid = p.payload.projectId;
@@ -212,6 +213,11 @@ export async function listProjects() {
 export async function getNodeCounts(projectId) {
     if (!initialized)
         return { total: 0, recent: 0, fixed: 0 };
+    // Try Digestor cache first
+    const cached = getCachedCounts(projectId);
+    if (cached)
+        return cached;
+    // Fallback: direct DB query
     const projectFilter = projectId
         ? [{ key: "projectId", match: { value: projectId } }]
         : [];

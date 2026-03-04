@@ -18,12 +18,12 @@ export interface UpperLayerPointPayload {
     status: NodeStatus;
     hitCount: number;
     weight: number;
-    ingestedAt: number;
-    lastAccessedAt: number;
     ttl?: number;
 }
 export interface SearchOptions {
     query: string;
     projectId?: string;
     limit?: number;
+    minWeight?: number;
+    status?: "recent" | "fixed";
 }

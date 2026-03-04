@@ -9,7 +9,7 @@ import { searchNodes, getNodeById } from "../upper-layer/index.js";
  * hitCount++ happens inside UpperLayer (fire-and-forget).
  */
 export async function handleRecall(body) {
-    const { query, entryId, projectId, limit = 10 } = body;
+    const { query, entryId, projectId, limit = 10, minWeight, status } = body;
     // ---- sense mode: single node by ID ----
     if (entryId) {
         try {
@@ -28,7 +28,7 @@ export async function handleRecall(body) {
         return { results: [], source: "engram", message: "Empty query" };
     }
     try {
-        const results = await searchNodes({ query, projectId, limit });
+        const results = await searchNodes({ query, projectId, limit, minWeight, status });
         return { results, source: "engram" };
     }
     catch (err) {

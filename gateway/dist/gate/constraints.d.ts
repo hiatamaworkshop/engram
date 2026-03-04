@@ -4,6 +4,6 @@ export declare const SEED_CONSTRAINTS: {
     readonly maxContentLength: 2000;
     readonly minTags: 1;
     readonly maxTags: 5;
+    readonly maxProjectIdLength: 128;
+    readonly maxSessionIdLength: 128;
 };
-/** Low quality summary patterns — reject these */
-export declare const LOW_QUALITY_PATTERNS: readonly RegExp[];
