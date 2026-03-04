@@ -1,0 +1,323 @@
+# Engram
+
+Cross-session memory for AI coding agents. Knowledge that is used survives. Knowledge that isn't, dies.
+
+Engram gives AI agents persistent, searchable memory across sessions — with a metabolic lifecycle that naturally expires unused knowledge and promotes frequently-recalled knowledge to permanent status. No external APIs. No LLM token cost. Fully local.
+
+> Born from the [Sphere](https://github.com/hiatamaworkshop) project's philosophy: information has its own ecology. What lives, what dies, and what endures is determined by use — not by human curation.
+
+## Philosophy
+
+Most memory systems treat knowledge as an asset to hoard. Engram treats knowledge as a living thing.
+
+- **Metabolism over accumulation** — Every node is born mortal (TTL countdown). Recall keeps it alive. Neglect lets it die. There is no restore. Push it again if you need it back.
+- **No deduplication** — Re-pushing *is* the merge. The old version decays; the new one carries fresh context.
+- **AI-first** — This is not a human knowledge base. The agent writes it, the agent searches it, the agent benefits. Humans just say "remember this."
+- **Small core, swappable layers** — Local embedding (MiniLM) ships by default. Swap in OpenAI, Cohere, or any model. The tuning layer for each AI service can be replaced wholesale — no per-service hacks.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│  AI Agent (Claude Code / any MCP client)        │
+│    engram_pull · engram_push · engram_flag       │
+│    engram_ls · engram_status                     │
+└──────────────────┬──────────────────────────────┘
+                   │ MCP (stdio)
+┌──────────────────▼──────────────────────────────┐
+│  MCP Server        (node process, stateless)    │
+│    validates → forwards HTTP to Gateway         │
+└──────────────────┬──────────────────────────────┘
+                   │ HTTP
+┌──────────────────▼──────────────────────────────┐
+│  Gateway           Docker :3100                 │
+│  ┌──────────┐  ┌───────────┐  ┌──────────────┐ │
+│  │   Gate    │  │ Embedding │  │   Digestor   │ │
+│  │(validate) │  │(MiniLM-L6)│  │ (10min batch)│ │
+│  └──────────┘  └───────────┘  └──────────────┘ │
+└──────────────────┬──────────────────────────────┘
+                   │ REST
+┌──────────────────▼──────────────────────────────┐
+│  Qdrant            Docker :6333                 │
+│  Vector search + payload storage + persistence  │
+└─────────────────────────────────────────────────┘
+```
+
+**Two containers. Zero external dependencies.**
+
+| Component | Role | Resource |
+|-----------|------|----------|
+| **Gateway** | HTTP API, embedding (all-MiniLM-L6-v2, 384d ONNX), Digestor batch engine | ~230 MB RAM |
+| **Qdrant** | Vector search, payload storage, persistent volume | ~200 MB RAM |
+
+## Quick Start
+
+### 1. Start the containers
+
+```bash
+git clone https://github.com/hiatamaworkshop/engram.git
+cd engram
+docker compose up -d --build
+# Verify:
+curl http://localhost:3100/health
+```
+
+### 2. Build the MCP server
+
+```bash
+cd mcp-server
+npm install && npm run build
+```
+
+### 3. Register with Claude Code
+
+Add to `~/.claude/settings.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/absolute/path/to/engram/mcp-server/dist/index.js"],
+      "env": {
+        "GATEWAY_URL": "http://localhost:3100"
+      }
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [{
+          "type": "command",
+          "command": "bash /absolute/path/to/engram/hooks/engram-session-recall.sh",
+          "timeout": 15,
+          "statusMessage": "Loading engram memory..."
+        }]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [{
+          "type": "command",
+          "command": "bash /absolute/path/to/engram/hooks/engram-session-recall.sh",
+          "timeout": 15,
+          "statusMessage": "Loading engram memory..."
+        }]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [{
+          "type": "agent",
+          "prompt": "A compact just completed. Review the compacted session summary and extract 2-5 key learnings, then call engram_push with trigger 'session-end'. Rules: 1 seed = 1 knowledge unit. summary: verb/noun-leading, specific, 10-150 chars. tags: 1-5 lowercase hyphenated. content: optional rationale/root-cause. Do NOT include trivial operations or personal names."
+        }]
+      }
+    ]
+  }
+}
+```
+
+**What this does:**
+- `startup` / `resume` hooks inject a knowledge briefing into every session automatically
+- `compact` hook auto-pushes key learnings when context is compressed
+
+### 4. Add CLAUDE.md snippet
+
+Add to your global `~/.claude/CLAUDE.md` or project-level `CLAUDE.md`:
+
+```markdown
+## Engram — Cross-session Memory
+
+### Session Start
+1. `engram_status()` — check store health, see existing projects
+2. `engram_pull({ query: "<current task>", projectId })` — retrieve prior knowledge
+
+### Continuous Push
+- Push early and often — every milestone is an opportunity
+- `milestone`: after completing a feature, fix, or design decision
+- `error-resolved`: after diagnosing and fixing an error (highest value)
+- `manual`: user says "remember this"
+- The more mundane the knowledge (file paths, build commands), the more valuable
+
+### Push Format
+- 1 seed = 1 knowledge unit (never mix topics)
+- summary: 10-200 chars, keyword-rich, starts with verb/noun
+- tags: 1-5 lowercase hyphenated
+- content: optional — root cause, rationale, gotchas
+- Prefer 2-5 high-quality seeds over many trivial ones
+
+### projectId
+- Call `engram_status()` first to see existing projects
+- Match to an existing projectId — do NOT create duplicates
+- Outside any project (home directory): use `"general"`
+
+### Feedback
+- If recall returns outdated or wrong info: `engram_flag` immediately
+```
+
+### 5. Restart Claude Code
+
+MCP server registration requires a restart. After restart, the session briefing hook will fire automatically.
+
+## MCP Tools
+
+| Tool | Purpose | When to use |
+|------|---------|-------------|
+| `engram_pull` | Semantic search or fetch by ID | Session start, before unfamiliar code, debugging |
+| `engram_push` | Submit 1-8 capsuleSeeds | After milestones, bug fixes, design decisions |
+| `engram_flag` | Negative weight signal (outdated/incorrect/superseded/merged) | When recall returns stale information |
+| `engram_ls` | Lightweight listing by tag/status (no embedding cost) | Browsing entries, checking project state |
+| `engram_status` | Store health, node counts, project list | Session start, diagnostics |
+
+## How It Works
+
+### Node Lifecycle
+
+```
+                  engram_push
+                      │
+                      ▼
+               ┌─────────────┐
+               │   recent     │  ← born with TTL (6h default)
+               │   weight: 0  │
+               └──────┬──────┘
+                      │
+          ┌───────────┼───────────┐
+          │           │           │
+     recall hit    no recall   engram_flag
+     weight +0.1   TTL ticks    weight -2/-3
+          │         down          │
+          │           │           │
+          ▼           ▼           ▼
+   ┌────────────┐  ┌──────┐  ┌──────────┐
+   │  promoted   │  │ died │  │ demoted  │
+   │  → fixed    │  │      │  │ (if was  │
+   │  (permanent)│  └──────┘  │  fixed)  │
+   └────────────┘             └──────────┘
+
+   Promotion: weight ≥ 3 AND hitCount ≥ 5
+   Death: TTL ≤ 0 AND weight ≤ 0
+   Demotion: fixed + negative flag → back to recent
+```
+
+### Digestor
+
+The Digestor is a batch processor that runs every 10 minutes:
+
+1. **Decay** — Subtract 0.1 weight from every `recent` node
+2. **TTL countdown** — Decrement TTL by elapsed time
+3. **Promote** — If `weight ≥ 3` AND `hitCount ≥ 5` → status becomes `fixed`
+4. **Expire** — If `TTL ≤ 0` AND `weight ≤ 0` → node is deleted
+5. **Hibernate** — Projects with no API activity for 30 minutes are skipped (TTL frozen)
+
+Fixed nodes are never touched by the Digestor. They persist until explicitly flagged.
+
+### Relic Nodes
+
+Relic nodes are bootstrap knowledge — pre-installed as `fixed` on first startup. They serve as system-core anchors: how to use engram, tagging conventions, lifecycle rules.
+
+Relics are *not* sacred. They live inside the same metabolic system. Flag them to demote, re-push to update. They are strong defaults, not permanent fixtures.
+
+Default relics (`_engram_system` project):
+
+| # | Topic |
+|---|-------|
+| 1 | Ingest formatting rules |
+| 2 | Recommended tag taxonomy |
+| 3 | Weight and lifecycle mechanics |
+| 4 | Search modes (query / entryId / scan) |
+| 5 | Digestor configuration |
+| 6 | Trigger timing guide |
+| 7 | Session start protocol |
+| 8 | projectId resolution rules |
+| 9 | Continuous ingest strategy |
+| 10 | Flag usage guide |
+
+## Configuration
+
+### gateway.config.json
+
+```json
+{
+  "server": { "port": 3100 },
+  "upperLayer": {
+    "qdrantUrl": "http://localhost:6333",
+    "collection": "engram",
+    "embeddingModel": "Xenova/all-MiniLM-L6-v2",
+    "embeddingDimension": 384
+  },
+  "digestor": {
+    "intervalMs": 600000,
+    "promotionThreshold": 3,
+    "promotionHitCount": 5,
+    "decayPerBatch": 0.1,
+    "ttlSeconds": 21600,
+    "idleThresholdMs": 1800000
+  }
+}
+```
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `intervalMs` | 600000 (10 min) | Digestor batch interval |
+| `promotionThreshold` | 3 | Minimum weight for promotion |
+| `promotionHitCount` | 5 | Minimum recall hits for promotion |
+| `decayPerBatch` | 0.1 | Weight decay per Digestor tick |
+| `ttlSeconds` | 21600 (6 hours) | Initial TTL for new nodes |
+| `idleThresholdMs` | 1800000 (30 min) | Inactivity threshold for hibernation |
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | 3100 | Gateway HTTP port |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant endpoint (use `http://qdrant:6333` in Docker) |
+| `GATEWAY_URL` | `http://localhost:3100` | MCP server → Gateway connection |
+| `ENGRAM_USER_ID` | `"default"` | User identifier (metadata only) |
+| `ENGRAM_PROJECT_ID` | auto-detected | Override auto-detected project scope |
+
+### Gateway Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/recall` | Semantic search (query or entryId) |
+| POST | `/ingest` | Submit capsuleSeeds |
+| POST | `/feedback` | Weight signal |
+| POST | `/activate` | Register project with Digestor |
+| POST | `/deactivate` | Remove project from Digestor |
+| GET | `/scan/:projectId` | List nodes (tag/status filter) |
+| GET | `/status` | Store statistics |
+| GET | `/health` | Health check |
+
+## FAQ
+
+**How do I recover deleted knowledge?**
+You don't. Push it again. That's the metabolism working as intended.
+
+**Doesn't knowledge get duplicated without dedup?**
+Re-pushing is the merge. The old node decays and dies. The new one carries updated context. Explicit dedup is unnecessary.
+
+**What if I have 100,000 nodes?**
+Your metabolism settings need tuning, not your infrastructure. If nodes accumulate that fast, increase decay or lower TTL.
+
+**Is the search accurate without OpenAI embeddings?**
+For project-scoped working notes, MiniLM-L6 is sufficient. This is not a knowledge base — it's metabolic memory. Swap in a larger model if you need it.
+
+**What about rare but important knowledge?**
+Recall it periodically to keep it alive, or ensure it reaches `fixed` status through natural use. If it's truly important, it will be used.
+
+**How is this different from other MCP memory servers?**
+Forgetting is the feature. Other memory tools accumulate everything forever. Engram lets unused knowledge die — because an AI agent's memory should reflect what's *actually relevant*, not everything it has ever seen.
+
+## Roadmap
+
+- [ ] Relic node auto-bootstrap on Gateway startup
+- [ ] Export/import for fixed nodes (Gateway-level, not agent-level)
+- [ ] Embedding model configuration (swap via config, not code)
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+---
+
+*Engram — memory that metabolizes.*

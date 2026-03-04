@@ -1,13 +1,35 @@
-# Engram — Cross-session memory
+## Engram — Cross-session Memory
 
-## Compact / Session End
-When a session ends or /compact is triggered, call `engram_push` with capsuleSeeds.
-Before ingesting, pull `ingest formatting rules` from project `_engram_system` for detailed guidance.
+You have engram MCP tools for persistent knowledge across sessions.
 
-### Quick reference
-- 1 seed = 1 knowledge unit (do not mix topics)
-- summary: verb/noun-leading, specific, 10-150 chars
-- tags: 1-5 lowercase hyphenated (e.g. "docker", "bug-fix", "architecture")
-- content: optional — include for root cause, rationale, or reproduction steps
-- Do NOT assign weight — it is managed by the Digestor
-- 2-5 seeds per session is typical
+### Session Start
+1. `engram_status()` — check store health, see existing projects, determine projectId
+2. `engram_pull({ query: "<current task>", projectId })` — retrieve prior knowledge
+3. Use recalled knowledge to skip redundant searches
+
+### Continuous Push (primary strategy)
+- Push early and often — don't wait for session end
+- `milestone`: after completing a feature, fix, or design decision
+- `error-resolved`: after diagnosing and fixing an error (highest-value knowledge)
+- `manual`: user says "remember this"
+- What to push: file paths, architecture, build commands, config locations, debugging insights
+- The more mundane and repetitive, the more valuable
+
+### Push Format
+- 1 seed = 1 knowledge unit (never mix topics)
+- summary: 10-200 chars, keyword-rich, starts with verb/noun
+- tags: 1-5 lowercase hyphenated (e.g. "docker", "error-handling")
+- content: optional — root cause, rationale, gotchas
+- Prefer 2-5 high-quality seeds over many trivial ones
+- Do NOT include personal names or API keys
+
+### projectId
+- Call `engram_status()` first to see existing projects
+- Match to an existing projectId — do NOT create duplicates
+- Outside any project (home directory): use `"general"`
+- For new projects: push a meta-tagged node with project summary and tech stack
+
+### Feedback
+- If recall returns outdated or wrong info: `engram_flag` immediately
+- outdated (-2), incorrect (-3), superseded (-2), merged (-1)
+- Do NOT flag for positive feedback — recall hits increase weight automatically
