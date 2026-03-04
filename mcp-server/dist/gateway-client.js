@@ -90,12 +90,10 @@ export async function feedback(ctx, entryId, signal, reason) {
     return (await res.json());
 }
 // ---- Activate / Deactivate (Digestor project scope) ----
-export async function activateProject(ctx, projectId, intervalMs, ttlMs) {
+export async function activateProject(ctx, projectId, ttlSeconds) {
     const body = { projectId };
-    if (intervalMs)
-        body.intervalMs = intervalMs;
-    if (ttlMs)
-        body.ttlMs = ttlMs;
+    if (ttlSeconds)
+        body.ttlSeconds = ttlSeconds;
     const res = await fetch(`${ctx.gatewayUrl}/activate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

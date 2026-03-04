@@ -56,6 +56,7 @@ export interface FeedbackResponse {
   entryId: string;
   signal: FeedbackSignal;
   newWeight?: number;
+  summary?: string;
 }
 
 // ---- Response types ----
@@ -68,7 +69,6 @@ export interface RecallResult {
   hitCount: number;
   weight: number;
   status: NodeStatus;
-  timestamp: number;
   content?: string;
 }
 
@@ -95,6 +95,7 @@ export interface StatusResponse {
   totalNodes: number | null;
   recentNodes: number | null;
   fixedNodes: number | null;
+  projects?: Array<{ projectId: string; count: number }>;
 }
 
 export interface HealthResponse {
@@ -111,8 +112,7 @@ export interface HealthResponse {
 
 export interface ActivateRequest {
   projectId: string;
-  intervalMs?: number;
-  ttlMs?: number;
+  ttlSeconds?: number;
 }
 
 export interface DeactivateRequest {

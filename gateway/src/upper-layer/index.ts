@@ -68,7 +68,6 @@ export async function ingestNodes(
 ): Promise<{ ingested: number }> {
   if (!initialized || nodes.length === 0) return { ingested: 0 };
 
-  const now = Date.now();
   const texts = nodes.map((n) => n.summary || "");
 
   // Batch embed
@@ -89,8 +88,6 @@ export async function ingestNodes(
       status: "recent" as NodeStatus,
       hitCount: 0,
       weight: 0,
-      ingestedAt: now,
-      lastAccessedAt: now,
     } satisfies UpperLayerPointPayload,
   }));
 
@@ -142,7 +139,6 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     hitCount: (hit.payload.hitCount ?? 0) + 1,  // reflect the bump
     weight: (hit.payload.weight ?? 0) + 1,      // reflect the bump
     status: hit.payload.status ?? "recent",
-    timestamp: hit.payload.ingestedAt,
     content: hit.payload.content || undefined,
   }));
 }
@@ -172,7 +168,6 @@ export async function listNodes(projectId: string, limit: number, filters?: List
     config.collection,
     { must },
     limit,
-    { key: "ingestedAt", direction: "desc" },
   );
 
   return points.map((p) => ({
@@ -204,7 +199,6 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
     hitCount: (point.payload.hitCount ?? 0) + 1,
     weight: (point.payload.weight ?? 0) + 1,
     status: (point.payload.status as NodeStatus) ?? "recent",
-    timestamp: point.payload.ingestedAt,
     content: point.payload.content || undefined,
   };
 }
@@ -212,7 +206,6 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
 // ---- Hit count bump (fire-and-forget) ----
 
 function bumpHitCounts(points: Array<{ id: string; payload: UpperLayerPointPayload }>): void {
-  const now = Date.now();
   for (const point of points) {
     setPayload(
       config.qdrantUrl,
@@ -221,7 +214,6 @@ function bumpHitCounts(points: Array<{ id: string; payload: UpperLayerPointPaylo
       {
         hitCount: (point.payload.hitCount ?? 0) + 1,
         weight: (point.payload.weight ?? 0) + 1,
-        lastAccessedAt: now,
       } as Partial<UpperLayerPointPayload>,
     ).catch((err) => {
       console.warn(`[upper-layer] bumpHitCount failed (non-fatal): ${(err as Error).message}`);
@@ -276,7 +268,7 @@ export async function applyFeedback(
     `[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}->${newWeight}${demote ? " (demoted to recent)" : ""}`,
   );
 
-  return { status: "applied", entryId, signal, newWeight };
+  return { status: "applied", entryId, signal, newWeight, summary: point.payload.summary };
 }
 
 // ---- Stats / Health ----
@@ -296,6 +288,29 @@ export function getUpperLayerStats(): {
     embeddingReady: isReady(),
     collection: config.collection,
   };
+}
+
+export async function listProjects(): Promise<Array<{ projectId: string; count: number }>> {
+  if (!initialized) return [];
+
+  // Scroll all points with only projectId payload to collect unique projects
+  const points = await scrollPoints(
+    config.qdrantUrl,
+    config.collection,
+    {},  // no filter — all points
+    1000, // generous limit
+    undefined,
+  );
+
+  const counts = new Map<string, number>();
+  for (const p of points) {
+    const pid = p.payload.projectId;
+    if (pid) counts.set(pid, (counts.get(pid) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([projectId, count]) => ({ projectId, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 export async function getNodeCounts(projectId?: string): Promise<{

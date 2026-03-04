@@ -14,7 +14,6 @@ export interface RecallResult {
   hitCount: number;
   weight: number;
   status: NodeStatus;
-  timestamp: number;
   content?: string;
 }
 
@@ -41,6 +40,7 @@ export interface StatusResponse {
   totalNodes: number | null;
   recentNodes: number | null;
   fixedNodes: number | null;
+  projects?: Array<{ projectId: string; count: number }>;
 }
 
 export interface ScanEntry {
@@ -57,6 +57,7 @@ export interface FeedbackResponse {
   entryId: string;
   signal: string;
   newWeight?: number;
+  summary?: string;
 }
 
 export interface ScanResponse {
@@ -194,12 +195,10 @@ export async function feedback(
 export async function activateProject(
   ctx: EngramContext,
   projectId: string,
-  intervalMs?: number,
-  ttlMs?: number,
+  ttlSeconds?: number,
 ): Promise<void> {
   const body: Record<string, unknown> = { projectId };
-  if (intervalMs) body.intervalMs = intervalMs;
-  if (ttlMs) body.ttlMs = ttlMs;
+  if (ttlSeconds) body.ttlSeconds = ttlSeconds;
   const res = await fetch(`${ctx.gatewayUrl}/activate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

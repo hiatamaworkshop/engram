@@ -18,6 +18,10 @@ export declare function getUpperLayerStats(): {
     embeddingReady: boolean;
     collection: string;
 };
+export declare function listProjects(): Promise<Array<{
+    projectId: string;
+    count: number;
+}>>;
 export declare function getNodeCounts(projectId?: string): Promise<{
     total: number;
     recent: number;

@@ -177,7 +177,7 @@ export async function applyFeedback(entryId, signal, _reason) {
     }
     await setPayload(config.qdrantUrl, config.collection, [entryId], patch);
     console.log(`[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}->${newWeight}${demote ? " (demoted to recent)" : ""}`);
-    return { status: "applied", entryId, signal, newWeight };
+    return { status: "applied", entryId, signal, newWeight, summary: point.payload.summary };
 }
 // ---- Stats / Health ----
 export async function checkUpperLayerHealth() {
@@ -191,6 +191,23 @@ export function getUpperLayerStats() {
         embeddingReady: isReady(),
         collection: config.collection,
     };
+}
+export async function listProjects() {
+    if (!initialized)
+        return [];
+    // Scroll all points with only projectId payload to collect unique projects
+    const points = await scrollPoints(config.qdrantUrl, config.collection, {}, // no filter — all points
+    1000, // generous limit
+    undefined);
+    const counts = new Map();
+    for (const p of points) {
+        const pid = p.payload.projectId;
+        if (pid)
+            counts.set(pid, (counts.get(pid) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+        .map(([projectId, count]) => ({ projectId, count }))
+        .sort((a, b) => b.count - a.count);
 }
 export async function getNodeCounts(projectId) {
     if (!initialized)

@@ -5,6 +5,7 @@
 // Validates capsuleSeeds structure. No compactText validation needed.
 
 import type { IngestRequest, NodeSeed } from "../types.js";
+import { SEED_CONSTRAINTS } from "./constraints.js";
 
 export interface GateError {
   code: string;
@@ -15,16 +16,6 @@ export interface GateResult {
   valid: boolean;
   errors: GateError[];
 }
-
-const SEED_CONSTRAINTS = {
-  minSummaryLength: 10,
-  maxSummaryLength: 200,
-  maxContentLength: 2000,
-  minTags: 1,
-  maxTags: 5,
-  maxProjectIdLength: 128,
-  maxSessionIdLength: 128,
-} as const;
 
 /**
  * Validate an ingest request.

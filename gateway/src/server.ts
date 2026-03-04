@@ -6,7 +6,7 @@ import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
-import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateInterval, getIntervalMs, updateTtl, getTtlMs } from "./digestor.js";
+import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject } from "./digestor.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 
 const cfg = loadConfig();
@@ -55,6 +55,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (method === "POST" && url === "/recall") {
     try {
       const body = (await readBody(req)) as RecallRequest;
+      if (body.projectId) touchProject(body.projectId);
       const result = await handleRecall(body);
       sendJson(res, 200, result);
     } catch (err) {
@@ -67,6 +68,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (method === "POST" && url === "/ingest") {
     try {
       const body = (await readBody(req)) as IngestRequest;
+      if (body.projectId) touchProject(body.projectId);
       const result = await handleIngest(body);
       sendJson(res, result.status === "accepted" ? 202 : 422, result);
     } catch (err) {
@@ -84,13 +86,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return;
       }
       addActiveProject(body.projectId);
-      if (body.intervalMs && body.intervalMs > 0) {
-        updateInterval(body.intervalMs);
+      if (body.ttlSeconds && body.ttlSeconds > 0) {
+        updateTtl(body.ttlSeconds);
       }
-      if (body.ttlMs && body.ttlMs > 0) {
-        updateTtl(body.ttlMs);
-      }
-      sendJson(res, 200, { status: "activated", projectId: body.projectId, intervalMs: getIntervalMs(), ttlMs: getTtlMs() });
+      sendJson(res, 200, { status: "activated", projectId: body.projectId, ttlSeconds: getTtlSeconds() });
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
     }
@@ -144,6 +143,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (scanMatch) {
     try {
       const projectId = decodeURIComponent(scanMatch[1]);
+      touchProject(projectId);
       const parsed = new URL(url, "http://localhost");
       const limit = parseInt(parsed.searchParams.get("limit") ?? "10", 10);
       const tag = parsed.searchParams.get("tag") ?? undefined;

@@ -52,9 +52,10 @@ Set crossProject=true to search across ALL projects.`,
     query: z.string().optional().describe("Natural language search query (omit if using entryId)"),
     entryId: z.string().optional().describe("Fetch a specific node by ID (omit if using query)"),
     crossProject: z.boolean().default(false).describe("Set true to search across all projects"),
+    projectId: z.string().optional().describe("Override project scope (defaults to ENGRAM_PROJECT_ID or auto-detected)"),
     limit: z.number().min(1).max(30).default(5).describe("Max results to return"),
   },
-  async ({ query, entryId, crossProject, limit }) => {
+  async ({ query, entryId, crossProject, projectId: explicitProjectId, limit }) => {
     const healthy = await checkHealth(ctx);
     if (!healthy) {
       return {
@@ -63,7 +64,7 @@ Set crossProject=true to search across ALL projects.`,
       };
     }
 
-    const projectId = crossProject ? undefined : ctx.defaultProjectId;
+    const projectId = crossProject ? undefined : (explicitProjectId || ctx.defaultProjectId);
 
     try {
       // ---- sense mode ----
@@ -81,7 +82,7 @@ Set crossProject=true to search across ALL projects.`,
           "",
           `hits: ${r.hitCount}  weight: ${r.weight}  status: ${r.status}`,
           `tags: ${r.tags.join(", ") || "(none)"}`,
-          `id: ${r.id}  timestamp: ${r.timestamp}`,
+          `id: ${r.id}`,
         ].filter(Boolean).join("\n");
         return { content: [{ type: "text", text: detail }] };
       }
@@ -261,6 +262,13 @@ server.tool(
         `Fixed nodes:  ${status.fixedNodes ?? "unknown"}`,
       );
 
+      if (status.projects && status.projects.length > 0) {
+        lines.push("", "Projects:");
+        for (const p of status.projects) {
+          lines.push(`  ${p.projectId} (${p.count} nodes)`);
+        }
+      }
+
       return {
         content: [{ type: "text", text: lines.join("\n") }],
       };
@@ -319,10 +327,11 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
         };
       }
 
+      const summaryInfo = result.summary ? ` "${result.summary}"` : "";
       return {
         content: [{
           type: "text",
-          text: `Feedback applied: ${entryId} signal=${signal} newWeight=${result.newWeight}`,
+          text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}`,
         }],
       };
     } catch (err) {

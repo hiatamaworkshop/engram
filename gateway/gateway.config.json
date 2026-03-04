@@ -9,8 +9,9 @@
     "embeddingDimension": 384
   },
   "digestor": {
-    "intervalMs": 300000,
+    "intervalMs": 600000,
     "promotionThreshold": 5,
-    "ttlMs": 604800000
+    "ttlSeconds": 21600,
+    "idleThresholdMs": 1800000
   }
 }

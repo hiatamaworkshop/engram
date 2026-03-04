@@ -4,10 +4,12 @@
 //
 // Processes ONLY the active project's recent nodes:
 //   - weight >= promotionThreshold → promote to "fixed"
-//   - ingestedAt + ttlMs < now && weight <= 0 → delete (expired)
-//   - otherwise → leave for next batch
+//   - ttl <= 0 && weight <= 0 → delete (expired)
+//   - otherwise → decrement ttl by intervalMs/1000 and leave for next batch
 //
 // Inactive projects are never touched → natural hibernation.
+// Idle projects (no API activity for idleThresholdMs) are skipped → soft hibernation.
+// Any subsequent API call via touchProject() wakes them up.
 
 import {
   scrollPoints,
@@ -20,37 +22,39 @@ import type { NodeStatus } from "./types.js";
 // ---- Config ----
 
 export interface DigestorConfig {
-  intervalMs: number;          // batch interval (default: 5min)
+  intervalMs: number;          // batch interval (default: 10min)
   promotionThreshold: number;  // weight needed to promote to fixed (default: 5)
-  ttlMs: number;               // recent node TTL (default: 7 days)
+  ttlSeconds: number;          // initial TTL countdown for new nodes (default: 6h = 21600s)
+  idleThresholdMs: number;     // skip batch if no activity for this long (default: 30min)
   qdrantUrl: string;
   collection: string;
 }
 
 export const DEFAULT_DIGESTOR_CONFIG: DigestorConfig = {
-  intervalMs: 300_000,         // 5 minutes
+  intervalMs: 600_000,         // 10 minutes
   promotionThreshold: 5,
-  ttlMs: 604_800_000,          // 7 days
+  ttlSeconds: 21_600,          // 6 hours
+  idleThresholdMs: 1_800_000,  // 30 minutes
   qdrantUrl: "http://localhost:6333",
   collection: "engram",
 };
 
 // ---- State ----
 
-const activeProjects = new Set<string>();
+const activeProjects = new Map<string, number>(); // projectId → lastActivityMs
 let timer: ReturnType<typeof setInterval> | null = null;
 let config: DigestorConfig = { ...DEFAULT_DIGESTOR_CONFIG };
 
 // ---- Public API ----
 
 export function addActiveProject(projectId: string): void {
-  activeProjects.add(projectId);
+  activeProjects.set(projectId, Date.now());
   console.log(`[digestor] project activated: ${projectId} (active: ${activeProjects.size})`);
 }
 
 export async function removeActiveProject(projectId: string): Promise<void> {
   // Run final batch before deactivation
-  await runProjectBatch(projectId, Date.now()).catch((err) => {
+  await runProjectBatch(projectId).catch((err) => {
     console.warn(`[digestor] final batch failed for ${projectId}: ${(err as Error).message}`);
   });
   activeProjects.delete(projectId);
@@ -58,7 +62,17 @@ export async function removeActiveProject(projectId: string): Promise<void> {
 }
 
 export function getActiveProjects(): string[] {
-  return [...activeProjects];
+  return [...activeProjects.keys()];
+}
+
+/** Update last-activity timestamp. Auto-activates if project was not in the set. */
+export function touchProject(projectId: string): void {
+  const wasIdle = activeProjects.has(projectId) &&
+    (Date.now() - (activeProjects.get(projectId) ?? 0) > config.idleThresholdMs);
+  activeProjects.set(projectId, Date.now());
+  if (wasIdle) {
+    console.log(`[digestor] project woke up: ${projectId}`);
+  }
 }
 
 export function startDigestor(partial: Partial<DigestorConfig> & { qdrantUrl: string; collection: string }): void {
@@ -73,34 +87,17 @@ export function startDigestor(partial: Partial<DigestorConfig> & { qdrantUrl: st
   }, config.intervalMs);
 
   console.log(
-    `[digestor] started (interval=${config.intervalMs}ms, threshold=${config.promotionThreshold}, ttl=${config.ttlMs}ms)`,
+    `[digestor] started (interval=${config.intervalMs}ms, threshold=${config.promotionThreshold}, ttl=${config.ttlSeconds}s, idle=${config.idleThresholdMs}ms)`,
   );
 }
 
-export function updateInterval(intervalMs: number): void {
-  config.intervalMs = intervalMs;
-  if (timer) {
-    clearInterval(timer);
-    timer = setInterval(() => {
-      runBatch().catch((err) => {
-        console.warn(`[digestor] batch error: ${(err as Error).message}`);
-      });
-    }, config.intervalMs);
-  }
-  console.log(`[digestor] interval updated: ${intervalMs}ms`);
+export function updateTtl(ttlSeconds: number): void {
+  config.ttlSeconds = ttlSeconds;
+  console.log(`[digestor] ttl updated: ${ttlSeconds}s`);
 }
 
-export function getIntervalMs(): number {
-  return config.intervalMs;
-}
-
-export function updateTtl(ttlMs: number): void {
-  config.ttlMs = ttlMs;
-  console.log(`[digestor] ttl updated: ${ttlMs}ms`);
-}
-
-export function getTtlMs(): number {
-  return config.ttlMs;
+export function getTtlSeconds(): number {
+  return config.ttlSeconds;
 }
 
 export function stopDigestor(): void {
@@ -118,12 +115,16 @@ async function runBatch(): Promise<void> {
 
   const now = Date.now();
 
-  for (const projectId of activeProjects) {
-    await runProjectBatch(projectId, now);
+  for (const [projectId, lastActivity] of activeProjects) {
+    if (now - lastActivity > config.idleThresholdMs) {
+      console.log(`[digestor] skipping idle project: ${projectId} (idle ${Math.floor((now - lastActivity) / 60_000)}min)`);
+      continue;
+    }
+    await runProjectBatch(projectId);
   }
 }
 
-async function runProjectBatch(projectId: string, now: number): Promise<void> {
+async function runProjectBatch(projectId: string): Promise<void> {
   const points = await scrollPoints(
     config.qdrantUrl,
     config.collection,
@@ -138,21 +139,32 @@ async function runProjectBatch(projectId: string, now: number): Promise<void> {
 
   if (points.length === 0) return;
 
+  const decrement = Math.floor(config.intervalMs / 1000); // seconds per batch tick
   const toPromote: string[] = [];
   const toExpire: string[] = [];
+  const toTick: Map<number, string[]> = new Map(); // newTtl → pointIds
 
   for (const point of points) {
     const p = point.payload as UpperLayerPointPayload;
     const weight = p.weight ?? 0;
-    const ingestedAt = p.ingestedAt ?? 0;
+    const currentTtl = p.ttl ?? config.ttlSeconds; // init if missing (legacy nodes)
 
     if (weight >= config.promotionThreshold) {
       toPromote.push(point.id);
-    } else if (ingestedAt + config.ttlMs < now && weight <= 0) {
-      toExpire.push(point.id);
+    } else {
+      const newTtl = currentTtl - decrement;
+      if (newTtl <= 0 && weight <= 0) {
+        toExpire.push(point.id);
+      } else {
+        // Decrement ttl for surviving nodes
+        const group = toTick.get(newTtl) ?? [];
+        group.push(point.id);
+        toTick.set(newTtl, group);
+      }
     }
   }
 
+  // Promote
   if (toPromote.length > 0) {
     await setPayload(
       config.qdrantUrl,
@@ -162,12 +174,23 @@ async function runProjectBatch(projectId: string, now: number): Promise<void> {
     );
   }
 
+  // Expire
   if (toExpire.length > 0) {
     await deletePoints(config.qdrantUrl, config.collection, toExpire);
   }
 
-  const unchanged = points.length - toPromote.length - toExpire.length;
+  // Tick down TTL (grouped by new value to minimize API calls)
+  for (const [newTtl, ids] of toTick) {
+    await setPayload(
+      config.qdrantUrl,
+      config.collection,
+      ids,
+      { ttl: newTtl } as Partial<UpperLayerPointPayload>,
+    );
+  }
+
+  const ticked = [...toTick.values()].reduce((n, ids) => n + ids.length, 0);
   console.log(
-    `[digestor] batch: project=${projectId} scanned=${points.length} promoted=${toPromote.length} expired=${toExpire.length} unchanged=${unchanged}`,
+    `[digestor] batch: project=${projectId} scanned=${points.length} promoted=${toPromote.length} expired=${toExpire.length} ticked=${ticked}`,
   );
 }

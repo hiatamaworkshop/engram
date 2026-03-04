@@ -40,8 +40,9 @@ Set crossProject=true to search across ALL projects.`, {
     query: z.string().optional().describe("Natural language search query (omit if using entryId)"),
     entryId: z.string().optional().describe("Fetch a specific node by ID (omit if using query)"),
     crossProject: z.boolean().default(false).describe("Set true to search across all projects"),
+    projectId: z.string().optional().describe("Override project scope (defaults to ENGRAM_PROJECT_ID or auto-detected)"),
     limit: z.number().min(1).max(30).default(5).describe("Max results to return"),
-}, async ({ query, entryId, crossProject, limit }) => {
+}, async ({ query, entryId, crossProject, projectId: explicitProjectId, limit }) => {
     const healthy = await checkHealth(ctx);
     if (!healthy) {
         return {
@@ -49,7 +50,7 @@ Set crossProject=true to search across ALL projects.`, {
             isError: true,
         };
     }
-    const projectId = crossProject ? undefined : ctx.defaultProjectId;
+    const projectId = crossProject ? undefined : (explicitProjectId || ctx.defaultProjectId);
     try {
         // ---- sense mode ----
         if (entryId) {
@@ -200,6 +201,12 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
             lines.push("", "Store:", `  initialized: ${s.initialized}`, `  embedding:   ${s.embeddingReady ? "ready" : "loading"}`, `  collection:  ${s.collection}`);
         }
         lines.push("", `Total nodes:  ${status.totalNodes ?? "unknown"}`, `Recent nodes: ${status.recentNodes ?? "unknown"}`, `Fixed nodes:  ${status.fixedNodes ?? "unknown"}`);
+        if (status.projects && status.projects.length > 0) {
+            lines.push("", "Projects:");
+            for (const p of status.projects) {
+                lines.push(`  ${p.projectId} (${p.count} nodes)`);
+            }
+        }
         return {
             content: [{ type: "text", text: lines.join("\n") }],
         };
@@ -248,10 +255,11 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
                 isError: true,
             };
         }
+        const summaryInfo = result.summary ? ` "${result.summary}"` : "";
         return {
             content: [{
                     type: "text",
-                    text: `Feedback applied: ${entryId} signal=${signal} newWeight=${result.newWeight}`,
+                    text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}`,
                 }],
         };
     }

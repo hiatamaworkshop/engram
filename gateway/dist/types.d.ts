@@ -28,6 +28,7 @@ export interface FeedbackResponse {
     entryId: string;
     signal: FeedbackSignal;
     newWeight?: number;
+    summary?: string;
 }
 export interface RecallResult {
     id: string;
@@ -61,6 +62,10 @@ export interface StatusResponse {
     totalNodes: number | null;
     recentNodes: number | null;
     fixedNodes: number | null;
+    projects?: Array<{
+        projectId: string;
+        count: number;
+    }>;
 }
 export interface HealthResponse {
     status: "ok" | "degraded";
@@ -73,8 +78,7 @@ export interface HealthResponse {
 }
 export interface ActivateRequest {
     projectId: string;
-    intervalMs?: number;
-    ttlMs?: number;
+    ttlSeconds?: number;
 }
 export interface DeactivateRequest {
     projectId: string;

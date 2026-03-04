@@ -31,8 +31,7 @@ export interface UpperLayerPointPayload {
   status: NodeStatus;     // "recent" | "fixed"
   hitCount: number;       // recall hit counter (informational)
   weight: number;         // survival score (Digestor uses for promotion/expiry)
-  ingestedAt: number;     // Date.now() at ingestion
-  lastAccessedAt: number; // Date.now() at last recall hit
+  ttl?: number;           // countdown in seconds — set by Digestor on first batch, decremented each tick
 }
 
 export interface SearchOptions {
