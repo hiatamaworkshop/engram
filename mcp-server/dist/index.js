@@ -24,6 +24,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadContext } from "./types.js";
 import { checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject, } from "./gateway-client.js";
+import { memoAdd, memoFormat } from "./hot-memo.js";
 const ctx = loadContext();
 const server = new McpServer({
     name: "engram",
@@ -81,7 +82,7 @@ WHEN TO CALL (proactive triggers):
                 `tags: ${r.tags.join(", ") || "(none)"}`,
                 `id: ${r.id}`,
             ].filter(Boolean).join("\n");
-            return { content: [{ type: "text", text: detail }] };
+            return { content: [{ type: "text", text: detail + memoFormat() }] };
         }
         // ---- search mode ----
         if (!query) {
@@ -109,18 +110,8 @@ WHEN TO CALL (proactive triggers):
         });
         const scope = projectId ? ` (project: ${projectId})` : " (cross-project)";
         const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
-        // Contextual hints
-        const hints = [];
-        const avgRelevance = response.results.reduce((s, r) => s + r.relevance, 0) / response.results.length;
-        if (avgRelevance < 0.3) {
-            hints.push("Low relevance scores. Use more specific keywords in summary when ingesting.");
-        }
-        if (response.results.every((r) => r.status === "recent")) {
-            hints.push("All results are recent (no fixed nodes). Recall more often to build weight and promote nodes.");
-        }
-        const hintText = hints.length > 0 ? `\n\nHint: ${hints.join(" ")}` : "";
         return {
-            content: [{ type: "text", text: header + formatted.join("\n\n") + hintText }],
+            content: [{ type: "text", text: header + formatted.join("\n\n") + memoFormat() }],
         };
     }
     catch (err) {
@@ -194,19 +185,10 @@ GUIDANCE:
     const resolvedSessionId = sessionId || randomUUID();
     try {
         const result = await ingest(ctx, capsuleSeeds, resolvedProjectId, trigger, resolvedSessionId);
-        const lines = [
-            `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`,
-            result.merged ? `Merged with ${result.merged} existing nodes.` : null,
-            result.reason ? `Detail: ${result.reason}` : null,
-        ].filter(Boolean);
-        // Fetch current total for context
-        try {
-            const st = await getStatus(ctx, resolvedProjectId);
-            lines.push(`Project total: ${st.totalNodes} nodes (${st.fixedNodes} fixed, ${st.recentNodes} recent).`);
-        }
-        catch { /* non-fatal */ }
+        memoAdd(capsuleSeeds);
+        const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
         return {
-            content: [{ type: "text", text: lines.join("\n") }],
+            content: [{ type: "text", text: line + memoFormat() }],
         };
     }
     catch (err) {
@@ -243,21 +225,8 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
                 lines.push(`  ${p.projectId} (${p.count} nodes)`);
             }
         }
-        // Contextual hints
-        const hints = [];
-        const total = status.totalNodes ?? 0;
-        const fixed = status.fixedNodes ?? 0;
-        if (total === 0) {
-            hints.push("Empty store. Start ingesting knowledge with engram_push.");
-        }
-        else if (fixed === 0) {
-            hints.push("No fixed nodes yet. Recall existing knowledge to build weight and trigger promotion.");
-        }
-        if (hints.length > 0) {
-            lines.push("", `Hint: ${hints.join(" ")}`);
-        }
         return {
-            content: [{ type: "text", text: lines.join("\n") }],
+            content: [{ type: "text", text: lines.join("\n") + memoFormat() }],
         };
     }
     catch (err) {
@@ -308,7 +277,7 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
         return {
             content: [{
                     type: "text",
-                    text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}`,
+                    text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}` + memoFormat(),
                 }],
         };
     }
@@ -359,18 +328,8 @@ For semantic search, use engram_pull instead.`, {
         });
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
         const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length}/${result.total} entries:\n`;
-        // Contextual hints
-        const hints = [];
-        const negativeWeight = result.entries.filter((e) => e.weight < 0);
-        if (negativeWeight.length > 0) {
-            hints.push(`${negativeWeight.length} nodes have negative weight and will be expired by Digestor.`);
-        }
-        if (result.entries.length < result.total) {
-            hints.push(`Showing ${result.entries.length} of ${result.total}. Increase limit to see more.`);
-        }
-        const hintText = hints.length > 0 ? `\n\nHint: ${hints.join(" ")}` : "";
         return {
-            content: [{ type: "text", text: header + lines.join("\n\n") + hintText }],
+            content: [{ type: "text", text: header + lines.join("\n\n") + memoFormat() }],
         };
     }
     catch (err) {
