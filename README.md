@@ -108,7 +108,7 @@ Add to `~/.claude/settings.json`:
         "matcher": "compact",
         "hooks": [{
           "type": "agent",
-          "prompt": "A compact just completed. Review the compacted session summary and extract 2-5 key learnings, then call engram_push with trigger 'session-end'. Rules: 1 seed = 1 knowledge unit. summary: verb/noun-leading, specific, 10-150 chars. tags: 1-5 lowercase hyphenated. content: optional rationale/root-cause. Do NOT include trivial operations or personal names."
+          "prompt": "A compact just completed. Review the compacted session summary and extract 2-5 key learnings, then call engram_push with trigger 'session-end'. Follow the formatting rules defined in engram_push tool description (SSOT). Do NOT include trivial operations or personal names."
         }]
       }
     ]
@@ -120,39 +120,15 @@ Add to `~/.claude/settings.json`:
 - `startup` / `resume` hooks inject a knowledge briefing into every session automatically
 - `compact` hook auto-pushes key learnings when context is compressed
 
-### 4. Add CLAUDE.md snippet
+### 4. Add CLAUDE.md snippet (optional)
 
-Add to your global `~/.claude/CLAUDE.md` or project-level `CLAUDE.md`:
+Copy `CLAUDE.md.template` to your global `~/.claude/CLAUDE.md` or project-level `CLAUDE.md`:
 
-```markdown
-## Engram — Cross-session Memory
-
-### Session Start
-1. `engram_status()` — check store health, see existing projects
-2. `engram_pull({ query: "<current task>", projectId })` — retrieve prior knowledge
-
-### Continuous Push
-- Push early and often — every milestone is an opportunity
-- `milestone`: after completing a feature, fix, or design decision
-- `error-resolved`: after diagnosing and fixing an error (highest value)
-- `manual`: user says "remember this"
-- The more mundane the knowledge (file paths, build commands), the more valuable
-
-### Push Format
-- 1 seed = 1 knowledge unit (never mix topics)
-- summary: 10-200 chars, keyword-rich, starts with verb/noun
-- tags: 1-5 lowercase hyphenated
-- content: optional — root cause, rationale, gotchas
-- Prefer 2-5 high-quality seeds over many trivial ones
-
-### projectId
-- Call `engram_status()` first to see existing projects
-- Match to an existing projectId — do NOT create duplicates
-- Outside any project (home directory): use `"general"`
-
-### Feedback
-- If recall returns outdated or wrong info: `engram_flag` immediately
+```bash
+cat CLAUDE.md.template >> ~/.claude/CLAUDE.md
 ```
+
+This adds behavioral guidance for the agent. Tool specifications (parameter formats, character limits, tag rules) are defined in tool descriptions (SSOT) and do not need to be duplicated here.
 
 ### 5. Restart Claude Code
 

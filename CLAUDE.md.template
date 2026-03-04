@@ -1,6 +1,7 @@
 ## Engram — Cross-session Memory
 
 You have engram MCP tools for persistent knowledge across sessions.
+Tool specifications (parameter formats, limits, tag rules) are defined in each tool's description (SSOT).
 
 ### Session Start
 1. `engram_status()` — check store health, see existing projects, determine projectId
@@ -15,14 +16,6 @@ You have engram MCP tools for persistent knowledge across sessions.
 - What to push: file paths, architecture, build commands, config locations, debugging insights
 - The more mundane and repetitive, the more valuable
 
-### Push Format
-- 1 seed = 1 knowledge unit (never mix topics)
-- summary: 10-200 chars, keyword-rich, starts with verb/noun
-- tags: 1-5 lowercase hyphenated (e.g. "docker", "error-handling")
-- content: optional — root cause, rationale, gotchas
-- Prefer 2-5 high-quality seeds over many trivial ones
-- Do NOT include personal names or API keys
-
 ### projectId
 - Call `engram_status()` first to see existing projects
 - Match to an existing projectId — do NOT create duplicates
@@ -31,5 +24,4 @@ You have engram MCP tools for persistent knowledge across sessions.
 
 ### Feedback
 - If recall returns outdated or wrong info: `engram_flag` immediately
-- outdated (-2), incorrect (-3), superseded (-2), merged (-1)
 - Do NOT flag for positive feedback — recall hits increase weight automatically

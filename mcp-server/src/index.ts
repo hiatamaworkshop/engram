@@ -97,7 +97,7 @@ WHEN TO CALL (proactive triggers):
           `tags: ${r.tags.join(", ") || "(none)"}`,
           `id: ${r.id}`,
         ].filter(Boolean).join("\n");
-        return { content: [{ type: "text", text: detail + memoFormat() }] };
+        return { content: [{ type: "text", text: detail + memoFormat("pull") }] };
       }
 
       // ---- search mode ----
@@ -132,7 +132,7 @@ WHEN TO CALL (proactive triggers):
       const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
 
       return {
-        content: [{ type: "text", text: header + formatted.join("\n\n") + memoFormat() }],
+        content: [{ type: "text", text: header + formatted.join("\n\n") + memoFormat("pull") }],
       };
     } catch (err) {
       return {
@@ -176,7 +176,7 @@ PROACTIVE TRIGGERS — do NOT wait to be asked:
 
 HOW TO EXTRACT capsuleSeeds:
   Review the session and create 1-8 NodeSeed objects, each capturing one distinct piece of knowledge:
-  - summary: What was learned/done (10-150 chars, specific, starts with verb/noun)
+  - summary: What was learned/done (10-200 chars, specific, starts with verb/noun)
   - tags: 1-5 lowercase hyphenated tags (e.g. "docker", "error-handling", "architecture")
   - content: Optional — root cause, rationale, reproduction steps
 
@@ -228,7 +228,7 @@ GUIDANCE:
       const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
 
       return {
-        content: [{ type: "text", text: line + memoFormat() }],
+        content: [{ type: "text", text: line + memoFormat("push") }],
       };
     } catch (err) {
       return {
@@ -289,7 +289,7 @@ server.tool(
       }
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + memoFormat() }],
+        content: [{ type: "text", text: lines.join("\n") + memoFormat("status") }],
       };
     } catch (err) {
       return {
@@ -350,7 +350,7 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
       return {
         content: [{
           type: "text",
-          text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}` + memoFormat(),
+          text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}` + memoFormat("flag"),
         }],
       };
     } catch (err) {
@@ -414,7 +414,7 @@ For semantic search, use engram_pull instead.`,
       const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length}/${result.total} entries:\n`;
 
       return {
-        content: [{ type: "text", text: header + lines.join("\n\n") + memoFormat() }],
+        content: [{ type: "text", text: header + lines.join("\n\n") + memoFormat("ls") }],
       };
     } catch (err) {
       return {

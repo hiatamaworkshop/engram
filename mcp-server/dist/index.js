@@ -82,7 +82,7 @@ WHEN TO CALL (proactive triggers):
                 `tags: ${r.tags.join(", ") || "(none)"}`,
                 `id: ${r.id}`,
             ].filter(Boolean).join("\n");
-            return { content: [{ type: "text", text: detail + memoFormat() }] };
+            return { content: [{ type: "text", text: detail + memoFormat("pull") }] };
         }
         // ---- search mode ----
         if (!query) {
@@ -111,7 +111,7 @@ WHEN TO CALL (proactive triggers):
         const scope = projectId ? ` (project: ${projectId})` : " (cross-project)";
         const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
         return {
-            content: [{ type: "text", text: header + formatted.join("\n\n") + memoFormat() }],
+            content: [{ type: "text", text: header + formatted.join("\n\n") + memoFormat("pull") }],
         };
     }
     catch (err) {
@@ -188,7 +188,7 @@ GUIDANCE:
         memoAdd(capsuleSeeds);
         const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
         return {
-            content: [{ type: "text", text: line + memoFormat() }],
+            content: [{ type: "text", text: line + memoFormat("push") }],
         };
     }
     catch (err) {
@@ -226,7 +226,7 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
             }
         }
         return {
-            content: [{ type: "text", text: lines.join("\n") + memoFormat() }],
+            content: [{ type: "text", text: lines.join("\n") + memoFormat("status") }],
         };
     }
     catch (err) {
@@ -277,7 +277,7 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
         return {
             content: [{
                     type: "text",
-                    text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}` + memoFormat(),
+                    text: `Feedback applied:${summaryInfo} ${entryId} signal=${signal} newWeight=${result.newWeight}` + memoFormat("flag"),
                 }],
         };
     }
@@ -329,7 +329,7 @@ For semantic search, use engram_pull instead.`, {
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
         const header = `project:${resolvedProjectId}${filters ? ` (${filters})` : ""} — ${result.entries.length}/${result.total} entries:\n`;
         return {
-            content: [{ type: "text", text: header + lines.join("\n\n") + memoFormat() }],
+            content: [{ type: "text", text: header + lines.join("\n\n") + memoFormat("ls") }],
         };
     }
     catch (err) {

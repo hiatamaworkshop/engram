@@ -1,5 +1,11 @@
 # Engram v2 Design — Digestor + Sanitize Layer
 
+> **Note**: This is a design-time document. Implementation details (parameter values,
+> config formats) may have diverged. For current specs, refer to:
+> - **Tool specifications**: `mcp-server/src/index.ts` tool descriptions (SSOT)
+> - **Runtime config**: `gateway/gateway.config.json`
+> - **README**: `README.md`
+
 ## Overview
 
 Engram v1 (current commit) は「embed → Qdrant → search」の基本パイプライン。
@@ -207,7 +213,10 @@ recall(query, projectId?)
 | `evictExcess()` in upper-layer/index.ts | FIFO 廃止 |
 | `shouldFossilize()` in amber.ts | fossil 状態廃止 |
 
-## 8. 設定パラメータ（v2）
+## 8. 設定パラメータ（v2 設計時）
+
+> **Diverged**: 実装では config 形式・値が変更されている。
+> 現行値は `gateway/gateway.config.json` を参照。
 
 ```json
 {
