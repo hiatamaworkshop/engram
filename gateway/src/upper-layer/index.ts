@@ -117,7 +117,7 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     ? { must: [{ key: "projectId", match: { value: projectId } }] }
     : undefined;
 
-  const hits = await searchPoints(
+  const rawHits = await searchPoints(
     config.qdrantUrl,
     config.collection,
     queryVector,
@@ -125,7 +125,10 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     limit,
   );
 
-  // hitCount++ for all hits (fire-and-forget)
+  // Filter out noise beyond maxDistance threshold
+  const hits = rawHits.filter((hit) => (1 - hit.score) <= config.maxDistance);
+
+  // hitCount++ for relevant hits only (fire-and-forget)
   if (hits.length > 0) {
     bumpHitCounts(hits);
   }
@@ -252,15 +255,24 @@ export async function applyFeedback(
   const currentWeight = point.payload.weight ?? 0;
   const newWeight = currentWeight + delta;
 
+  // Demote fixed → recent on negative feedback so Digestor can eventually expire it
+  const currentStatus = (point.payload.status as NodeStatus) ?? "recent";
+  const demote = currentStatus === "fixed";
+
+  const patch: Partial<UpperLayerPointPayload> = { weight: newWeight };
+  if (demote) {
+    (patch as Record<string, unknown>).status = "recent";
+  }
+
   await setPayload(
     config.qdrantUrl,
     config.collection,
     [entryId],
-    { weight: newWeight } as Partial<UpperLayerPointPayload>,
+    patch,
   );
 
   console.log(
-    `[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}→${newWeight}`,
+    `[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}→${newWeight}${demote ? " (demoted to recent)" : ""}`,
   );
 
   return { status: "applied", entryId, signal, newWeight };

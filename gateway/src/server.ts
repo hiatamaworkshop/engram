@@ -6,7 +6,8 @@ import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
-import type { RecallRequest, IngestRequest, FeedbackRequest, HealthResponse, NodeStatus } from "./types.js";
+import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateInterval, getIntervalMs, updateTtl, getTtlMs } from "./digestor.js";
+import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -68,6 +69,44 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = (await readBody(req)) as IngestRequest;
       const result = await handleIngest(body);
       sendJson(res, result.status === "accepted" ? 202 : 422, result);
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // POST /activate
+  if (method === "POST" && url === "/activate") {
+    try {
+      const body = (await readBody(req)) as ActivateRequest;
+      if (!body.projectId) {
+        sendJson(res, 400, { error: "projectId is required" });
+        return;
+      }
+      addActiveProject(body.projectId);
+      if (body.intervalMs && body.intervalMs > 0) {
+        updateInterval(body.intervalMs);
+      }
+      if (body.ttlMs && body.ttlMs > 0) {
+        updateTtl(body.ttlMs);
+      }
+      sendJson(res, 200, { status: "activated", projectId: body.projectId, intervalMs: getIntervalMs(), ttlMs: getTtlMs() });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // POST /deactivate
+  if (method === "POST" && url === "/deactivate") {
+    try {
+      const body = (await readBody(req)) as DeactivateRequest;
+      if (!body.projectId) {
+        sendJson(res, 400, { error: "projectId is required" });
+        return;
+      }
+      await removeActiveProject(body.projectId);
+      sendJson(res, 200, { status: "deactivated", projectId: body.projectId });
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
     }
@@ -142,11 +181,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         "POST /recall": "Search for relevant knowledge (query or entryId)",
         "POST /ingest": "Submit capsuleSeeds",
         "POST /feedback": "Submit weight signal (outdated, incorrect, superseded, merged)",
+        "POST /activate": "Add project to Digestor scope",
+        "POST /deactivate": "Remove project from Digestor scope",
         "GET  /scan/:projectId": "Lightweight listing (?limit=10&tag=xxx&status=recent|fixed)",
         "GET  /status": "Store stats (total, recent, fixed)",
         "GET  /health": "Health check",
       },
       store: getUpperLayerStats(),
+      activeProjects: getActiveProjects(),
     });
     return;
   }
@@ -171,12 +213,18 @@ server.headersTimeout = 70_000;
 server.listen(PORT, () => {
   console.log(`[engram-gateway] Listening on port ${PORT}`);
   console.log(`[engram-gateway] qdrant: ${cfg.upperLayer?.qdrantUrl ?? "http://localhost:6333"}`);
+
+  // Start Digestor
+  const qdrantUrl = cfg.upperLayer?.qdrantUrl ?? "http://localhost:6333";
+  const collection = cfg.upperLayer?.collection ?? "engram";
+  startDigestor({ ...cfg.digestor, qdrantUrl, collection });
 });
 
 // ---- Graceful shutdown ----
 
 function shutdown(signal: string): void {
   console.log(`[engram-gateway] ${signal} received — shutting down`);
+  stopDigestor();
   server.close(() => {
     console.log("[engram-gateway] HTTP server closed");
     process.exit(0);

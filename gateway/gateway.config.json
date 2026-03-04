@@ -7,5 +7,10 @@
     "collection": "engram",
     "embeddingModel": "Xenova/all-MiniLM-L6-v2",
     "embeddingDimension": 384
+  },
+  "digestor": {
+    "intervalMs": 300000,
+    "promotionThreshold": 5,
+    "ttlMs": 604800000
   }
 }

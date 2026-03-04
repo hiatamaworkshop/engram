@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { UpperLayerConfig } from "./upper-layer/types.js";
+import type { DigestorConfig } from "./digestor.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = resolve(__dirname, "..", "gateway.config.json");
@@ -9,6 +10,7 @@ const CONFIG_PATH = resolve(__dirname, "..", "gateway.config.json");
 export interface GatewayConfig {
   server: { port: number };
   upperLayer?: Partial<UpperLayerConfig>;
+  digestor?: Partial<Omit<DigestorConfig, "qdrantUrl" | "collection">>;
 }
 
 let _config: GatewayConfig | null = null;

@@ -107,6 +107,18 @@ export interface HealthResponse {
   };
 }
 
+// ---- Activate / Deactivate (Digestor project scope) ----
+
+export interface ActivateRequest {
+  projectId: string;
+  intervalMs?: number;
+  ttlMs?: number;
+}
+
+export interface DeactivateRequest {
+  projectId: string;
+}
+
 // ---- Scan (lightweight listing) ----
 
 export interface ScanEntry {

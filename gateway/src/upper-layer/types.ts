@@ -9,6 +9,7 @@ export interface UpperLayerConfig {
   collection: string;           // default: "engram"
   embeddingModel: string;       // default: "Xenova/all-MiniLM-L6-v2"
   embeddingDimension: number;   // default: 384
+  maxDistance: number;           // default: 0.8 — discard results beyond this cosine distance
 }
 
 export const DEFAULT_UPPER_LAYER_CONFIG: UpperLayerConfig = {
@@ -16,6 +17,7 @@ export const DEFAULT_UPPER_LAYER_CONFIG: UpperLayerConfig = {
   collection: "engram",
   embeddingModel: "Xenova/all-MiniLM-L6-v2",
   embeddingDimension: 384,
+  maxDistance: 0.8,
 };
 
 export interface UpperLayerPointPayload {

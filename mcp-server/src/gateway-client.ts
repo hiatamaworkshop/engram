@@ -189,6 +189,41 @@ export async function feedback(
   return (await res.json()) as FeedbackResponse;
 }
 
+// ---- Activate / Deactivate (Digestor project scope) ----
+
+export async function activateProject(
+  ctx: EngramContext,
+  projectId: string,
+  intervalMs?: number,
+  ttlMs?: number,
+): Promise<void> {
+  const body: Record<string, unknown> = { projectId };
+  if (intervalMs) body.intervalMs = intervalMs;
+  if (ttlMs) body.ttlMs = ttlMs;
+  const res = await fetch(`${ctx.gatewayUrl}/activate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Gateway /activate ${res.status}: ${await res.text()}`);
+  }
+}
+
+export async function deactivateProject(
+  ctx: EngramContext,
+  projectId: string,
+): Promise<void> {
+  const res = await fetch(`${ctx.gatewayUrl}/deactivate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+  if (!res.ok) {
+    throw new Error(`Gateway /deactivate ${res.status}: ${await res.text()}`);
+  }
+}
+
 // ---- Status ----
 
 export async function getStatus(

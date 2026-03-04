@@ -56,4 +56,6 @@ export declare function recallById(ctx: EngramContext, entryId: string): Promise
 export declare function scan(ctx: EngramContext, projectId: string, limit?: number, tag?: string, status?: string): Promise<ScanResponse>;
 export declare function ingest(ctx: EngramContext, capsuleSeeds: NodeSeed[], projectId: string, trigger: IngestTrigger, sessionId?: string): Promise<IngestResponse>;
 export declare function feedback(ctx: EngramContext, entryId: string, signal: FeedbackSignal, reason?: string): Promise<FeedbackResponse>;
+export declare function activateProject(ctx: EngramContext, projectId: string, intervalMs?: number, ttlMs?: number): Promise<void>;
+export declare function deactivateProject(ctx: EngramContext, projectId: string): Promise<void>;
 export declare function getStatus(ctx: EngramContext, projectId?: string): Promise<StatusResponse>;

@@ -25,7 +25,7 @@ import { z } from "zod";
 import { loadContext } from "./types.js";
 import type { NodeSeed } from "./types.js";
 import {
-  checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback,
+  checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 
 const ctx = loadContext();
@@ -459,6 +459,23 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`[engram] MCP v2 running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
+
+  // Activate project for Digestor scope
+  if (ctx.defaultProjectId) {
+    activateProject(ctx, ctx.defaultProjectId).catch((err) => {
+      console.error(`[engram] activate failed (non-fatal): ${(err as Error).message}`);
+    });
+  }
+
+  // Deactivate on process exit
+  const cleanup = () => {
+    if (ctx.defaultProjectId) {
+      deactivateProject(ctx, ctx.defaultProjectId).catch(() => {});
+    }
+  };
+  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("beforeExit", cleanup);
 }
 
 main().catch((err) => {

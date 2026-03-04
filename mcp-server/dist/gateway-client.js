@@ -89,6 +89,32 @@ export async function feedback(ctx, entryId, signal, reason) {
     }
     return (await res.json());
 }
+// ---- Activate / Deactivate (Digestor project scope) ----
+export async function activateProject(ctx, projectId, intervalMs, ttlMs) {
+    const body = { projectId };
+    if (intervalMs)
+        body.intervalMs = intervalMs;
+    if (ttlMs)
+        body.ttlMs = ttlMs;
+    const res = await fetch(`${ctx.gatewayUrl}/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        throw new Error(`Gateway /activate ${res.status}: ${await res.text()}`);
+    }
+}
+export async function deactivateProject(ctx, projectId) {
+    const res = await fetch(`${ctx.gatewayUrl}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+    });
+    if (!res.ok) {
+        throw new Error(`Gateway /deactivate ${res.status}: ${await res.text()}`);
+    }
+}
 // ---- Status ----
 export async function getStatus(ctx, projectId) {
     const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
