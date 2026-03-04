@@ -1,0 +1,174 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { loadConfig } from "./config.js";
+import { handleRecall } from "./handlers/recall.js";
+import { handleIngest } from "./handlers/ingest.js";
+import { handleStatus } from "./handlers/status.js";
+import { handleScan } from "./handlers/scan.js";
+import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
+import type { RecallRequest, IngestRequest, HealthResponse } from "./types.js";
+
+const cfg = loadConfig();
+const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
+const startTime = Date.now();
+
+// ---- UpperLayer init (Qdrant + embedding) ----
+initUpperLayer(cfg.upperLayer).catch((err) => {
+  console.warn(`[gateway] UpperLayer init failed (non-fatal): ${(err as Error).message}`);
+});
+
+// ---- HTTP helpers ----
+
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      try {
+        const raw = Buffer.concat(chunks).toString("utf-8");
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+// ---- Router ----
+
+async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = req.url ?? "/";
+  const method = req.method ?? "GET";
+
+  // POST /recall
+  if (method === "POST" && url === "/recall") {
+    try {
+      const body = (await readBody(req)) as RecallRequest;
+      const result = await handleRecall(body);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // POST /ingest
+  if (method === "POST" && url === "/ingest") {
+    try {
+      const body = (await readBody(req)) as IngestRequest;
+      const result = await handleIngest(body);
+      sendJson(res, result.status === "accepted" ? 202 : 422, result);
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // GET /status
+  if (method === "GET" && url.startsWith("/status")) {
+    try {
+      const parsed = new URL(url, "http://localhost");
+      const projectId = parsed.searchParams.get("projectId") ?? undefined;
+      const result = await handleStatus(projectId);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // GET /scan/:projectId?limit=10
+  const scanMatch = method === "GET" && url.match(/^\/scan\/([^/?]+)/);
+  if (scanMatch) {
+    try {
+      const projectId = decodeURIComponent(scanMatch[1]);
+      const parsed = new URL(url, "http://localhost");
+      const limit = parseInt(parsed.searchParams.get("limit") ?? "10", 10);
+      const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30));
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // GET /health
+  if (method === "GET" && url === "/health") {
+    const ulOk = await checkUpperLayerHealth();
+    const health: HealthResponse = {
+      status: ulOk ? "ok" : "degraded",
+      service: "engram-gateway",
+      uptime: Math.floor((Date.now() - startTime) / 1000),
+      downstream: {
+        qdrant: ulOk ? "ok" : "unreachable",
+        embedding: getUpperLayerStats().embeddingReady ? "ok" : "not-ready",
+      },
+    };
+    sendJson(res, 200, health);
+    return;
+  }
+
+  // GET /
+  if (method === "GET" && url === "/") {
+    sendJson(res, 200, {
+      service: "engram-gateway",
+      version: "1.0.0",
+      endpoints: {
+        "POST /recall": "Search for relevant knowledge (query or entryId)",
+        "POST /ingest": "Submit session knowledge (capsuleSeeds required)",
+        "GET  /scan/:projectId": "Lightweight listing (?limit=10)",
+        "GET  /status": "UpperLayer stats",
+        "GET  /health": "Health check",
+      },
+      upperLayer: getUpperLayerStats(),
+    });
+    return;
+  }
+
+  sendJson(res, 404, { error: "Not found" });
+}
+
+// ---- Start ----
+
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch((err) => {
+    console.error("[gateway] Unhandled error:", err);
+    if (!res.headersSent) {
+      sendJson(res, 500, { error: "Internal server error" });
+    }
+  });
+});
+
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 70_000;
+
+server.listen(PORT, () => {
+  console.log(`[engram-gateway] Listening on port ${PORT}`);
+  console.log(`[engram-gateway] qdrant: ${cfg.upperLayer?.qdrantUrl ?? "http://localhost:6333"}`);
+});
+
+// ---- Graceful shutdown ----
+
+function shutdown(signal: string): void {
+  console.log(`[engram-gateway] ${signal} received — shutting down`);
+  server.close(() => {
+    console.log("[engram-gateway] HTTP server closed");
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.warn("[engram-gateway] Forcing exit after timeout");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,0 +1,12 @@
+{
+  "server": {
+    "port": 3100
+  },
+  "upperLayer": {
+    "qdrantUrl": "http://localhost:6333",
+    "recentCollection": "recent",
+    "embeddingModel": "Xenova/all-MiniLM-L6-v2",
+    "embeddingDimension": 384,
+    "maxNodesPerProject": 500
+  }
+}

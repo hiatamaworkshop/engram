@@ -1,0 +1,22 @@
+{
+  "name": "@engram/gateway",
+  "version": "1.0.0",
+  "description": "Engram Gateway — cross-session memory API + Qdrant vector store",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  },
+  "author": "Sphere Project",
+  "license": "MIT"
+}

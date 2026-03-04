@@ -1,0 +1,57 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: engram-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: engram-gateway
+    environment:
+      PORT: "3100"
+      QDRANT_URL: http://qdrant:6333
+    ports:
+      - "3100:3100"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+networks:
+  default:
+    name: engram-network
+
+volumes:
+  qdrant-data:
+    name: engram-qdrant-data

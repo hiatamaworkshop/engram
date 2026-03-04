@@ -1,0 +1,197 @@
+{
+  "version": 2,
+  "description": "Sphere Sidecar — Extraction Rulebook for Volunteer LLM Agents",
+
+  "context": {
+    "whatIsSphere": "Sphere is a living knowledge graph. Nodes are born (incarnated), accumulate heat through evaluations, and eventually decay into fossils. The strongest nodes ascend to amber (permanent). Your job as a volunteer is to extract knowledge from a coding session and produce NodeSeeds — the raw material for new Sphere nodes.",
+    "whatIsNodeSeed": "A NodeSeed is a pre-incarnation node. It has tags (spatial coordinates), a summary (visible from afar), and optional content (visible on focus). After you submit NodeSeeds, the incarnation pipeline handles vectorization, flag classification, and database storage.",
+    "whatIsContribute": "Your output gets packaged into an ExperienceCapsule and submitted to POST /sphere/contribute. The incarnation pipeline (Gatekeeper → Parser → Tagger → Packer → Bookkeeper) does the rest. You do NOT need to set metrics (h/w/d) — Packer assigns initial metrics based on tier."
+  },
+
+  "nodeSeedFormat": {
+    "description": "Each extracted knowledge unit becomes a NodeSeed.",
+    "schema": {
+      "summary": "string — Brief headline of the discovery (20-200 chars). This gets vectorized for spatial position and SHA256-hashed for dedup. Write it like a search result title.",
+      "tags": "string[] — 2-5 lowercase hyphenated keywords. Used by Tagger for 16-bit classification flags and by vector search for spatial positioning.",
+      "content": "string (optional) — Detailed explanation visible when a user focuses on this node. Include implementation details, rationale, gotchas. Omit for trivial nodes.",
+      "flags": "number — Set to 0. The Tagger derives proper 16-bit flags from your tags."
+    },
+    "examples": [
+      {
+        "summary": "Implemented pull-based volunteer queue for distributed LLM extraction in Gateway",
+        "tags": ["architecture", "feature", "typescript", "distributed-systems"],
+        "content": "Created volunteer-queue.ts with enqueue/poll/submit lifecycle. Reaper handles timeout (5min claim, 10min pending). Overflow protection spills oldest 25% to Extractor when queue exceeds 100 items. FIFO ordering ensures fair distribution.",
+        "flags": 0
+      },
+      {
+        "summary": "Fixed JWT token refresh to auto-renew before session expiry with 5-minute window",
+        "tags": ["bugfix", "security", "authentication"],
+        "content": "Token middleware now checks expiry before each API call. If within 5 minutes of expiry, triggers background refresh. Handles timezone edge cases in expiry comparison.",
+        "flags": 0
+      },
+      {
+        "summary": "Chose Dual Timeout pattern (idle + maxWait) for IngestBuffer batching",
+        "tags": ["design-decision", "architecture", "performance"],
+        "content": "Idle timeout (2s) flushes when activity stops. MaxWait (10s) provides absolute upper bound. Capacity trigger (20 items or 50KB) for burst protection. Follows Periphery EntryBuffer pattern.",
+        "flags": 0
+      }
+    ]
+  },
+
+  "tagTaxonomy": {
+    "description": "Tags determine a node's spatial position and classification flags. Combine 1 domain + 1 action + 0-2 technology + 0-1 free-form. Minimum 2, maximum 5.",
+    "domains": [
+      "architecture", "api", "database", "ui", "testing",
+      "devops", "security", "performance", "documentation",
+      "distributed-systems", "data-pipeline"
+    ],
+    "actions": [
+      "bugfix", "feature", "refactor", "config", "migration",
+      "dependency", "debugging", "design-decision", "investigation",
+      "workaround", "deprecation"
+    ],
+    "technologies": [
+      "typescript", "python", "rust", "go", "docker",
+      "node", "react", "sql", "llm", "mcp",
+      "redis", "postgres", "kubernetes", "websocket"
+    ],
+    "rules": [
+      "Always lowercase, hyphenated (e.g. 'design-decision', not 'DesignDecision').",
+      "Prefer taxonomy terms. Use free-form only when no taxonomy term fits.",
+      "At least 1 domain tag and 1 action tag per node.",
+      "Technology tags are optional but helpful for search precision."
+    ],
+    "taggingExamples": [
+      { "scenario": "Added a new REST endpoint for user profiles", "tags": ["api", "feature", "typescript"] },
+      { "scenario": "Decided to use Redis for session caching instead of in-memory", "tags": ["design-decision", "architecture", "redis", "performance"] },
+      { "scenario": "Fixed N+1 query in the dashboard loader", "tags": ["bugfix", "database", "performance", "sql"] },
+      { "scenario": "Migrated Dockerfile from alpine to distroless", "tags": ["migration", "devops", "docker"] },
+      { "scenario": "Investigated memory leak in WebSocket handler", "tags": ["investigation", "debugging", "websocket", "performance"] }
+    ]
+  },
+
+  "splitting": {
+    "description": "How to split a coding session into multiple NodeSeeds.",
+    "maxNodesPerSession": 8,
+    "minNodesPerSession": 1,
+    "guidelines": [
+      "One node per distinct knowledge unit: a decision made, a pattern discovered, a bug found and fixed, a new capability added.",
+      "Do NOT create nodes for trivial changes (typo fixes, import reordering, whitespace cleanup).",
+      "Merge closely related changes into a single node. 'Fixed auth + added auth tests' = one node, not two.",
+      "If a session has only one notable change, extract one node. Do not pad.",
+      "Prefer fewer high-quality nodes over many shallow ones."
+    ],
+    "splittingExamples": [
+      {
+        "sessionSummary": "Added dark mode toggle, created theme CSS variables, stored preference in localStorage, fixed contrast issues in sidebar",
+        "nodeCount": 1,
+        "reason": "All changes serve one feature (dark mode). One node."
+      },
+      {
+        "sessionSummary": "Implemented volunteer queue for extraction, also fixed a JWT refresh bug, and updated docker-compose for new service",
+        "nodeCount": 3,
+        "reason": "Three unrelated changes: queue implementation, auth bugfix, infra config."
+      },
+      {
+        "sessionSummary": "Investigated performance issue, discovered N+1 query, decided to add DataLoader pattern, implemented batch resolver",
+        "nodeCount": 2,
+        "reason": "Investigation + discovery = one node. Implementation of the solution = another."
+      }
+    ]
+  },
+
+  "summaryWriting": {
+    "description": "Summary quality is critical — it determines the node's spatial position (via vectorization) and identity (SHA256 hash for dedup).",
+    "rules": [
+      "20-200 characters. Concise but specific.",
+      "Start with a verb or noun phrase describing WHAT happened.",
+      "Include the key technology or component name for search precision.",
+      "Avoid vague phrases: 'Updated code' → 'Replaced polling with WebSocket push for real-time status updates'.",
+      "Avoid session-specific language: 'Today I fixed...' → 'Fixed race condition in connection pool cleanup'."
+    ],
+    "good": [
+      "Implemented pull-based volunteer queue for distributed LLM extraction in Gateway",
+      "Chose Dual Timeout pattern (idle + maxWait) for IngestBuffer batching",
+      "Fixed JWT token refresh to auto-renew before session expiry with 5-minute window",
+      "Discovered that PostgreSQL NOTIFY has 8000-byte payload limit, switched to polling for large messages"
+    ],
+    "bad": [
+      "Updated the code (too vague — what code? what change?)",
+      "Fixed a bug (which bug? where?)",
+      "Worked on authentication stuff (not a knowledge unit)",
+      "Today I spent 3 hours debugging (session narrative, not knowledge)"
+    ]
+  },
+
+  "contentWriting": {
+    "description": "Content is the L3 detail visible when a user focuses on the node. Optional but valuable for non-trivial changes.",
+    "rules": [
+      "Include implementation details, rationale, and gotchas.",
+      "Write for a developer who will encounter the same problem months later.",
+      "Keep under 500 characters. Be dense with information.",
+      "Omit for trivial or self-explanatory changes."
+    ]
+  },
+
+  "capsuleStructure": {
+    "description": "Your output gets wrapped into an ExperienceCapsule. Understanding tiers helps you prioritize.",
+    "tiers": {
+      "topTier": "Max 2 nodes. High-value discoveries: architectural decisions, design patterns, critical bugfixes. Gets higher initial weight in Sphere. Use sparingly.",
+      "normalNodes": "Max 10 nodes. Standard knowledge units. Most of your output goes here.",
+      "ghostNodes": "Max 3 nodes. Low-confidence or aspirational notes: things you noticed but couldn't verify, TODO items discovered, potential issues spotted. Short TTL in Sphere."
+    },
+    "tierAssignment": [
+      "topTier: Decisions that affect project architecture, security policies, API contracts, performance-critical patterns.",
+      "normalNodes: Implementation details, bugfixes, configuration changes, dependency updates, test strategies.",
+      "ghostNodes: 'Noticed X might be a problem', 'Should investigate Y', 'Potential optimization in Z'. Hunches and leads, not certainties."
+    ]
+  },
+
+  "outputFormat": {
+    "description": "Return a JSON object with tier arrays. No text outside the JSON.",
+    "schema": {
+      "topTier": "NodeSeed[] (0-2 items)",
+      "normalNodes": "NodeSeed[] (0-10 items)",
+      "ghostNodes": "NodeSeed[] (0-3 items)"
+    },
+    "example": {
+      "topTier": [
+        {
+          "summary": "Chose pull-based volunteer queue over push-based Extractor as primary extraction path",
+          "tags": ["design-decision", "architecture", "distributed-systems"],
+          "content": "Push-based IngestBuffer sends all raw data to server-side Extractor (costs API credits). Pull-based VolunteerQueue lets idle LLM clients claim work items — zero cost. Extractor becomes fallback only (10min timeout).",
+          "flags": 0
+        }
+      ],
+      "normalNodes": [
+        {
+          "summary": "Implemented VolunteerQueue with enqueue/poll/submit lifecycle and FIFO ordering",
+          "tags": ["feature", "architecture", "typescript"],
+          "content": "In-memory queue with states: pending → claimed → completed → Digestor. Reaper handles timeouts. Overflow protection at 100 items.",
+          "flags": 0
+        },
+        {
+          "summary": "Fixed JWT token refresh to auto-renew before session expiry with 5-minute window",
+          "tags": ["bugfix", "security", "authentication"],
+          "content": "Token middleware checks expiry before each API call, triggers background refresh if within 5 minutes.",
+          "flags": 0
+        }
+      ],
+      "ghostNodes": [
+        {
+          "summary": "VolunteerQueue may need rate limiting per user to prevent abuse",
+          "tags": ["investigation", "security", "architecture"],
+          "flags": 0
+        }
+      ]
+    }
+  },
+
+  "antiPatterns": [
+    "Do NOT assign h/w/d scores — Packer handles initial metrics from tier classification.",
+    "Do NOT create a node for every file touched. One node per knowledge unit, not per file.",
+    "Do NOT include session narrative ('I spent 2 hours...'). Extract the knowledge, not the story.",
+    "Do NOT create nodes for changes you don't understand. If the session text is unclear, extract fewer nodes.",
+    "Do NOT fabricate content beyond what the session text describes."
+  ]
+}

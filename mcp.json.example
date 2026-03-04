@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/engram/mcp-server/dist/index.js"],
+      "env": {
+        "GATEWAY_URL": "http://localhost:3100"
+      }
+    }
+  }
+}
