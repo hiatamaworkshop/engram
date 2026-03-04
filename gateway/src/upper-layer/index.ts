@@ -86,6 +86,7 @@ export async function ingestNodes(
   const vectors = await embedTexts(texts);
 
   // Build points
+  const now = Date.now();
   const points = nodes.map((node, i) => ({
     id: randomUUID(),
     vector: vectors[i],
@@ -100,6 +101,7 @@ export async function ingestNodes(
       status: "recent" as NodeStatus,
       hitCount: 0,
       weight: 0,
+      ingestedAt: now,
     } satisfies UpperLayerPointPayload,
   }));
 
@@ -168,6 +170,7 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
 export interface ListFilters {
   tag?: string;
   status?: NodeStatus;
+  sort?: "recent" | "weight";
 }
 
 export async function listNodes(projectId: string, limit: number, filters?: ListFilters): Promise<ScanEntry[]> {
@@ -183,11 +186,19 @@ export async function listNodes(projectId: string, limit: number, filters?: List
     must.push({ key: "status", match: { value: filters.status } });
   }
 
+  // Sort mapping: "recent" → newest first, "weight" → heaviest first
+  const orderBy = filters?.sort === "recent"
+    ? { key: "ingestedAt", direction: "desc" as const }
+    : filters?.sort === "weight"
+      ? { key: "weight", direction: "desc" as const }
+      : undefined;
+
   const points = await scrollPoints(
     config.qdrantUrl,
     config.collection,
     { must },
     limit,
+    orderBy,
   );
 
   return points.map((p) => ({

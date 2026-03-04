@@ -48,12 +48,14 @@ export async function recallById(ctx, entryId) {
     return (await res.json());
 }
 // ---- Scan ----
-export async function scan(ctx, projectId, limit = 10, tag, status) {
+export async function scan(ctx, projectId, limit = 10, tag, status, sort) {
     const params = new URLSearchParams({ limit: String(limit) });
     if (tag)
         params.set("tag", tag);
     if (status)
         params.set("status", status);
+    if (sort)
+        params.set("sort", sort);
     const res = await fetch(`${ctx.gatewayUrl}/scan/${encodeURIComponent(projectId)}?${params}`);
     if (!res.ok) {
         throw new Error(`Gateway /scan ${res.status}: ${await res.text()}`);

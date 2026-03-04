@@ -133,10 +133,12 @@ export async function scan(
   limit = 10,
   tag?: string,
   status?: string,
+  sort?: string,
 ): Promise<ScanResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (tag) params.set("tag", tag);
   if (status) params.set("status", status);
+  if (sort) params.set("sort", sort);
   const res = await fetch(
     `${ctx.gatewayUrl}/scan/${encodeURIComponent(projectId)}?${params}`,
   );

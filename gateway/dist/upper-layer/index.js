@@ -50,6 +50,7 @@ export async function ingestNodes(nodes, projectId, trigger = "session-end", ses
     // Batch embed
     const vectors = await embedTexts(texts);
     // Build points
+    const now = Date.now();
     const points = nodes.map((node, i) => ({
         id: randomUUID(),
         vector: vectors[i],
@@ -64,6 +65,7 @@ export async function ingestNodes(nodes, projectId, trigger = "session-end", ses
             status: "recent",
             hitCount: 0,
             weight: 0,
+            ingestedAt: now,
         },
     }));
     // Upsert
@@ -119,7 +121,13 @@ export async function listNodes(projectId, limit, filters) {
     if (filters?.status) {
         must.push({ key: "status", match: { value: filters.status } });
     }
-    const points = await scrollPoints(config.qdrantUrl, config.collection, { must }, limit);
+    // Sort mapping: "recent" → newest first, "weight" → heaviest first
+    const orderBy = filters?.sort === "recent"
+        ? { key: "ingestedAt", direction: "desc" }
+        : filters?.sort === "weight"
+            ? { key: "weight", direction: "desc" }
+            : undefined;
+    const points = await scrollPoints(config.qdrantUrl, config.collection, { must }, limit, orderBy);
     return points.map((p) => ({
         id: p.id,
         summary: p.payload.summary,

@@ -19,6 +19,7 @@ export interface UpperLayerPointPayload {
     hitCount: number;
     weight: number;
     ttl?: number;
+    ingestedAt: number;
 }
 export interface SearchOptions {
     query: string;

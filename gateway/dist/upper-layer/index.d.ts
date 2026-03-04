@@ -8,6 +8,7 @@ export declare function searchNodes(options: SearchOptions): Promise<RecallResul
 export interface ListFilters {
     tag?: string;
     status?: NodeStatus;
+    sort?: "recent" | "weight";
 }
 export declare function listNodes(projectId: string, limit: number, filters?: ListFilters): Promise<ScanEntry[]>;
 export declare function getNodeById(entryId: string): Promise<RecallResult | null>;

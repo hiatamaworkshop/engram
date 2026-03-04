@@ -32,6 +32,7 @@ export interface UpperLayerPointPayload {
   hitCount: number;       // recall hit counter (informational)
   weight: number;         // survival score (Digestor uses for promotion/expiry)
   ttl?: number;           // countdown in seconds — set by Digestor on first batch, decremented each tick
+  ingestedAt: number;     // Unix ms timestamp — set on ingest, used for sort=recent
 }
 
 export interface SearchOptions {

@@ -132,7 +132,7 @@ async function handleRequest(req, res) {
         }
         return;
     }
-    // GET /scan/:projectId?limit=10
+    // GET /scan/:projectId?limit=10&sort=recent
     const scanMatch = method === "GET" && url.match(/^\/scan\/([^/?]+)/);
     if (scanMatch) {
         try {
@@ -142,7 +142,9 @@ async function handleRequest(req, res) {
             const limit = parseInt(parsed.searchParams.get("limit") ?? "10", 10);
             const tag = parsed.searchParams.get("tag") ?? undefined;
             const status = parsed.searchParams.get("status");
-            const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30), tag, status);
+            const sortRaw = parsed.searchParams.get("sort") ?? undefined;
+            const sort = (sortRaw === "recent" || sortRaw === "weight") ? sortRaw : undefined;
+            const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30), tag, status, sort);
             sendJson(res, 200, result);
         }
         catch (err) {

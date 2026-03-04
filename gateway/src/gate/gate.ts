@@ -69,11 +69,11 @@ function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[]): void
     errors.push({ code: "SUMMARY_TOO_LONG", message: `${prefix}: summary too long: ${seed.summary.length} > ${SEED_CONSTRAINTS.maxSummaryLength}.` });
   }
 
-  // tags
-  if (!seed.tags || !Array.isArray(seed.tags) || seed.tags.length < SEED_CONSTRAINTS.minTags) {
-    errors.push({ code: "TOO_FEW_TAGS", message: `${prefix}: at least ${SEED_CONSTRAINTS.minTags} tag required.` });
+  // tags (optional — auto-generated if empty)
+  if (seed.tags && !Array.isArray(seed.tags)) {
+    errors.push({ code: "INVALID_TAGS", message: `${prefix}: tags must be an array.` });
   }
-  if (seed.tags && seed.tags.length > SEED_CONSTRAINTS.maxTags) {
+  if (seed.tags && Array.isArray(seed.tags) && seed.tags.length > SEED_CONSTRAINTS.maxTags) {
     errors.push({ code: "TOO_MANY_TAGS", message: `${prefix}: too many tags: ${seed.tags.length} > ${SEED_CONSTRAINTS.maxTags}.` });
   }
 

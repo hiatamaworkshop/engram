@@ -159,7 +159,7 @@ WHEN TO CALL (proactive triggers):
 
 const nodeSeedSchema = z.object({
   summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
-  tags: z.array(z.string()).min(1).max(5).describe("1-5 lowercase hyphenated tags."),
+  tags: z.array(z.string()).min(0).max(5).default([]).describe("0-5 lowercase hyphenated tags. Auto-generated from summary if empty."),
   content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
 });
 
@@ -407,8 +407,9 @@ For semantic search, use engram_pull instead.`,
     tag: z.string().optional().describe("Filter by tag (exact match, e.g. 'docker')"),
     status: z.enum(["recent", "fixed"]).optional().describe("Filter by node status"),
     limit: z.number().min(1).max(30).default(10).describe("Max entries to return"),
+    sort: z.enum(["recent", "weight"]).optional().describe("Sort order: 'recent' (newest first) or 'weight' (heaviest first)"),
   },
-  async ({ projectId, tag, status, limit }) => {
+  async ({ projectId, tag, status, limit, sort }) => {
     const healthy = await checkHealth(ctx);
     if (!healthy) {
       return {
@@ -426,7 +427,7 @@ For semantic search, use engram_pull instead.`,
     }
 
     try {
-      const result = await scan(ctx, resolvedProjectId, limit, tag, status);
+      const result = await scan(ctx, resolvedProjectId, limit, tag, status, sort);
 
       if (result.entries.length === 0) {
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");

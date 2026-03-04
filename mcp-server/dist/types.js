@@ -37,8 +37,7 @@ function detectProjectId() {
         const cwd = resolve(".");
         const home = process.env.HOME || process.env.USERPROFILE || "";
         if (home && resolve(home) === cwd) {
-            // Home directory — return undefined to force explicit projectId
-            return undefined;
+            return "general";
         }
         const name = basename(cwd);
         if (name && name !== "/" && name !== ".")
@@ -47,6 +46,6 @@ function detectProjectId() {
     catch {
         // ignore
     }
-    return undefined;
+    return "general";
 }
 //# sourceMappingURL=types.js.map

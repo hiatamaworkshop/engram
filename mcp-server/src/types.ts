@@ -50,8 +50,7 @@ function detectProjectId(): string | undefined {
     const cwd = resolve(".");
     const home = process.env.HOME || process.env.USERPROFILE || "";
     if (home && resolve(home) === cwd) {
-      // Home directory — return undefined to force explicit projectId
-      return undefined;
+      return "general";
     }
     const name = basename(cwd);
     if (name && name !== "/" && name !== ".") return name;
@@ -59,7 +58,7 @@ function detectProjectId(): string | undefined {
     // ignore
   }
 
-  return undefined;
+  return "general";
 }
 
 // ============================================================

@@ -1,9 +1,18 @@
 import { validateIngest } from "../gate/gate.js";
+import { autoGenerateTags } from "../gate/auto-tags.js";
 import { ingestNodes } from "../upper-layer/index.js";
 /**
- * POST /ingest — capsuleSeeds → validate → embed → Qdrant
+ * POST /ingest — capsuleSeeds → validate → auto-tag → embed → Qdrant
  */
 export async function handleIngest(body) {
+    // ---- Normalize missing tags to empty array ----
+    if (body?.capsuleSeeds) {
+        for (const seed of body.capsuleSeeds) {
+            if (!seed.tags || !Array.isArray(seed.tags)) {
+                seed.tags = [];
+            }
+        }
+    }
     // ---- Gate validation ----
     const gate = validateIngest(body);
     if (!gate.valid) {
@@ -14,6 +23,12 @@ export async function handleIngest(body) {
             reason: reasons,
             projectId: body?.projectId,
         };
+    }
+    // ---- Auto-generate tags for seeds with empty tags ----
+    for (const seed of body.capsuleSeeds) {
+        if (seed.tags.length === 0) {
+            seed.tags = autoGenerateTags(seed.summary, seed.content);
+        }
     }
     // ---- Ingest to Qdrant ----
     const trigger = body.trigger ?? "session-end";
