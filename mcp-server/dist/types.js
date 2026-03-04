@@ -14,9 +14,11 @@ export function loadContext() {
 }
 /**
  * Auto-derive projectId from git remote or cwd.
- * Priority: git remote origin → cwd basename
+ * Priority: ENGRAM_PROJECT_ID env (checked in loadContext) → git remote origin → cwd basename
+ * Skips cwd fallback if cwd is the user's home directory (avoids silent mis-scoping).
  */
 function detectProjectId() {
+    // 1. git remote origin → "owner/repo" format
     try {
         const remote = execSync("git remote get-url origin", {
             encoding: "utf-8",
@@ -30,8 +32,15 @@ function detectProjectId() {
     catch {
         // not a git repo or git not available
     }
+    // 2. cwd basename — but NOT if cwd is the user's home directory
     try {
-        const name = basename(resolve("."));
+        const cwd = resolve(".");
+        const home = process.env.HOME || process.env.USERPROFILE || "";
+        if (home && resolve(home) === cwd) {
+            // Home directory — return undefined to force explicit projectId
+            return undefined;
+        }
+        const name = basename(cwd);
         if (name && name !== "/" && name !== ".")
             return name;
     }

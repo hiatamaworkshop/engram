@@ -6,7 +6,7 @@ import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
-import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateInterval, getIntervalMs } from "./digestor.js";
+import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateInterval, getIntervalMs, updateTtl, getTtlMs } from "./digestor.js";
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
 const startTime = Date.now();
@@ -79,7 +79,10 @@ async function handleRequest(req, res) {
             if (body.intervalMs && body.intervalMs > 0) {
                 updateInterval(body.intervalMs);
             }
-            sendJson(res, 200, { status: "activated", projectId: body.projectId, intervalMs: getIntervalMs() });
+            if (body.ttlMs && body.ttlMs > 0) {
+                updateTtl(body.ttlMs);
+            }
+            sendJson(res, 200, { status: "activated", projectId: body.projectId, intervalMs: getIntervalMs(), ttlMs: getTtlMs() });
         }
         catch (err) {
             sendJson(res, 400, { error: err.message });
@@ -94,7 +97,7 @@ async function handleRequest(req, res) {
                 sendJson(res, 400, { error: "projectId is required" });
                 return;
             }
-            removeActiveProject(body.projectId);
+            await removeActiveProject(body.projectId);
             sendJson(res, 200, { status: "deactivated", projectId: body.projectId });
         }
         catch (err) {

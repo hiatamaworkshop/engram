@@ -87,7 +87,7 @@ Set crossProject=true to search across ALL projects.`, {
             return [
                 `[${i + 1}] ${r.summary}`,
                 r.content ? `    ${r.content}` : null,
-                `    hits=${r.hitCount} weight=${r.weight} status=${r.status} dist=${r.distance.toFixed(3)}`,
+                `    hits=${r.hitCount} weight=${r.weight} status=${r.status} relevance=${r.relevance.toFixed(3)}`,
                 `    tags: ${r.tags.join(", ") || "(none)"}`,
                 `    id: ${r.id}`,
             ]

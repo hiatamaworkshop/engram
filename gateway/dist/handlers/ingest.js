@@ -18,7 +18,7 @@ export async function handleIngest(body) {
     // ---- Ingest to Qdrant ----
     const trigger = body.trigger ?? "session-end";
     const sessionId = body.sessionId ?? "unknown";
-    console.log(`[gateway] ingest → qdrant: project=${body.projectId} trigger=${trigger} seeds=${body.capsuleSeeds.length}`);
+    console.log(`[gateway] ingest -> qdrant: project=${body.projectId} trigger=${trigger} seeds=${body.capsuleSeeds.length}`);
     const { ingested } = await ingestNodes(body.capsuleSeeds, body.projectId, trigger, sessionId);
     return {
         status: "accepted",

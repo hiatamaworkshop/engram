@@ -18,7 +18,7 @@ export declare function getUpperLayerStats(): {
     embeddingReady: boolean;
     collection: string;
 };
-export declare function getNodeCounts(): Promise<{
+export declare function getNodeCounts(projectId?: string): Promise<{
     total: number;
     recent: number;
     fixed: number;

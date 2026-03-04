@@ -8,7 +8,7 @@ import type { EngramContext, NodeSeed, NodeStatus, IngestTrigger, FeedbackSignal
 
 export interface RecallResult {
   id: string;
-  distance: number;
+  relevance: number;
   summary: string;
   tags: string[];
   hitCount: number;

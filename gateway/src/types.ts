@@ -62,7 +62,7 @@ export interface FeedbackResponse {
 
 export interface RecallResult {
   id: string;
-  distance: number;
+  relevance: number;
   summary: string;
   tags: string[];
   hitCount: number;

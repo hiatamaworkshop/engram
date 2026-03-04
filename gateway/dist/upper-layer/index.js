@@ -74,14 +74,17 @@ export async function searchNodes(options) {
     const filter = projectId
         ? { must: [{ key: "projectId", match: { value: projectId } }] }
         : undefined;
-    const hits = await searchPoints(config.qdrantUrl, config.collection, queryVector, filter, limit);
-    // hitCount++ for all hits (fire-and-forget)
+    const rawHits = await searchPoints(config.qdrantUrl, config.collection, queryVector, filter, limit);
+    // Filter out noise below minimum relevance threshold
+    const minRelevance = 1 - config.maxDistance;
+    const hits = rawHits.filter((hit) => hit.score >= minRelevance);
+    // hitCount++ for relevant hits only (fire-and-forget)
     if (hits.length > 0) {
         bumpHitCounts(hits);
     }
     return hits.map((hit) => ({
         id: hit.id,
-        distance: 1 - hit.score,
+        relevance: hit.score,
         summary: hit.payload.summary,
         tags: hit.payload.tags,
         hitCount: (hit.payload.hitCount ?? 0) + 1, // reflect the bump
@@ -124,7 +127,7 @@ export async function getNodeById(entryId) {
     bumpHitCounts([point]);
     return {
         id: point.id,
-        distance: 0,
+        relevance: 1,
         summary: point.payload.summary,
         tags: point.payload.tags,
         hitCount: (point.payload.hitCount ?? 0) + 1,
@@ -173,7 +176,7 @@ export async function applyFeedback(entryId, signal, _reason) {
         patch.status = "recent";
     }
     await setPayload(config.qdrantUrl, config.collection, [entryId], patch);
-    console.log(`[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}→${newWeight}${demote ? " (demoted to recent)" : ""}`);
+    console.log(`[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}->${newWeight}${demote ? " (demoted to recent)" : ""}`);
     return { status: "applied", entryId, signal, newWeight };
 }
 // ---- Stats / Health ----
@@ -189,13 +192,16 @@ export function getUpperLayerStats() {
         collection: config.collection,
     };
 }
-export async function getNodeCounts() {
+export async function getNodeCounts(projectId) {
     if (!initialized)
         return { total: 0, recent: 0, fixed: 0 };
+    const projectFilter = projectId
+        ? [{ key: "projectId", match: { value: projectId } }]
+        : [];
     const [total, fixed] = await Promise.all([
-        countPoints(config.qdrantUrl, config.collection),
+        countPoints(config.qdrantUrl, config.collection, projectFilter.length > 0 ? { must: projectFilter } : undefined),
         countPoints(config.qdrantUrl, config.collection, {
-            must: [{ key: "status", match: { value: "fixed" } }],
+            must: [...projectFilter, { key: "status", match: { value: "fixed" } }],
         }),
     ]);
     return { total, recent: total - fixed, fixed };

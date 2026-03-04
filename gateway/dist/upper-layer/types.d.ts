@@ -4,6 +4,7 @@ export interface UpperLayerConfig {
     collection: string;
     embeddingModel: string;
     embeddingDimension: number;
+    maxDistance: number;
 }
 export declare const DEFAULT_UPPER_LAYER_CONFIG: UpperLayerConfig;
 export interface UpperLayerPointPayload {

@@ -25,7 +25,11 @@ export function addActiveProject(projectId) {
     activeProjects.add(projectId);
     console.log(`[digestor] project activated: ${projectId} (active: ${activeProjects.size})`);
 }
-export function removeActiveProject(projectId) {
+export async function removeActiveProject(projectId) {
+    // Run final batch before deactivation
+    await runProjectBatch(projectId, Date.now()).catch((err) => {
+        console.warn(`[digestor] final batch failed for ${projectId}: ${err.message}`);
+    });
     activeProjects.delete(projectId);
     console.log(`[digestor] project deactivated: ${projectId} (active: ${activeProjects.size})`);
 }
@@ -57,6 +61,13 @@ export function updateInterval(intervalMs) {
 }
 export function getIntervalMs() {
     return config.intervalMs;
+}
+export function updateTtl(ttlMs) {
+    config.ttlMs = ttlMs;
+    console.log(`[digestor] ttl updated: ${ttlMs}ms`);
+}
+export function getTtlMs() {
+    return config.ttlMs;
 }
 export function stopDigestor() {
     if (timer) {

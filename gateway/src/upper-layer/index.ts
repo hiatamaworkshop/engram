@@ -125,8 +125,9 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     limit,
   );
 
-  // Filter out noise beyond maxDistance threshold
-  const hits = rawHits.filter((hit) => (1 - hit.score) <= config.maxDistance);
+  // Filter out noise below minimum relevance threshold
+  const minRelevance = 1 - config.maxDistance;
+  const hits = rawHits.filter((hit) => hit.score >= minRelevance);
 
   // hitCount++ for relevant hits only (fire-and-forget)
   if (hits.length > 0) {
@@ -135,7 +136,7 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
 
   return hits.map((hit) => ({
     id: hit.id,
-    distance: 1 - hit.score,
+    relevance: hit.score,
     summary: hit.payload.summary,
     tags: hit.payload.tags,
     hitCount: (hit.payload.hitCount ?? 0) + 1,  // reflect the bump
@@ -197,7 +198,7 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
 
   return {
     id: point.id,
-    distance: 0,
+    relevance: 1,
     summary: point.payload.summary,
     tags: point.payload.tags,
     hitCount: (point.payload.hitCount ?? 0) + 1,
@@ -272,7 +273,7 @@ export async function applyFeedback(
   );
 
   console.log(
-    `[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}→${newWeight}${demote ? " (demoted to recent)" : ""}`,
+    `[upper-layer] feedback: id=${entryId} signal=${signal} weight=${currentWeight}->${newWeight}${demote ? " (demoted to recent)" : ""}`,
   );
 
   return { status: "applied", entryId, signal, newWeight };
@@ -297,17 +298,23 @@ export function getUpperLayerStats(): {
   };
 }
 
-export async function getNodeCounts(): Promise<{
+export async function getNodeCounts(projectId?: string): Promise<{
   total: number;
   recent: number;
   fixed: number;
 }> {
   if (!initialized) return { total: 0, recent: 0, fixed: 0 };
 
+  const projectFilter = projectId
+    ? [{ key: "projectId", match: { value: projectId } }]
+    : [];
+
   const [total, fixed] = await Promise.all([
-    countPoints(config.qdrantUrl, config.collection),
+    countPoints(config.qdrantUrl, config.collection,
+      projectFilter.length > 0 ? { must: projectFilter } : undefined,
+    ),
     countPoints(config.qdrantUrl, config.collection, {
-      must: [{ key: "status", match: { value: "fixed" } }],
+      must: [...projectFilter, { key: "status", match: { value: "fixed" } }],
     }),
   ]);
 

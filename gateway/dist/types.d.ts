@@ -31,7 +31,7 @@ export interface FeedbackResponse {
 }
 export interface RecallResult {
     id: string;
-    distance: number;
+    relevance: number;
     summary: string;
     tags: string[];
     hitCount: number;
@@ -74,6 +74,7 @@ export interface HealthResponse {
 export interface ActivateRequest {
     projectId: string;
     intervalMs?: number;
+    ttlMs?: number;
 }
 export interface DeactivateRequest {
     projectId: string;

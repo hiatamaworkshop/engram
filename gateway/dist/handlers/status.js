@@ -2,8 +2,8 @@ import { getUpperLayerStats, getNodeCounts } from "../upper-layer/index.js";
 /**
  * GET /status
  */
-export async function handleStatus(_projectId) {
-    const counts = await getNodeCounts();
+export async function handleStatus(projectId) {
+    const counts = await getNodeCounts(projectId);
     return {
         store: getUpperLayerStats(),
         totalNodes: counts.total,

@@ -1,7 +1,7 @@
 import type { EngramContext, NodeSeed, NodeStatus, IngestTrigger, FeedbackSignal } from "./types.js";
 export interface RecallResult {
     id: string;
-    distance: number;
+    relevance: number;
     summary: string;
     tags: string[];
     hitCount: number;
