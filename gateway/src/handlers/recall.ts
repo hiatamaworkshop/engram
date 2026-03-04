@@ -1,11 +1,11 @@
 import type { RecallRequest, RecallResponse } from "../types.js";
-import { searchRecent, getRecentById } from "../upper-layer/index.js";
+import { searchNodes, getNodeById } from "../upper-layer/index.js";
 
 /**
  * POST /recall
  *
  * Two modes:
- *   1. query search — semantic search (UpperLayer only)
+ *   1. query search — semantic search
  *   2. entryId fetch — single node by ID
  *
  * hitCount++ happens inside UpperLayer (fire-and-forget).
@@ -16,28 +16,28 @@ export async function handleRecall(body: RecallRequest): Promise<RecallResponse>
   // ---- sense mode: single node by ID ----
   if (entryId) {
     try {
-      const recent = await getRecentById(entryId);
-      if (recent) {
-        return { results: [recent], source: "upper-layer" };
+      const node = await getNodeById(entryId);
+      if (node) {
+        return { results: [node], source: "engram" };
       }
     } catch (err) {
       console.warn(`[recall] getById failed: ${(err as Error).message}`);
     }
-    return { results: [], source: "stub", message: `Node ${entryId} not found` };
+    return { results: [], source: "engram", message: `Node ${entryId} not found` };
   }
 
   // ---- search mode ----
   if (!query || query.trim().length === 0) {
-    return { results: [], source: "stub", message: "Empty query" };
+    return { results: [], source: "engram", message: "Empty query" };
   }
 
   try {
-    const results = await searchRecent({ query, projectId, limit });
-    return { results, source: "upper-layer" };
+    const results = await searchNodes({ query, projectId, limit });
+    return { results, source: "engram" };
   } catch (err) {
     return {
       results: [],
-      source: "stub",
+      source: "engram",
       message: `Recall failed: ${(err as Error).message}`,
     };
   }

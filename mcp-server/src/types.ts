@@ -54,25 +54,10 @@ function detectProjectId(): string | undefined {
 }
 
 // ============================================================
-// Project metadata
+// Node status (v2: recent/fixed)
 // ============================================================
 
-export interface ProjectMeta {
-  projectId: string;
-  sessionId: string;
-  timestamp: number;
-  durationMinutes?: number;
-  filesModified?: string[];
-  toolSummary?: {
-    edits: number;
-    bashCommands: number;
-    searches: number;
-  };
-  userIntentFirstMessage?: string;
-  outcome?: "completed" | "abandoned" | "partial";
-  gitDiffStat?: string;
-  commitMessages?: string[];
-}
+export type NodeStatus = "recent" | "fixed";
 
 // ============================================================
 // NodeSeed — knowledge unit extracted by Claude
@@ -82,5 +67,23 @@ export interface NodeSeed {
   summary: string;
   tags: string[];
   content?: string;
-  weight?: number;    // 0.0 - 1.0 (default 0.5)
 }
+
+// ============================================================
+// Ingest trigger types
+// ============================================================
+
+export type IngestTrigger =
+  | "session-end"
+  | "milestone"
+  | "git-commit"
+  | "error-resolved"
+  | "manual"
+  | "convention"
+  | "environment";
+
+// ============================================================
+// Feedback signal types (weight adjustment)
+// ============================================================
+
+export type FeedbackSignal = "outdated" | "incorrect" | "superseded" | "merged";

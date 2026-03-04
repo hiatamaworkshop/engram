@@ -1,11 +1,11 @@
 // ============================================================
-// Engram — MCP Server
+// Engram — MCP Server (v2)
 // ============================================================
 //
 // Cross-session semantic memory for AI coding assistants.
 // Tools:
 //   engram_recall  — search for relevant knowledge
-//   engram_ingest  — submit session knowledge (capsuleSeeds)
+//   engram_ingest  — submit capsuleSeeds (Claude extracts these)
 //   engram_status  — statistics
 // Resources:
 //   engram://scan/{projectId} — lightweight listing
@@ -25,14 +25,14 @@ import { z } from "zod";
 import { loadContext } from "./types.js";
 import type { NodeSeed } from "./types.js";
 import {
-  checkHealth, recallNodes, recallById, ingest, getStatus, scan,
+  checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback,
 } from "./gateway-client.js";
 
 const ctx = loadContext();
 
 const server = new McpServer({
   name: "engram",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ============================================================
@@ -79,7 +79,7 @@ Set crossProject=true to search across ALL projects.`,
           r.summary,
           r.content ? `\n${r.content}` : null,
           "",
-          `weight: ${r.weight}  hitCount: ${r.hitCount}  status: ${r.status}`,
+          `hits: ${r.hitCount}  weight: ${r.weight}  status: ${r.status}`,
           `tags: ${r.tags.join(", ") || "(none)"}`,
           `id: ${r.id}  timestamp: ${r.timestamp}`,
         ].filter(Boolean).join("\n");
@@ -106,7 +106,7 @@ Set crossProject=true to search across ALL projects.`,
         return [
           `[${i + 1}] ${r.summary}`,
           r.content ? `    ${r.content}` : null,
-          `    weight=${r.weight} hits=${r.hitCount} status=${r.status} dist=${r.distance.toFixed(3)}`,
+          `    hits=${r.hitCount} weight=${r.weight} status=${r.status} dist=${r.distance.toFixed(3)}`,
           `    tags: ${r.tags.join(", ") || "(none)"}`,
           `    id: ${r.id}`,
         ]
@@ -137,46 +137,43 @@ const nodeSeedSchema = z.object({
   summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
   tags: z.array(z.string()).min(1).max(5).describe("1-5 lowercase hyphenated tags."),
   content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
-  weight: z.number().min(0).max(1).optional().describe("Importance 0.0-1.0 (default 0.5). Error fixes = 0.8+, trivial config = 0.3."),
 });
 
 server.tool(
   "engram_ingest",
-  `Submit knowledge to Engram as pre-extracted NodeSeeds. You MUST extract knowledge into capsuleSeeds before calling this.
+  `Submit knowledge to Engram as capsuleSeeds. You MUST extract and split knowledge before calling this.
 
 WHEN TO CALL (trigger types):
-  - "session-end":    End of session / after /compact. Captures full session summary.
+  - "session-end":    End of session / after /compact.
   - "milestone":      Mid-session checkpoint after completing a feature, fix, or decision.
   - "error-resolved": After diagnosing and fixing an error. Highest-value knowledge.
-  - "git-commit":     After a meaningful commit. Include commit messages and diff stat.
+  - "git-commit":     After a meaningful commit.
+  - "manual":         User explicitly says "remember this".
+  - "convention":     Project convention or CLAUDE.md update.
+  - "environment":    Environment config, ports, Docker setup.
 
 HOW TO EXTRACT capsuleSeeds:
   Review the session and create 1-8 NodeSeed objects, each capturing one distinct piece of knowledge:
-  - summary: What was learned/done (10-200 chars, specific)
-  - tags: 1-5 lowercase tags (e.g. "rust", "error-handling", "docker", "bugfix")
-  - content: Optional deeper explanation
-  - weight: 0.0-1.0 importance (error fixes 0.8+, trivial 0.3)
+  - summary: What was learned/done (10-150 chars, specific, starts with verb/noun)
+  - tags: 1-5 lowercase hyphenated tags (e.g. "docker", "error-handling", "architecture")
+  - content: Optional — root cause, rationale, reproduction steps
+
+  For detailed formatting rules, recall from project "_engram_system" with query "ingest formatting rules".
 
 GUIDANCE:
+  - 1 seed = 1 knowledge unit. Do not mix topics in a single seed.
   - Always ingest at session end. Mid-session for hard problems or design decisions.
   - For error-resolved: describe the error, root cause, and fix.
-  - Prefer fewer high-quality nodes over many trivial ones.
-  - Do NOT include company names, personal names, or API keys in summaries.`,
+  - Prefer fewer high-quality seeds (2-5 typical) over many trivial ones.
+  - Do NOT include company names, personal names, or API keys.`,
   {
-    compactText: z.string().min(1).describe("Compact session summary text"),
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
+    trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved", "manual", "convention", "environment"])
+      .default("session-end").describe("What triggered this ingestion"),
     sessionId: z.string().optional().describe("Session identifier (auto-generated if omitted)"),
-    timestamp: z.number().optional().describe("Unix timestamp in seconds (auto-generated if omitted)"),
-    trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved"]).default("session-end")
-      .describe("What triggered this ingestion"),
-    durationMinutes: z.number().optional().describe("Session duration in minutes"),
-    filesModified: z.array(z.string()).optional().describe("Files modified during the session"),
-    outcome: z.enum(["completed", "abandoned", "partial"]).optional().describe("Session outcome"),
-    gitDiffStat: z.string().optional().describe("Git diff stat summary"),
-    commitMessages: z.array(z.string()).optional().describe("Commit messages"),
   },
-  async ({ compactText, capsuleSeeds, projectId, sessionId, timestamp, trigger, durationMinutes, filesModified, outcome, gitDiffStat, commitMessages }) => {
+  async ({ capsuleSeeds, projectId, trigger, sessionId }) => {
     const healthy = await checkHealth(ctx);
     if (!healthy) {
       return {
@@ -194,28 +191,19 @@ GUIDANCE:
     }
 
     const resolvedSessionId = sessionId || randomUUID();
-    const resolvedTimestamp = timestamp ?? Math.floor(Date.now() / 1000);
 
     try {
       const result = await ingest(
         ctx,
-        compactText,
-        {
-          projectId: resolvedProjectId,
-          sessionId: resolvedSessionId,
-          timestamp: resolvedTimestamp,
-          durationMinutes,
-          filesModified,
-          outcome,
-          gitDiffStat,
-          commitMessages,
-        },
         capsuleSeeds as NodeSeed[],
+        resolvedProjectId,
         trigger,
+        resolvedSessionId,
       );
 
       const lines = [
         `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`,
+        result.merged ? `Merged with ${result.merged} existing nodes.` : null,
         result.reason ? `Detail: ${result.reason}` : null,
       ].filter(Boolean);
 
@@ -237,7 +225,7 @@ GUIDANCE:
 
 server.tool(
   "engram_status",
-  "Get Engram statistics: total nodes, amber nodes, and UpperLayer health.",
+  "Get Engram statistics: total nodes, recent/fixed counts, and store health.",
   {
     projectId: z.string().optional().describe("Project filter"),
   },
@@ -255,21 +243,22 @@ server.tool(
 
       const lines: string[] = [`Engram Status (user: ${ctx.userId})`];
 
-      if (status.upperLayer) {
-        const ul = status.upperLayer;
+      if (status.store) {
+        const s = status.store;
         lines.push(
           "",
-          "UpperLayer:",
-          `  initialized: ${ul.initialized}`,
-          `  embedding:   ${ul.embeddingReady ? "ready" : "loading"}`,
-          `  collection:  ${ul.collection}`,
+          "Store:",
+          `  initialized: ${s.initialized}`,
+          `  embedding:   ${s.embeddingReady ? "ready" : "loading"}`,
+          `  collection:  ${s.collection}`,
         );
       }
 
       lines.push(
         "",
-        `Total nodes: ${status.totalNodes ?? "unknown"}`,
-        `Amber nodes: ${status.amberNodes ?? "unknown"}`,
+        `Total nodes:  ${status.totalNodes ?? "unknown"}`,
+        `Recent nodes: ${status.recentNodes ?? "unknown"}`,
+        `Fixed nodes:  ${status.fixedNodes ?? "unknown"}`,
       );
 
       return {
@@ -278,6 +267,67 @@ server.tool(
     } catch (err) {
       return {
         content: [{ type: "text", text: `Status failed: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+// ============================================================
+// Tool: engram_feedback
+// ============================================================
+
+server.tool(
+  "engram_feedback",
+  `Submit a weight signal for a stored knowledge node. Use when recall results are outdated, incorrect, or superseded.
+
+Signals:
+  - "outdated":    Information is no longer current (weight -2)
+  - "incorrect":   Information is factually wrong (weight -3)
+  - "superseded":  A newer/better entry replaces this one (weight -2)
+  - "merged":      This entry was merged into another (weight -1)
+
+Digestor will process weight during batch: low-weight nodes get expired, high-weight nodes get promoted to fixed.
+Do NOT use this for positive feedback — recall hits automatically increase weight.`,
+  {
+    entryId: z.string().describe("The node ID to send feedback for (from recall/scan results)"),
+    signal: z.enum(["outdated", "incorrect", "superseded", "merged"]).describe("Type of negative signal"),
+    reason: z.string().optional().describe("Brief explanation of why this signal applies"),
+  },
+  async ({ entryId, signal, reason }) => {
+    const healthy = await checkHealth(ctx);
+    if (!healthy) {
+      return {
+        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        isError: true,
+      };
+    }
+
+    try {
+      const result = await feedback(ctx, entryId, signal, reason);
+
+      if (result.status === "not-found") {
+        return {
+          content: [{ type: "text", text: `Node ${entryId} not found.` }],
+        };
+      }
+
+      if (result.status === "error") {
+        return {
+          content: [{ type: "text", text: `Feedback failed for ${entryId}.` }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: `Feedback applied: ${entryId} signal=${signal} newWeight=${result.newWeight}`,
+        }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Feedback failed: ${(err as Error).message}` }],
         isError: true,
       };
     }
@@ -315,7 +365,7 @@ server.resource(
 
       const lines = result.entries.map((e) => {
         const tags = e.tags.join(", ");
-        return `[${e.id}] ${e.summary}  w:${e.weight} hits:${e.hitCount} status:${e.status} tags:${tags || "-"}`;
+        return `[${e.id}] ${e.summary}  hits:${e.hitCount} w:${e.weight} status:${e.status} tags:${tags || "-"}`;
       });
 
       const header = `project:${projectId} — ${result.entries.length}/${result.total} entries`;
@@ -346,7 +396,7 @@ server.resource(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[engram] MCP running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
+  console.error(`[engram] MCP v2 running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
 }
 
 main().catch((err) => {

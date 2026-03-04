@@ -1,0 +1,13 @@
+# Engram — Cross-session memory
+
+## Compact / Session End
+When a session ends or /compact is triggered, call `engram_ingest` with capsuleSeeds.
+Before ingesting, recall `engram_ingest formatting rules` from project `_engram_system` for detailed guidance.
+
+### Quick reference
+- 1 seed = 1 knowledge unit (do not mix topics)
+- summary: verb/noun-leading, specific, 10-150 chars
+- tags: 1-5 lowercase hyphenated (e.g. "docker", "bug-fix", "architecture")
+- content: optional — include for root cause, rationale, or reproduction steps
+- Do NOT assign weight — it is managed by the Digestor
+- 2-5 seeds per session is typical

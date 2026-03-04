@@ -4,8 +4,9 @@ import { handleRecall } from "./handlers/recall.js";
 import { handleIngest } from "./handlers/ingest.js";
 import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
+import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
-import type { RecallRequest, IngestRequest, HealthResponse } from "./types.js";
+import type { RecallRequest, IngestRequest, FeedbackRequest, HealthResponse } from "./types.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -73,6 +74,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // POST /feedback
+  if (method === "POST" && url === "/feedback") {
+    try {
+      const body = (await readBody(req)) as FeedbackRequest;
+      const result = await handleFeedback(body);
+      const code = result.status === "applied" ? 200 : result.status === "not-found" ? 404 : 400;
+      sendJson(res, code, result);
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
   // GET /status
   if (method === "GET" && url.startsWith("/status")) {
     try {
@@ -121,15 +135,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (method === "GET" && url === "/") {
     sendJson(res, 200, {
       service: "engram-gateway",
-      version: "1.0.0",
+      version: "2.0.0",
       endpoints: {
         "POST /recall": "Search for relevant knowledge (query or entryId)",
-        "POST /ingest": "Submit session knowledge (capsuleSeeds required)",
+        "POST /ingest": "Submit capsuleSeeds",
+        "POST /feedback": "Submit weight signal (outdated, incorrect, superseded, merged)",
         "GET  /scan/:projectId": "Lightweight listing (?limit=10)",
-        "GET  /status": "UpperLayer stats",
+        "GET  /status": "Store stats (total, recent, fixed)",
         "GET  /health": "Health check",
       },
-      upperLayer: getUpperLayerStats(),
+      store: getUpperLayerStats(),
     });
     return;
   }

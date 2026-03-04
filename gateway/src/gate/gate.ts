@@ -1,182 +1,93 @@
 // ============================================================
-// Gate — stateless validator (Periphery Membrane パターン)
+// Gate — stateless validator (Engram v2)
 // ============================================================
 //
-// 「処理する価値があるか」を構造判定する膜。
-// LLM 不使用。constraints.ts の定義に準拠。
-// 全チェックを走査し、エラーを収集して返す (fail-fast ではない)。
+// Validates capsuleSeeds structure. No compactText validation needed.
 
-import type { IngestRequest } from "../types.js";
-import {
-  COMPACT_CONSTRAINTS,
-  META_CONSTRAINTS,
-  TEMPLATE_PATTERNS,
-  LOW_QUALITY_PATTERNS,
-  GATE_ERROR_CODES,
-  type GateErrorCode,
-} from "./constraints.js";
+import type { IngestRequest, NodeSeed } from "../types.js";
 
 export interface GateError {
-  code: GateErrorCode;
+  code: string;
   message: string;
 }
 
 export interface GateResult {
   valid: boolean;
   errors: GateError[];
-  /** sanitize 済みの compactText (trim + 超過切り詰め) */
-  sanitizedText?: string;
 }
 
-const VALID_OUTCOMES = new Set(["completed", "abandoned", "partial"]);
+const SEED_CONSTRAINTS = {
+  minSummaryLength: 10,
+  maxSummaryLength: 200,
+  maxContentLength: 2000,
+  minTags: 1,
+  maxTags: 5,
+  maxProjectIdLength: 128,
+  maxSessionIdLength: 128,
+} as const;
 
 /**
- * Validate an ingest request against Gate constraints.
- * Returns all errors (not just the first).
+ * Validate an ingest request.
  */
 export function validateIngest(body: IngestRequest): GateResult {
   const errors: GateError[] = [];
 
-  // ---- body existence ----
-  if (!body || (!body.compactText && !body.meta)) {
-    errors.push({ code: GATE_ERROR_CODES.EMPTY_BODY, message: "Request body is empty or missing required fields." });
+  if (!body) {
+    errors.push({ code: "EMPTY_BODY", message: "Request body is empty." });
     return { valid: false, errors };
   }
 
-  const raw = body.compactText ?? "";
-  const trimmed = raw.trim();
-  const meta = body.meta;
-
-  // ---- compact text: length ----
-  if (trimmed.length < COMPACT_CONSTRAINTS.minLength) {
-    errors.push({
-      code: GATE_ERROR_CODES.COMPACT_TOO_SHORT,
-      message: `Compact text too short: ${trimmed.length} < ${COMPACT_CONSTRAINTS.minLength} chars.`,
-    });
+  // ---- projectId ----
+  if (!body.projectId) {
+    errors.push({ code: "MISSING_PROJECT_ID", message: "projectId is required." });
+  } else if (body.projectId.length > SEED_CONSTRAINTS.maxProjectIdLength) {
+    errors.push({ code: "PROJECT_ID_TOO_LONG", message: `projectId too long: ${body.projectId.length} > ${SEED_CONSTRAINTS.maxProjectIdLength}.` });
   }
 
-  if (trimmed.length > COMPACT_CONSTRAINTS.maxLength) {
-    errors.push({
-      code: GATE_ERROR_CODES.COMPACT_TOO_LONG,
-      message: `Compact text too long: ${trimmed.length} > ${COMPACT_CONSTRAINTS.maxLength} chars. Will be truncated.`,
-    });
+  // ---- capsuleSeeds ----
+  if (!body.capsuleSeeds || !Array.isArray(body.capsuleSeeds) || body.capsuleSeeds.length === 0) {
+    errors.push({ code: "NO_SEEDS", message: "capsuleSeeds must be a non-empty array." });
+    return { valid: false, errors };
   }
 
-  // ---- compact text: payload bytes ----
-  const byteLength = Buffer.byteLength(trimmed, "utf-8");
-  if (byteLength > COMPACT_CONSTRAINTS.maxPayloadBytes) {
-    errors.push({
-      code: GATE_ERROR_CODES.PAYLOAD_TOO_LARGE,
-      message: `Payload too large: ${byteLength} > ${COMPACT_CONSTRAINTS.maxPayloadBytes} bytes.`,
-    });
+  if (body.capsuleSeeds.length > 8) {
+    errors.push({ code: "TOO_MANY_SEEDS", message: `Too many capsuleSeeds: ${body.capsuleSeeds.length} > 8.` });
   }
 
-  // ---- compact text: template detection ----
-  if (TEMPLATE_PATTERNS.some((p) => p.test(trimmed))) {
-    errors.push({
-      code: GATE_ERROR_CODES.TEMPLATE_CONTENT,
-      message: "Compact text appears to be a template with no real content.",
-    });
+  // ---- validate each seed ----
+  for (let i = 0; i < body.capsuleSeeds.length; i++) {
+    const seed = body.capsuleSeeds[i];
+    const prefix = `seed[${i}]`;
+    validateSeed(seed, prefix, errors);
   }
 
-  // ---- compact text: low quality ----
-  if (LOW_QUALITY_PATTERNS.some((p) => p.test(trimmed))) {
-    errors.push({
-      code: GATE_ERROR_CODES.LOW_QUALITY_CONTENT,
-      message: "Compact text has no information content.",
-    });
+  // ---- sessionId ----
+  if (body.sessionId && body.sessionId.length > SEED_CONSTRAINTS.maxSessionIdLength) {
+    errors.push({ code: "SESSION_ID_TOO_LONG", message: `sessionId too long: ${body.sessionId.length} > ${SEED_CONSTRAINTS.maxSessionIdLength}.` });
   }
 
-  // ---- meta: required fields ----
-  if (!meta?.projectId) {
-    errors.push({ code: GATE_ERROR_CODES.MISSING_PROJECT_ID, message: "meta.projectId is required." });
+  return { valid: errors.length === 0, errors };
+}
+
+function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[]): void {
+  // summary
+  if (!seed.summary || seed.summary.trim().length < SEED_CONSTRAINTS.minSummaryLength) {
+    errors.push({ code: "SUMMARY_TOO_SHORT", message: `${prefix}: summary too short (min ${SEED_CONSTRAINTS.minSummaryLength}).` });
   }
-  if (!meta?.sessionId) {
-    errors.push({ code: GATE_ERROR_CODES.MISSING_SESSION_ID, message: "meta.sessionId is required." });
-  }
-  if (!meta?.timestamp) {
-    errors.push({ code: GATE_ERROR_CODES.MISSING_TIMESTAMP, message: "meta.timestamp is required." });
+  if (seed.summary && seed.summary.length > SEED_CONSTRAINTS.maxSummaryLength) {
+    errors.push({ code: "SUMMARY_TOO_LONG", message: `${prefix}: summary too long: ${seed.summary.length} > ${SEED_CONSTRAINTS.maxSummaryLength}.` });
   }
 
-  // ---- meta: field bounds ----
-  if (meta?.projectId && meta.projectId.length > META_CONSTRAINTS.maxProjectIdLength) {
-    errors.push({
-      code: GATE_ERROR_CODES.PROJECT_ID_TOO_LONG,
-      message: `projectId too long: ${meta.projectId.length} > ${META_CONSTRAINTS.maxProjectIdLength}.`,
-    });
+  // tags
+  if (!seed.tags || !Array.isArray(seed.tags) || seed.tags.length < SEED_CONSTRAINTS.minTags) {
+    errors.push({ code: "TOO_FEW_TAGS", message: `${prefix}: at least ${SEED_CONSTRAINTS.minTags} tag required.` });
+  }
+  if (seed.tags && seed.tags.length > SEED_CONSTRAINTS.maxTags) {
+    errors.push({ code: "TOO_MANY_TAGS", message: `${prefix}: too many tags: ${seed.tags.length} > ${SEED_CONSTRAINTS.maxTags}.` });
   }
 
-  if (meta?.sessionId && meta.sessionId.length > META_CONSTRAINTS.maxSessionIdLength) {
-    errors.push({
-      code: GATE_ERROR_CODES.SESSION_ID_TOO_LONG,
-      message: `sessionId too long: ${meta.sessionId.length} > ${META_CONSTRAINTS.maxSessionIdLength}.`,
-    });
+  // content
+  if (seed.content && seed.content.length > SEED_CONSTRAINTS.maxContentLength) {
+    errors.push({ code: "CONTENT_TOO_LONG", message: `${prefix}: content too long: ${seed.content.length} > ${SEED_CONSTRAINTS.maxContentLength}.` });
   }
-
-  if (meta?.timestamp && meta.timestamp < META_CONSTRAINTS.minTimestamp) {
-    errors.push({
-      code: GATE_ERROR_CODES.INVALID_TIMESTAMP,
-      message: `timestamp too old: ${meta.timestamp} < ${META_CONSTRAINTS.minTimestamp} (2020-01-01).`,
-    });
-  }
-
-  // ---- meta: optional array bounds ----
-  if (meta?.filesModified) {
-    if (meta.filesModified.length > META_CONSTRAINTS.maxFilesModified) {
-      errors.push({
-        code: GATE_ERROR_CODES.TOO_MANY_FILES,
-        message: `Too many filesModified: ${meta.filesModified.length} > ${META_CONSTRAINTS.maxFilesModified}.`,
-      });
-    }
-    for (const f of meta.filesModified) {
-      if (f.length > META_CONSTRAINTS.maxFilePathLength) {
-        errors.push({
-          code: GATE_ERROR_CODES.FILE_PATH_TOO_LONG,
-          message: `File path too long: ${f.length} > ${META_CONSTRAINTS.maxFilePathLength}.`,
-        });
-        break; // 1つ報告すれば十分
-      }
-    }
-  }
-
-  if (meta?.commitMessages) {
-    if (meta.commitMessages.length > META_CONSTRAINTS.maxCommitMessages) {
-      errors.push({
-        code: GATE_ERROR_CODES.TOO_MANY_COMMITS,
-        message: `Too many commitMessages: ${meta.commitMessages.length} > ${META_CONSTRAINTS.maxCommitMessages}.`,
-      });
-    }
-    for (const m of meta.commitMessages) {
-      if (m.length > META_CONSTRAINTS.maxCommitMessageLength) {
-        errors.push({
-          code: GATE_ERROR_CODES.COMMIT_MESSAGE_TOO_LONG,
-          message: `Commit message too long: ${m.length} > ${META_CONSTRAINTS.maxCommitMessageLength}.`,
-        });
-        break;
-      }
-    }
-  }
-
-  if (meta?.gitDiffStat && meta.gitDiffStat.length > META_CONSTRAINTS.maxGitDiffStatLength) {
-    errors.push({
-      code: GATE_ERROR_CODES.COMMIT_MESSAGE_TOO_LONG,
-      message: `gitDiffStat too long: ${meta.gitDiffStat.length} > ${META_CONSTRAINTS.maxGitDiffStatLength}.`,
-    });
-  }
-
-  if (meta?.outcome && !VALID_OUTCOMES.has(meta.outcome)) {
-    errors.push({
-      code: GATE_ERROR_CODES.INVALID_OUTCOME,
-      message: `Invalid outcome: "${meta.outcome}". Must be completed | abandoned | partial.`,
-    });
-  }
-
-  // ---- result ----
-  const sanitizedText = trimmed.slice(0, COMPACT_CONSTRAINTS.maxLength);
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    sanitizedText: errors.length === 0 ? sanitizedText : undefined,
-  };
 }

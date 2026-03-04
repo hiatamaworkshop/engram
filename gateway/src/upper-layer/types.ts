@@ -1,23 +1,21 @@
 // ============================================================
-// UpperLayer — types (Engram)
+// UpperLayer — types (Engram v2)
 // ============================================================
 
-import type { AmberStatus } from "../types.js";
+import type { NodeStatus } from "../types.js";
 
 export interface UpperLayerConfig {
   qdrantUrl: string;            // default: "http://localhost:6333"
-  recentCollection: string;     // default: "recent"
+  collection: string;           // default: "engram"
   embeddingModel: string;       // default: "Xenova/all-MiniLM-L6-v2"
   embeddingDimension: number;   // default: 384
-  maxNodesPerProject: number;   // FIFO cap per projectId, default: 500
 }
 
 export const DEFAULT_UPPER_LAYER_CONFIG: UpperLayerConfig = {
   qdrantUrl: "http://localhost:6333",
-  recentCollection: "recent",
+  collection: "engram",
   embeddingModel: "Xenova/all-MiniLM-L6-v2",
   embeddingDimension: 384,
-  maxNodesPerProject: 500,
 };
 
 export interface UpperLayerPointPayload {
@@ -26,12 +24,13 @@ export interface UpperLayerPointPayload {
   content: string;
   projectId: string;
   source: string;         // "mcp-ingest"
-  trigger: string;        // "session-end" | "milestone" | "git-commit" | "error-resolved"
-  weight: number;         // 0.0 - 1.0
-  hitCount: number;       // recall hit counter → amber promotion
-  status: AmberStatus;    // "fresh" | "amber" | "fossil"
+  trigger: string;        // "session-end" | "milestone" | ...
+  sessionId: string;      // for cross-session tracking
+  status: NodeStatus;     // "recent" | "fixed"
+  hitCount: number;       // recall hit counter (informational)
+  weight: number;         // survival score (Digestor uses for promotion/expiry)
   ingestedAt: number;     // Date.now() at ingestion
-  lastAccessedAt: number; // Date.now() at last recall hit (LRU)
+  lastAccessedAt: number; // Date.now() at last recall hit
 }
 
 export interface SearchOptions {

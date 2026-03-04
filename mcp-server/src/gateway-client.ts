@@ -2,7 +2,7 @@
 // Engram MCP Server → Gateway HTTP client
 // ============================================================
 
-import type { EngramContext, ProjectMeta, NodeSeed } from "./types.js";
+import type { EngramContext, NodeSeed, NodeStatus, IngestTrigger, FeedbackSignal } from "./types.js";
 
 // ---- Gateway response types ----
 
@@ -11,51 +11,57 @@ export interface RecallResult {
   distance: number;
   summary: string;
   tags: string[];
-  weight: number;
   hitCount: number;
-  status: "fresh" | "amber" | "fossil";
+  weight: number;
+  status: NodeStatus;
   timestamp: number;
   content?: string;
 }
 
 export interface RecallResponse {
   results: RecallResult[];
-  source: "upper-layer" | "stub";
+  source: string;
   message?: string;
 }
 
 export interface IngestResponse {
   status: "accepted" | "rejected";
   reason?: string;
-  sessionId?: string;
   projectId?: string;
   nodesIngested?: number;
+  merged?: number;
 }
 
 export interface StatusResponse {
-  upperLayer: {
+  store: {
     initialized: boolean;
     embeddingReady: boolean;
-    qdrantUrl: string;
     collection: string;
   } | null;
   totalNodes: number | null;
-  amberNodes: number | null;
+  recentNodes: number | null;
+  fixedNodes: number | null;
 }
 
 export interface ScanEntry {
   id: string;
   summary: string;
   tags: string[];
-  weight: number;
   hitCount: number;
-  status: "fresh" | "amber" | "fossil";
+  weight: number;
+  status: NodeStatus;
+}
+
+export interface FeedbackResponse {
+  status: "applied" | "not-found" | "error";
+  entryId: string;
+  signal: string;
+  newWeight?: number;
 }
 
 export interface ScanResponse {
   entries: ScanEntry[];
   total: number;
-  source: "upper-layer" | "stub";
 }
 
 // ---- Health (cached) ----
@@ -129,17 +135,22 @@ export async function scan(
   return (await res.json()) as ScanResponse;
 }
 
-// ---- Ingest (capsuleSeeds required) ----
+// ---- Ingest (v2: minimal params) ----
 
 export async function ingest(
   ctx: EngramContext,
-  compactText: string,
-  meta: ProjectMeta,
   capsuleSeeds: NodeSeed[],
-  trigger?: string,
+  projectId: string,
+  trigger: IngestTrigger,
+  sessionId?: string,
 ): Promise<IngestResponse> {
-  const body: Record<string, unknown> = { compactText, meta, capsuleSeeds };
-  if (trigger) body.trigger = trigger;
+  const body: Record<string, unknown> = {
+    capsuleSeeds,
+    projectId,
+    trigger,
+  };
+  if (sessionId) body.sessionId = sessionId;
+
   const res = await fetch(`${ctx.gatewayUrl}/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -149,6 +160,28 @@ export async function ingest(
     throw new Error(`Gateway /ingest ${res.status}: ${await res.text()}`);
   }
   return (await res.json()) as IngestResponse;
+}
+
+// ---- Feedback (weight adjustment) ----
+
+export async function feedback(
+  ctx: EngramContext,
+  entryId: string,
+  signal: FeedbackSignal,
+  reason?: string,
+): Promise<FeedbackResponse> {
+  const body: Record<string, unknown> = { entryId, signal };
+  if (reason) body.reason = reason;
+
+  const res = await fetch(`${ctx.gatewayUrl}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Gateway /feedback ${res.status}: ${await res.text()}`);
+  }
+  return (await res.json()) as FeedbackResponse;
 }
 
 // ---- Status ----

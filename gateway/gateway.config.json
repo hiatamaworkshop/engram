@@ -4,9 +4,8 @@
   },
   "upperLayer": {
     "qdrantUrl": "http://localhost:6333",
-    "recentCollection": "recent",
+    "collection": "engram",
     "embeddingModel": "Xenova/all-MiniLM-L6-v2",
-    "embeddingDimension": 384,
-    "maxNodesPerProject": 500
+    "embeddingDimension": 384
   }
 }
