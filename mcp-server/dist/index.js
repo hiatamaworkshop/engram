@@ -4,9 +4,11 @@
 //
 // Cross-session semantic memory for AI coding assistants.
 // Tools:
-//   engram_recall  — search for relevant knowledge
-//   engram_ingest  — submit capsuleSeeds (Claude extracts these)
+//   engram_pull    — search for relevant knowledge
+//   engram_push    — submit capsuleSeeds (Claude extracts these)
 //   engram_status  — statistics
+//   engram_flag    — negative weight signal
+//   engram_ls      — lightweight listing
 // Resources:
 //   engram://scan/{projectId} — lightweight listing
 //
@@ -28,9 +30,9 @@ const server = new McpServer({
     version: "2.0.0",
 });
 // ============================================================
-// Tool: engram_recall
+// Tool: engram_pull
 // ============================================================
-server.tool("engram_recall", `Search Engram for relevant cross-session knowledge. Project-scoped by default.
+server.tool("engram_pull", `Search Engram for relevant cross-session knowledge. Project-scoped by default.
 
 Modes:
   - query: Semantic search across stored knowledge
@@ -91,7 +93,7 @@ WHEN TO CALL (proactive triggers):
         if (response.results.length === 0) {
             const scope = projectId ? ` in project:${projectId}` : "";
             return {
-                content: [{ type: "text", text: `No results found for "${query}"${scope}.\n\nHint: No knowledge exists for this topic yet. Consider ingesting relevant knowledge with engram_ingest.` }],
+                content: [{ type: "text", text: `No results found for "${query}"${scope}.\n\nHint: No knowledge exists for this topic yet. Consider ingesting relevant knowledge with engram_push.` }],
             };
         }
         const formatted = response.results.map((r, i) => {
@@ -129,14 +131,14 @@ WHEN TO CALL (proactive triggers):
     }
 });
 // ============================================================
-// Tool: engram_ingest
+// Tool: engram_push
 // ============================================================
 const nodeSeedSchema = z.object({
     summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
     tags: z.array(z.string()).min(1).max(5).describe("1-5 lowercase hyphenated tags."),
     content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
 });
-server.tool("engram_ingest", `Submit knowledge to Engram as capsuleSeeds. You MUST extract and split knowledge before calling this.
+server.tool("engram_push", `Submit knowledge to Engram as capsuleSeeds. You MUST extract and split knowledge before calling this.
 
 WHEN TO CALL (trigger types):
   - "session-end":    End of session / after /compact.
@@ -161,7 +163,7 @@ HOW TO EXTRACT capsuleSeeds:
   - tags: 1-5 lowercase hyphenated tags (e.g. "docker", "error-handling", "architecture")
   - content: Optional — root cause, rationale, reproduction steps
 
-  For detailed formatting rules, recall from project "_engram_system" with query "ingest formatting rules".
+  For detailed formatting rules, pull from project "_engram_system" with query "ingest formatting rules".
 
 GUIDANCE:
   - 1 seed = 1 knowledge unit. Do not mix topics in a single seed.
@@ -246,7 +248,7 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
         const total = status.totalNodes ?? 0;
         const fixed = status.fixedNodes ?? 0;
         if (total === 0) {
-            hints.push("Empty store. Start ingesting knowledge with engram_ingest.");
+            hints.push("Empty store. Start ingesting knowledge with engram_push.");
         }
         else if (fixed === 0) {
             hints.push("No fixed nodes yet. Recall existing knowledge to build weight and trigger promotion.");
@@ -266,9 +268,9 @@ server.tool("engram_status", "Get Engram statistics: total nodes, recent/fixed c
     }
 });
 // ============================================================
-// Tool: engram_feedback
+// Tool: engram_flag
 // ============================================================
-server.tool("engram_feedback", `Submit a weight signal for a stored knowledge node. Use when recall results are outdated, incorrect, or superseded.
+server.tool("engram_flag", `Submit a weight signal for a stored knowledge node. Use when recall results are outdated, incorrect, or superseded.
 
 Signals:
   - "outdated":    Information is no longer current (weight -2)
@@ -318,11 +320,11 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
     }
 });
 // ============================================================
-// Tool: engram_scan
+// Tool: engram_ls
 // ============================================================
-server.tool("engram_scan", `Lightweight listing of stored knowledge. No embedding cost — uses payload filters only.
+server.tool("engram_ls", `Lightweight listing of stored knowledge. No embedding cost — uses payload filters only.
 Use this to browse entries by tag or status without semantic search.
-For semantic search, use engram_recall instead.`, {
+For semantic search, use engram_pull instead.`, {
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
     tag: z.string().optional().describe("Filter by tag (exact match, e.g. 'docker')"),
     status: z.enum(["recent", "fixed"]).optional().describe("Filter by node status"),
@@ -347,7 +349,7 @@ For semantic search, use engram_recall instead.`, {
         if (result.entries.length === 0) {
             const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
             return {
-                content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.\n\nHint: No knowledge stored yet. Use engram_ingest to add knowledge.` }],
+                content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.\n\nHint: No knowledge stored yet. Use engram_push to add knowledge.` }],
             };
         }
         const lines = result.entries.map((e) => {
