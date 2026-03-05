@@ -134,6 +134,40 @@ This adds behavioral guidance for the agent. Tool specifications (parameter form
 
 MCP server registration requires a restart. After restart, the session briefing hook will fire automatically.
 
+---
+
+### Alternative: Cursor / Other MCP Clients
+
+Engram's core features (all 5 tools, Hot Memo, Digestor) work with **any MCP-compatible client**. Steps 1-2 are identical. Only the registration format differs.
+
+#### Cursor
+
+Add to `.cursor/mcp.json` (project-level) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/absolute/path/to/engram/mcp-server/dist/index.js"],
+      "env": {
+        "GATEWAY_URL": "http://localhost:3100"
+      }
+    }
+  }
+}
+```
+
+Then copy `CLAUDE.md.template` into your project's `.cursorrules` (or global rules):
+
+```bash
+cat CLAUDE.md.template >> .cursorrules
+```
+
+#### What about hooks?
+
+Hooks (session briefing, compact backup, git commit auto-push) are Claude Code specific. Other clients rely on the **tool descriptions** instead — each tool's description includes proactive triggers (e.g., "call `engram_status` at session start") that guide any MCP-aware agent to use engram correctly without hooks. Hooks are a bonus, not a requirement.
+
 ## MCP Tools
 
 | Tool | Purpose | When to use |
