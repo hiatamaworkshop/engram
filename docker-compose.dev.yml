@@ -1,0 +1,8 @@
+# Development override — build gateway from local source
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  gateway:
+    image: engram-gateway:dev
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile

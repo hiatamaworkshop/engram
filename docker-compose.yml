@@ -21,9 +21,7 @@ services:
       start_period: 5s
 
   gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
+    image: hiatamaworkshop/engram-gateway:latest
     container_name: engram-gateway
     environment:
       PORT: "3100"

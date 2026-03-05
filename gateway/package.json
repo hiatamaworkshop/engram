@@ -17,6 +17,6 @@
     "tsx": "^4.0.0",
     "typescript": "^5.3.0"
   },
-  "author": "Sphere Project",
-  "license": "MIT"
+  "author": "Hiatama Workshop",
+  "license": "Apache-2.0"
 }

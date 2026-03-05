@@ -57,16 +57,23 @@ Most memory systems treat knowledge as an asset to hoard. Engram treats knowledg
 ```bash
 git clone https://github.com/hiatamaworkshop/engram.git
 cd engram
-docker compose up -d --build
+docker compose up -d
 # Verify:
 curl http://localhost:3100/health
 ```
 
-### 2. Build the MCP server
+> First pull downloads the gateway image (~230 MB) and Qdrant image (~100 MB). Subsequent starts are instant.
+
+### 2. Install the MCP server
 
 ```bash
-cd mcp-server
-npm install && npm run build
+npm install -g engram-mcp
+```
+
+Or use without installing:
+
+```bash
+npx engram-mcp
 ```
 
 ### 3. Register with Claude Code
@@ -77,8 +84,8 @@ Add to `~/.claude/settings.json`:
 {
   "mcpServers": {
     "engram": {
-      "command": "node",
-      "args": ["/absolute/path/to/engram/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "engram-mcp"],
       "env": {
         "GATEWAY_URL": "http://localhost:3100"
       }
@@ -111,16 +118,29 @@ Add to `~/.claude/settings.json`:
           "prompt": "A compact just completed. Review the compacted session summary and extract 2-5 key learnings, then call engram_push with trigger 'session-end'. Follow the formatting rules defined in engram_push tool description (SSOT). Do NOT include trivial operations or personal names."
         }]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "bash /absolute/path/to/engram/hooks/engram-git-commit.sh",
+          "timeout": 10
+        }]
+      }
     ]
   }
 }
 ```
 
+> Replace `/absolute/path/to/engram` with your actual clone path.
+
 **What this does:**
 - `startup` / `resume` hooks inject a knowledge briefing into every session automatically
 - `compact` hook auto-pushes key learnings when context is compressed
+- `PostToolUse` hook auto-pushes commit info on `git commit`
 
-### 4. Add CLAUDE.md snippet (optional)
+### 4. Add CLAUDE.md snippet (recommended)
 
 Copy `CLAUDE.md.template` to your global `~/.claude/CLAUDE.md` or project-level `CLAUDE.md`:
 
@@ -148,8 +168,8 @@ Add to `.cursor/mcp.json` (project-level) or `~/.cursor/mcp.json` (global):
 {
   "mcpServers": {
     "engram": {
-      "command": "node",
-      "args": ["/absolute/path/to/engram/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "engram-mcp"],
       "env": {
         "GATEWAY_URL": "http://localhost:3100"
       }
@@ -194,7 +214,7 @@ Hooks (session briefing, compact backup, git commit auto-push) are Claude Code s
           ┌───────────┼───────────┐
           │           │           │
      recall hit    no recall   engram_flag
-     weight +0.1   TTL ticks    weight -2/-3
+     weight +0.35  TTL ticks    weight -2/-3
           │         down          │
           │           │           │
           ▼           ▼           ▼
@@ -282,7 +302,7 @@ Default relics (`_engram_system` project):
 | `PORT` | 3100 | Gateway HTTP port |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant endpoint (use `http://qdrant:6333` in Docker) |
 | `GATEWAY_URL` | `http://localhost:3100` | MCP server → Gateway connection |
-| `ENGRAM_USER_ID` | `"default"` | User identifier (metadata only) |
+| `ENGRAM_USER_ID` | `"default"` | User identifier (stored on nodes when set) |
 | `ENGRAM_PROJECT_ID` | auto-detected | Override auto-detected project scope |
 
 ### Gateway Endpoints
@@ -297,6 +317,16 @@ Default relics (`_engram_system` project):
 | GET | `/scan/:projectId` | List nodes (tag/status filter) |
 | GET | `/status` | Store statistics |
 | GET | `/health` | Health check |
+
+## Development
+
+```bash
+# Build gateway from source
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Build MCP server from source
+cd mcp-server && npm install && npm run build
+```
 
 ## FAQ
 

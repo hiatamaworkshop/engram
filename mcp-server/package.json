@@ -1,13 +1,17 @@
 {
-  "name": "@engram/mcp-server",
+  "name": "engram-mcp",
   "version": "1.0.0",
-  "description": "Engram MCP Server — cross-session semantic memory for AI coding assistants",
+  "description": "Engram MCP Server — cross-session semantic memory for AI coding agents",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "engram-mcp": "dist/index.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -18,6 +22,13 @@
     "tsx": "^4.0.0",
     "typescript": "^5.3.0"
   },
-  "author": "Sphere Project",
-  "license": "MIT"
+  "author": "Hiatama Workshop",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hiatamaworkshop/engram.git",
+    "directory": "mcp-server"
+  },
+  "keywords": ["mcp", "memory", "ai", "agent", "semantic-search", "engram"],
+  "files": ["dist", "README.md", "LICENSE"]
 }
