@@ -70,10 +70,10 @@ WHEN TO CALL (proactive triggers):
     status: z.enum(["recent", "fixed"]).optional().describe("Only return nodes with this status"),
   },
   async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status }) => {
-    const healthy = await checkHealth(ctx);
-    if (!healthy) {
+    const health = await checkHealth(ctx);
+    if (!health.ok) {
       return {
-        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        content: [{ type: "text", text: health.diagnosis }],
         isError: true,
       };
     }
@@ -197,10 +197,10 @@ GUIDANCE:
     sessionId: z.string().optional().describe("Session identifier (auto-generated if omitted)"),
   },
   async ({ capsuleSeeds, projectId, trigger, sessionId }) => {
-    const healthy = await checkHealth(ctx);
-    if (!healthy) {
+    const health = await checkHealth(ctx);
+    if (!health.ok) {
       return {
-        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        content: [{ type: "text", text: health.diagnosis }],
         isError: true,
       };
     }
@@ -251,10 +251,10 @@ server.tool(
     projectId: z.string().optional().describe("Project filter"),
   },
   async ({ projectId }) => {
-    const healthy = await checkHealth(ctx);
-    if (!healthy) {
+    const health = await checkHealth(ctx);
+    if (!health.ok) {
       return {
-        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        content: [{ type: "text", text: health.diagnosis }],
         isError: true,
       };
     }
@@ -323,10 +323,10 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
     reason: z.string().optional().describe("Brief explanation of why this signal applies"),
   },
   async ({ entryId, signal, reason }) => {
-    const healthy = await checkHealth(ctx);
-    if (!healthy) {
+    const health = await checkHealth(ctx);
+    if (!health.ok) {
       return {
-        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        content: [{ type: "text", text: health.diagnosis }],
         isError: true,
       };
     }
@@ -380,10 +380,10 @@ For semantic search, use engram_pull instead.`,
     sort: z.enum(["recent", "weight"]).optional().describe("Sort order: 'recent' (newest first) or 'weight' (heaviest first)"),
   },
   async ({ projectId, tag, status, limit, sort }) => {
-    const healthy = await checkHealth(ctx);
-    if (!healthy) {
+    const health = await checkHealth(ctx);
+    if (!health.ok) {
       return {
-        content: [{ type: "text", text: "Engram gateway is unreachable. Is Docker running?" }],
+        content: [{ type: "text", text: health.diagnosis }],
         isError: true,
       };
     }

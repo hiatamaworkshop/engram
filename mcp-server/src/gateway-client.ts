@@ -67,21 +67,52 @@ export interface ScanResponse {
 
 // ---- Health (cached) ----
 
-let _healthCache: { ok: boolean; at: number } | null = null;
+export interface HealthResult {
+  ok: boolean;
+  diagnosis: string;
+}
+
+let _healthCache: { ok: boolean; diagnosis: string; at: number } | null = null;
 const HEALTH_CACHE_TTL = 30_000;
 
-export async function checkHealth(ctx: EngramContext): Promise<boolean> {
+export async function checkHealth(ctx: EngramContext): Promise<HealthResult> {
   if (_healthCache && Date.now() - _healthCache.at < HEALTH_CACHE_TTL) {
-    return _healthCache.ok;
+    return { ok: _healthCache.ok, diagnosis: _healthCache.diagnosis };
   }
   try {
     const res = await fetch(`${ctx.gatewayUrl}/health`);
-    _healthCache = { ok: res.ok, at: Date.now() };
-    return res.ok;
-  } catch {
-    _healthCache = { ok: false, at: Date.now() };
-    return false;
+    if (res.ok) {
+      _healthCache = { ok: true, diagnosis: "", at: Date.now() };
+      return { ok: true, diagnosis: "" };
+    }
+    const body = await res.text().catch(() => "");
+    const diagnosis = `Gateway returned HTTP ${res.status}. ${body}`.trim();
+    _healthCache = { ok: false, diagnosis, at: Date.now() };
+    return { ok: false, diagnosis };
+  } catch (err) {
+    const diagnosis = diagnoseConnectionError(err, ctx.gatewayUrl);
+    _healthCache = { ok: false, diagnosis, at: Date.now() };
+    return { ok: false, diagnosis };
   }
+}
+
+function diagnoseConnectionError(err: unknown, gatewayUrl: string): string {
+  const msg = (err as Error).message ?? String(err);
+  const code = (err as NodeJS.ErrnoException).code ?? "";
+
+  if (code === "ECONNREFUSED" || msg.includes("ECONNREFUSED")) {
+    return `Connection refused at ${gatewayUrl}. Docker is likely not running.\nFix: docker compose up -d (in your engram directory)`;
+  }
+  if (code === "ENOTFOUND" || msg.includes("ENOTFOUND")) {
+    return `DNS lookup failed for ${gatewayUrl}. Check GATEWAY_URL in your MCP config.`;
+  }
+  if (code === "ETIMEDOUT" || msg.includes("ETIMEDOUT") || msg.includes("timeout")) {
+    return `Connection timed out to ${gatewayUrl}. Gateway may be starting up — retry in a few seconds.`;
+  }
+  if (msg.includes("fetch failed")) {
+    return `Cannot reach ${gatewayUrl}. Is Docker running?\nFix: docker compose up -d`;
+  }
+  return `Gateway unreachable: ${msg}`;
 }
 
 // ---- Recall (search mode) ----
