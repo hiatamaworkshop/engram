@@ -4,7 +4,7 @@
 //
 // Processes ONLY the active project's recent nodes:
 //   - weight >= promotionThreshold → promote to "fixed"
-//   - ttl <= 0 && weight <= 0 → delete (expired)
+//   - ttl <= 0 && weight < promotionThreshold*0.5 → delete (expired)
 //   - otherwise → decrement ttl by intervalMs/1000 and leave for next batch
 //
 // Inactive projects are never touched → natural hibernation.
@@ -215,7 +215,9 @@ async function runProjectBatch(projectId: string): Promise<void> {
     } else {
       const newTtl = currentTtl - decrement;
       const newWeight = round2(weight - config.decayPerBatch);
-      if (newTtl <= 0 && newWeight <= 0) {
+      // TTL expired: only survive if weight is high enough to justify extension
+      const ttlExpiredThreshold = config.promotionThreshold * 0.5;
+      if (newTtl <= 0 && newWeight < ttlExpiredThreshold) {
         toExpire.push(point.id);
       } else {
         // Decrement ttl + apply weight decay for surviving nodes
