@@ -71,6 +71,8 @@ export async function ingest(ctx, capsuleSeeds, projectId, trigger, sessionId) {
     };
     if (sessionId)
         body.sessionId = sessionId;
+    if (ctx.userId && ctx.userId !== "default")
+        body.userId = ctx.userId;
     const res = await fetch(`${ctx.gatewayUrl}/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

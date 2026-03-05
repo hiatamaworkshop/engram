@@ -15,6 +15,7 @@ export interface UpperLayerPointPayload {
     source: string;
     trigger: string;
     sessionId: string;
+    userId?: string;
     status: NodeStatus;
     hitCount: number;
     weight: number;

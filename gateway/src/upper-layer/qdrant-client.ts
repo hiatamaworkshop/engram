@@ -36,6 +36,7 @@ export async function ensureCollection(
   await createIndex(url, name, "lastAccessedAt", "integer");
   await createIndex(url, name, "tags", "keyword");
   await createIndex(url, name, "weight", "float");
+  await createIndex(url, name, "userId", "keyword");
 }
 
 async function createIndex(

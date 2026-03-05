@@ -18,6 +18,7 @@ export interface IngestRequest {
     projectId: string;
     trigger?: IngestTrigger;
     sessionId?: string;
+    userId?: string;
 }
 export type FeedbackSignal = "outdated" | "incorrect" | "superseded" | "merged";
 export interface FeedbackRequest {

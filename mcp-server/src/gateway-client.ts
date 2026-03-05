@@ -163,6 +163,7 @@ export async function ingest(
     trigger,
   };
   if (sessionId) body.sessionId = sessionId;
+  if (ctx.userId && ctx.userId !== "default") body.userId = ctx.userId;
 
   const res = await fetch(`${ctx.gatewayUrl}/ingest`, {
     method: "POST",

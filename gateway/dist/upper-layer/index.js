@@ -44,7 +44,7 @@ export async function initUpperLayer(partial) {
     console.log(`[upper-layer] initialized: collection=${config.collection} dim=${config.embeddingDimension}`);
 }
 // ---- Ingest ----
-export async function ingestNodes(nodes, projectId, trigger = "session-end", sessionId = "unknown") {
+export async function ingestNodes(nodes, projectId, trigger = "session-end", sessionId = "unknown", userId) {
     if (!initialized || nodes.length === 0)
         return { ingested: 0 };
     const texts = nodes.map((n) => n.summary || "");
@@ -63,6 +63,7 @@ export async function ingestNodes(nodes, projectId, trigger = "session-end", ses
             source: "mcp-ingest",
             trigger,
             sessionId,
+            ...(userId ? { userId } : {}),
             status: "recent",
             hitCount: 0,
             weight: 0,

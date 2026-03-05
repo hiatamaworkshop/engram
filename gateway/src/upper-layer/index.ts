@@ -78,6 +78,7 @@ export async function ingestNodes(
   projectId: string,
   trigger = "session-end",
   sessionId = "unknown",
+  userId?: string,
 ): Promise<{ ingested: number }> {
   if (!initialized || nodes.length === 0) return { ingested: 0 };
 
@@ -99,6 +100,7 @@ export async function ingestNodes(
       source: "mcp-ingest",
       trigger,
       sessionId,
+      ...(userId ? { userId } : {}),
       status: "recent" as NodeStatus,
       hitCount: 0,
       weight: 0,

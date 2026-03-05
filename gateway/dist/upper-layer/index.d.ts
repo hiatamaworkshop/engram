@@ -1,7 +1,7 @@
 import type { NodeSeed, RecallResult, ScanEntry, NodeStatus, FeedbackSignal, FeedbackResponse } from "../types.js";
 import type { UpperLayerConfig, SearchOptions } from "./types.js";
 export declare function initUpperLayer(partial?: Partial<UpperLayerConfig>): Promise<void>;
-export declare function ingestNodes(nodes: NodeSeed[], projectId: string, trigger?: string, sessionId?: string): Promise<{
+export declare function ingestNodes(nodes: NodeSeed[], projectId: string, trigger?: string, sessionId?: string, userId?: string): Promise<{
     ingested: number;
 }>;
 export declare function searchNodes(options: SearchOptions): Promise<RecallResult[]>;

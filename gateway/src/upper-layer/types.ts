@@ -28,6 +28,7 @@ export interface UpperLayerPointPayload {
   source: string;         // "mcp-ingest"
   trigger: string;        // "session-end" | "milestone" | ...
   sessionId: string;      // for cross-session tracking
+  userId?: string;        // optional — who pushed this node (for multi-user filtering)
   status: NodeStatus;     // "recent" | "fixed"
   hitCount: number;       // recall hit counter (informational)
   weight: number;         // survival score (Digestor uses for promotion/expiry)

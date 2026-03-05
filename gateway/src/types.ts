@@ -41,6 +41,7 @@ export interface IngestRequest {
   projectId: string;
   trigger?: IngestTrigger;
   sessionId?: string;
+  userId?: string;
 }
 
 // ---- Feedback ----
