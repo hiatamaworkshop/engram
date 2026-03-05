@@ -67,13 +67,13 @@ curl http://localhost:3100/health
 ### 2. Install the MCP server
 
 ```bash
-npm install -g engram-mcp
+npm install -g engram-memory
 ```
 
 Or use without installing:
 
 ```bash
-npx engram-mcp
+npx engram-memory
 ```
 
 ### 3. Register with Claude Code
@@ -85,7 +85,7 @@ Add to `~/.claude/settings.json`:
   "mcpServers": {
     "engram": {
       "command": "npx",
-      "args": ["-y", "engram-mcp"],
+      "args": ["-y", "engram-memory"],
       "env": {
         "GATEWAY_URL": "http://localhost:3100"
       }
@@ -169,7 +169,7 @@ Add to `.cursor/mcp.json` (project-level) or `~/.cursor/mcp.json` (global):
   "mcpServers": {
     "engram": {
       "command": "npx",
-      "args": ["-y", "engram-mcp"],
+      "args": ["-y", "engram-memory"],
       "env": {
         "GATEWAY_URL": "http://localhost:3100"
       }

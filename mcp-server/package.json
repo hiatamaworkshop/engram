@@ -1,11 +1,11 @@
 {
-  "name": "engram-mcp",
+  "name": "engram-memory",
   "version": "1.0.0",
   "description": "Engram MCP Server — cross-session semantic memory for AI coding agents",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "engram-mcp": "dist/index.js"
+    "engram-memory": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
