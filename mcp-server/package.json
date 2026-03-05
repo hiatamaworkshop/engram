@@ -1,6 +1,6 @@
 {
   "name": "engram-memory",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Engram MCP Server — cross-session semantic memory for AI coding agents",
   "type": "module",
   "main": "dist/index.js",
@@ -29,6 +29,17 @@
     "url": "https://github.com/hiatamaworkshop/engram.git",
     "directory": "mcp-server"
   },
-  "keywords": ["mcp", "memory", "ai", "agent", "semantic-search", "engram"],
-  "files": ["dist", "README.md", "LICENSE"]
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "agent",
+    "semantic-search",
+    "engram"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }
