@@ -125,12 +125,12 @@ export function stopDigestor(): void {
 
 // ---- Bump queue (replaces fire-and-forget setPayload per recall) ----
 
-/** Queue a hit/weight bump — accumulated in memory, flushed at next batch tick. */
+/** Queue a hit/weight bump — throttled: weight only bumped once per batch window per node. */
 export function queueBump(pointId: string, hitDelta: number, weightDelta: number): void {
   const existing = pendingBumps.get(pointId);
   if (existing) {
+    // hitCount always accumulates, but weight is throttled (first bump wins)
     existing.hitDelta += hitDelta;
-    existing.weightDelta = round2(existing.weightDelta + weightDelta);
   } else {
     pendingBumps.set(pointId, { hitDelta, weightDelta });
   }

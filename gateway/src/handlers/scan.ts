@@ -17,7 +17,8 @@ export async function handleScan(
     const filters = (tag || status || sort) ? { tag, status, sort } : undefined;
     const entries = await listNodes(projectId, limit, filters);
     return { entries, total: entries.length };
-  } catch {
+  } catch (err) {
+    console.warn(`[scan] failed for project=${projectId}: ${(err as Error).message}`);
     return { entries: [], total: 0 };
   }
 }

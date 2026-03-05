@@ -21,7 +21,7 @@ export declare function startDigestor(partial: Partial<DigestorConfig> & {
 export declare function updateTtl(ttlSeconds: number): void;
 export declare function getTtlSeconds(): number;
 export declare function stopDigestor(): void;
-/** Queue a hit/weight bump — accumulated in memory, flushed at next batch tick. */
+/** Queue a hit/weight bump — throttled: weight only bumped once per batch window per node. */
 export declare function queueBump(pointId: string, hitDelta: number, weightDelta: number): void;
 /** Get cached counts. Returns null if cache is stale or missing. */
 export declare function getCachedCounts(projectId?: string): {

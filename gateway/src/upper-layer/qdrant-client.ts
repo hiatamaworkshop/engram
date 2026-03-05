@@ -13,34 +13,36 @@ export async function ensureCollection(
 ): Promise<void> {
   // Check if collection already exists
   const check = await fetch(`${url}/collections/${name}`);
-  if (check.ok) return;
+  if (!check.ok) {
+    // Create collection
+    const res = await fetch(`${url}/collections/${name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vectors: { size: dimension, distance: "Cosine" },
+      }),
+    });
 
-  // Create collection
-  const res = await fetch(`${url}/collections/${name}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      vectors: { size: dimension, distance: "Cosine" },
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Qdrant ensureCollection failed (${res.status}): ${body}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Qdrant ensureCollection failed (${res.status}): ${body}`);
+    }
   }
 
-  // Create payload indexes for projectId and ingestedAt
+  // Ensure payload indexes exist (idempotent — safe to call on existing collections)
   await createIndex(url, name, "projectId", "keyword");
+  await createIndex(url, name, "status", "keyword");
   await createIndex(url, name, "ingestedAt", "integer");
   await createIndex(url, name, "lastAccessedAt", "integer");
   await createIndex(url, name, "tags", "keyword");
+  await createIndex(url, name, "weight", "float");
 }
 
 async function createIndex(
   url: string,
   collection: string,
   field: string,
-  schema: "keyword" | "integer" | "text",
+  schema: "keyword" | "integer" | "float" | "text",
 ): Promise<void> {
   const res = await fetch(
     `${url}/collections/${collection}/index`,

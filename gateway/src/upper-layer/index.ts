@@ -33,11 +33,12 @@ import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js
 let config: UpperLayerConfig = { ...DEFAULT_UPPER_LAYER_CONFIG };
 let initialized = false;
 
-/** Weight added per search hit — nearby nodes get a small bump. */
-const RECALL_WEIGHT_BUMP = 0.1;
+/** Weight added per search hit — throttled to once per batch window in queueBump.
+ *  Net per batch: +0.35 - 0.1 decay = +0.25 → promotion in ~12 batches (2h). */
+const RECALL_WEIGHT_BUMP = 0.35;
 
-/** Weight added per focused recall (entryId fetch) — intentional access. */
-const FOCUSED_WEIGHT_BUMP = 1;
+/** Weight added per focused recall (entryId fetch) — throttled to once per batch window. */
+const FOCUSED_WEIGHT_BUMP = 1.0;
 
 /** Round to 2 decimal places to avoid floating-point drift. */
 function round2(n: number): number {

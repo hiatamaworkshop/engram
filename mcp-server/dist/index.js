@@ -150,7 +150,7 @@ PROACTIVE TRIGGERS — do NOT wait to be asked:
 
 HOW TO EXTRACT capsuleSeeds:
   Review the session and create 1-8 NodeSeed objects, each capturing one distinct piece of knowledge:
-  - summary: What was learned/done (10-150 chars, specific, starts with verb/noun)
+  - summary: What was learned/done (10-200 chars, specific, starts with verb/noun)
   - tags: 1-5 lowercase hyphenated tags (e.g. "docker", "error-handling", "architecture")
   - content: Optional — root cause, rationale, reproduction steps
 
