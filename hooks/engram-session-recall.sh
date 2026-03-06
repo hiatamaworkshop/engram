@@ -40,6 +40,16 @@ if [ $? -ne 0 ]; then
   exit 0
 fi
 
+# --- Check downstream status (embedding/qdrant) ---
+DEGRADED=$(echo "$HEALTH" | node -e 'var d="";process.stdin.on("data",function(c){d+=c});process.stdin.on("end",function(){try{var h=JSON.parse(d),i=[],ds=h.downstream||{};if(ds.embedding&&ds.embedding!="ok")i.push("embedding:"+ds.embedding);if(ds.qdrant&&ds.qdrant!="ok")i.push("qdrant:"+ds.qdrant);if(i.length>0)console.log(i.join(", "))}catch(e){}})' 2>/dev/null)
+
+if [ -n "$DEGRADED" ]; then
+  echo "[engram] WARNING: Gateway degraded ($DEGRADED)."
+  echo "  Push/recall will silently fail. Advise user: docker restart engram-gateway"
+  echo "  If persistent, check: docker logs engram-gateway --tail 20"
+  echo ""
+fi
+
 # --- Use node for JSON parsing (jq not available on Windows) ---
 ENGRAM_PID="${DETECTED_PID:-general}"
 node -e "

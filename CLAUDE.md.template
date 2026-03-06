@@ -3,6 +3,15 @@
 You have engram MCP tools for persistent knowledge across sessions.
 Tool specifications (parameter formats, limits, tag rules) are defined in each tool's description (SSOT).
 
+### Tools (quick reference)
+| Tool | Alias | Purpose |
+|------|-------|---------|
+| `engram_pull` | "engram pull", "recall", "remember" | Semantic search or fetch by ID |
+| `engram_push` | "engram push", "memo", "remember this" | Submit 1-8 knowledge seeds |
+| `engram_flag` | "engram flag", "flag this", "outdated" | Negative weight signal |
+| `engram_ls` | "engram ls", "list" | List by tag/status (no embedding cost) |
+| `engram_status` | "engram status", "store health" | Node counts, project list, health |
+
 ### Session Start
 1. `engram_status()` — check store health, see existing projects, determine projectId
 2. `engram_pull({ query: "<current task>", projectId })` — retrieve prior knowledge
@@ -10,11 +19,27 @@ Tool specifications (parameter formats, limits, tag rules) are defined in each t
 
 ### Continuous Push (primary strategy)
 - Push early and often — don't wait for session end
-- `milestone`: after completing a feature, fix, or design decision
-- `error-resolved`: after diagnosing and fixing an error (highest-value knowledge)
-- `manual`: user says "remember this"
-- What to push: file paths, architecture, build commands, config locations, debugging insights
-- The more mundane and repetitive, the more valuable
+- If recall returns outdated or wrong info: `engram_flag` immediately
+
+#### Push priority (top = most valuable, push IMMEDIATELY)
+1. **`error-resolved`**: Push right after fixing an error. Root cause + fix + workaround.
+   - Environment hacks (bash escaping, Docker networking, port conflicts)
+   - Tool-specific gotchas (shell quirks, build tool edge cases)
+   - Build/config errors: root cause and fix steps
+2. **`environment`**: Ports, Docker setup, config file paths, startup procedures
+3. **`milestone`**: Feature completion, design decisions ("why"), file path discovery
+4. **`manual`**: User says "remember" / "memo" / "write report"
+
+#### What to push (concrete)
+- Environment gotchas and workarounds (**top priority** — more valuable than design notes)
+- File paths, grep targets, build commands
+- Error root causes and fix steps
+- Design decisions — the "why" only (keep short, don't push full docs)
+
+#### What NOT to push
+- Full design documents (put in docs/, push only a pointer to engram)
+- In-progress work state (session-specific, not cross-session)
+- Obvious info ("this project uses TypeScript")
 
 ### projectId
 - Call `engram_status()` first to see existing projects
