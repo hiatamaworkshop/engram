@@ -32,6 +32,7 @@ import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js
 
 let config: UpperLayerConfig = { ...DEFAULT_UPPER_LAYER_CONFIG };
 let initialized = false;
+let retrying = false;
 
 /** Weight added per search hit — throttled to once per batch window in queueBump.
  *  Net per batch: +0.35 - 0.1 decay = +0.25 → promotion in ~12 batches (2h). */
@@ -55,20 +56,59 @@ export async function initUpperLayer(partial?: Partial<UpperLayerConfig>): Promi
   const healthy = await checkQdrantHealth(config.qdrantUrl);
   if (!healthy) {
     console.warn(
-      `[upper-layer] Qdrant unreachable at ${config.qdrantUrl} — UpperLayer disabled until available`,
+      `[upper-layer] Qdrant unreachable at ${config.qdrantUrl} — starting background retry`,
     );
+    scheduleRetry();
     return;
   }
 
+  await finishInit();
+}
+
+async function finishInit(): Promise<void> {
   await ensureCollection(config.qdrantUrl, config.collection, config.embeddingDimension);
 
   // Embedding warm-up — preload model so first query is instant
   await embedText("warm-up");
 
   initialized = true;
+  retrying = false;
   console.log(
     `[upper-layer] initialized: collection=${config.collection} dim=${config.embeddingDimension}`,
   );
+}
+
+const RETRY_DELAYS = [5_000, 10_000, 30_000, 60_000];
+
+function scheduleRetry(): void {
+  if (retrying) return;
+  retrying = true;
+
+  let attempt = 0;
+  const tryConnect = async (): Promise<void> => {
+    const delay = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
+    attempt++;
+
+    setTimeout(async () => {
+      if (initialized) { retrying = false; return; }
+
+      const ok = await checkQdrantHealth(config.qdrantUrl);
+      if (ok) {
+        try {
+          await finishInit();
+          console.log(`[upper-layer] reconnected after ${attempt} attempt(s)`);
+        } catch (err) {
+          console.warn(`[upper-layer] init failed on retry: ${(err as Error).message}`);
+          tryConnect();
+        }
+      } else {
+        console.warn(`[upper-layer] retry #${attempt} — Qdrant still unreachable (next in ${RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)] / 1000}s)`);
+        tryConnect();
+      }
+    }, delay);
+  };
+
+  tryConnect();
 }
 
 // ---- Ingest ----

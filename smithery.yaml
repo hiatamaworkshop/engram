@@ -1,0 +1,25 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+# Engram — cross-session semantic memory for AI coding agents
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      gatewayUrl:
+        type: string
+        default: "http://localhost:3100"
+        description: >
+          URL of the Engram Gateway (Docker container).
+          Run 'docker compose up -d' in this repo first to start the Gateway + Qdrant.
+  commandFunction:
+    |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'engram-memory'],
+      env: {
+        GATEWAY_URL: config.gatewayUrl || 'http://localhost:3100'
+      }
+    })
+  exampleConfig:
+    gatewayUrl: "http://localhost:3100"
