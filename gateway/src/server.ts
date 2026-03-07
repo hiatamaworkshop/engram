@@ -7,6 +7,7 @@ import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
 import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject } from "./digestor.js";
+import { handleMcpRequest } from "./mcp-endpoint.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 
 const cfg = loadConfig();
@@ -171,6 +172,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       },
     };
     sendJson(res, 200, health);
+    return;
+  }
+
+  // /mcp — Streamable HTTP MCP endpoint
+  if (url === "/mcp" || url.startsWith("/mcp?")) {
+    await handleMcpRequest(req, res);
     return;
   }
 
