@@ -361,3 +361,5 @@ Apache License 2.0. See [LICENSE](LICENSE).
 ---
 
 *Engram — memory that metabolizes.*
+
+Designed by Hiatama Workshop · hiatamaworkshop@gmail.com
