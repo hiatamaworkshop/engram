@@ -9,8 +9,8 @@ import type { NormalizedAction, NormalizedEvent, TimeWindow } from "./types.js";
 
 // ---- Time window durations ----
 
-const SHORT_WINDOW_MS = 60_000;      // 1 minute — spike detection
-const MEDIUM_WINDOW_MS = 600_000;    // 10 minutes — trend detection
+const SHORT_WINDOW_MS = 300_000;     // 5 minutes — spike detection
+const MEDIUM_WINDOW_MS = 1_800_000;  // 30 minutes — trend detection
 // Meta window = entire session (no eviction)
 
 export type PatternKind =

@@ -3,6 +3,7 @@
 // ============================================================
 // Loosely coupled module within engram MCP.
 // Manages watch state, delegates to normalizer → commander/heatmap → emotion.
+// Three-layer neuron model: A (flow gate) + B (emotion) + C (meta).
 // engram index.ts imports only this file.
 
 import type { NormalizedEvent, ReceptorState, EmotionVector, FireSignal } from "./types.js";
@@ -12,6 +13,7 @@ import { PathHeatmap } from "./heatmap.js";
 import { Commander } from "./commander.js";
 import { computeEmotion, generateSignals, resetHoldState, formatEmotion, formatSignals } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
+import { MetaNeuron } from "./meta.js";
 
 // ---- Singleton state ----
 
@@ -25,6 +27,7 @@ let _lastEvent: NormalizedEvent | undefined;
 const heatmap = new PathHeatmap();
 const commander = new Commander();
 const ambient = new AmbientEstimator();
+const meta = new MetaNeuron();
 
 // ---- Signal listeners (connection targets register here) ----
 
@@ -48,6 +51,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     heatmap.clear();
     commander.clear();
     ambient.clear();
+    meta.clear();
     resetHoldState();
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
@@ -78,11 +82,11 @@ export function ingestEvent(raw: RawHookEvent): void {
   heatmap.record(event);
   commander.record(event);
 
-  // Compute emotion
+  // Compute emotion (B neuron — does not know about C)
   const shortSnap = commander.shortSnapshot();
   const mediumSnap = commander.mediumSnapshot();
-  const meta = commander.metaStats();
-  _lastEmotion = computeEmotion(shortSnap, mediumSnap, meta, heatmap, event);
+  const sessionMeta = commander.metaStats();
+  _lastEmotion = computeEmotion(shortSnap, mediumSnap, sessionMeta, heatmap, event);
 
   // Update ambient baseline (EMA tracking)
   ambient.update(_lastEmotion, event.ts);
@@ -93,8 +97,13 @@ export function ingestEvent(raw: RawHookEvent): void {
     ambient.reset();
   }
 
-  // Generate fire signals with dynamic thresholds + hold/release
+  // Generate fire signals with dynamic thresholds + hold/release (B neuron output)
   _lastSignals = generateSignals(_lastEmotion, ambient);
+
+  // Meta neuron C: observe firings → derive state → adjust ambient field
+  // C does NOT generate signals. It only writes to ambient.fieldAdjustment.
+  meta.observe(_lastSignals);
+  meta.process(_lastEmotion, shortSnap.pattern, ambient, ambient.isSilenced);
 
   // Notify listeners (connection targets)
   if (_lastSignals.length > 0) {
@@ -137,6 +146,7 @@ export function formatState(): string {
     `Signals: ${formatSignals(state.signals)}`,
     `Pattern: ${shortSnap.pattern} (short) / bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`,
     `Thresholds: ${ambient.formatThresholds()}`,
+    meta.format(),
     "",
     "Hot paths:",
     ...topPaths.map((p) => `  ${p.path} (${p.count})`),

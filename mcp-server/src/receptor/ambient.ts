@@ -14,11 +14,13 @@ import type { EmotionVector, EmotionAxis } from "./types.js";
 
 // ---- Configuration ----
 
-/** Time constant for EMA (ms). Higher = slower tracking. */
-const DEFAULT_TIME_CONSTANT_MS = 30_000; // 30s — agent events are slower than audio samples
+/** Time constant for EMA (ms). Higher = slower tracking.
+ *  10 min: a few tool calls won't shift baseline, but sustained patterns will. */
+const DEFAULT_TIME_CONSTANT_MS = 600_000; // 10 minutes
 
-/** Silence gate: if no update for this long, pause EMA tracking */
-const SILENCE_GATE_MS = 60_000; // 1 minute of no events = idle
+/** Silence gate: if no update for this long, pause EMA tracking.
+ *  3 min: 30s pauses are normal (thinking), 3 min = genuinely idle. */
+const SILENCE_GATE_MS = 180_000; // 3 minutes of no events = idle
 
 /** Minimum value to include in EMA (silence gate — equivalent to soundLimiter's -50dB) */
 const SILENCE_FLOOR = 0.05;
