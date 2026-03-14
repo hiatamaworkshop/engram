@@ -31,6 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
+import { setWatch, ingestEvent, formatState } from "./receptor/index.js";
 
 const ctx = loadContext();
 
@@ -423,6 +424,51 @@ For semantic search, use engram_pull instead.`,
         isError: true,
       };
     }
+  },
+);
+
+// ============================================================
+// Tool: engram_watch (receptor module)
+// ============================================================
+
+server.tool(
+  "engram_watch",
+  `Toggle receptor watch mode. Monitors agent behavior via hook events and computes a 6-axis emotion vector.
+
+When enabled, the receptor:
+  - Normalizes tool calls into framework-independent events
+  - Tracks path access heatmap (where the agent is working)
+  - Classifies command patterns (exploration, implementation, trial-and-error, etc.)
+  - Computes emotion vector: frustration, hunger, uncertainty, confidence, fatigue, flow
+  - Fires signals to connection targets (mycelium lookahead, push recommendations, etc.)
+
+Use enabled=false to stop and see summary. Omit enabled to see current status.`,
+  {
+    enabled: z.boolean().optional().describe("true=start, false=stop, omit=status"),
+    event: z.object({
+      tool_name: z.string(),
+      tool_input: z.record(z.unknown()).optional(),
+      exit_code: z.number().optional(),
+    }).optional().describe("Raw hook event to ingest (internal use)"),
+  },
+  async ({ enabled, event }) => {
+    // Ingest event if provided
+    if (event) {
+      ingestEvent(event);
+    }
+
+    // Toggle or status
+    if (enabled !== undefined) {
+      const result = setWatch(enabled);
+      return {
+        content: [{ type: "text", text: result.message }],
+      };
+    }
+
+    // Status
+    return {
+      content: [{ type: "text", text: formatState() }],
+    };
   },
 );
 
