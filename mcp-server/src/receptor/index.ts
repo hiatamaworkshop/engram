@@ -12,7 +12,7 @@ import { normalize, type RawHookEvent } from "./normalizer.js";
 import { PathHeatmap } from "./heatmap.js";
 import { Commander } from "./commander.js";
 import {
-  computeEmotion, generateSignals, resetHoldState,
+  EmotionAccumulator, computeImpulse, generateSignals, resetHoldState,
   formatSignals, getHoldSummary,
 } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
@@ -31,6 +31,7 @@ const heatmap = new PathHeatmap();
 const commander = new Commander();
 const ambient = new AmbientEstimator();
 const metaNeuron = new MetaNeuron();
+const accumulator = new EmotionAccumulator();
 
 // ---- Signal listeners (connection targets register here) ----
 
@@ -55,6 +56,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     commander.clear();
     ambient.clear();
     metaNeuron.clear();
+    accumulator.clear();
     resetHoldState();
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
@@ -85,11 +87,13 @@ export function ingestEvent(raw: RawHookEvent): void {
   heatmap.record(event);
   commander.record(event);
 
-  // Compute emotion (B neuron — does not know about C)
+  // Compute impulse from this event (B neuron input)
   const shortSnap = commander.shortSnapshot();
-  const mediumSnap = commander.mediumSnapshot();
   const sessionMeta = commander.metaStats();
-  _lastEmotion = computeEmotion(shortSnap, mediumSnap, sessionMeta, heatmap, event);
+  const impulse = computeImpulse(shortSnap, sessionMeta, event, heatmap);
+
+  // Accumulate with time decay (stateful — all axes decay toward 0)
+  _lastEmotion = accumulator.update(impulse, event.ts);
 
   // Update ambient baseline (EMA tracking)
   ambient.update(_lastEmotion, event.ts);
@@ -100,13 +104,26 @@ export function ingestEvent(raw: RawHookEvent): void {
     ambient.reset();
   }
 
-  // Generate fire signals with dynamic thresholds + hold/release (B neuron output)
-  _lastSignals = generateSignals(_lastEmotion, ambient);
-
-  // Meta neuron C: observe firings → derive state → adjust ambient field
-  // C does NOT generate signals. It only writes to ambient.fieldAdjustment.
+  // Meta neuron C: derive state + adjust ambient field (before signal generation)
+  // observe() records previous cycle's signals into FIFO; process() derives current state
   metaNeuron.observe(_lastSignals);
   metaNeuron.process(_lastEmotion, shortSnap.pattern, ambient, ambient.isSilenced);
+
+  // Generate fire signals with dynamic thresholds + hold/release (B neuron output)
+  // Signals carry full context: emotion vector + agentState + pattern
+  _lastSignals = generateSignals(_lastEmotion, ambient, {
+    agentState: metaNeuron.state,
+    pattern: shortSnap.pattern,
+  });
+
+  // Meta: flow disruption (spike during flow → push flow down)
+  const disruptions = metaNeuron.checkFlowDisruption(_lastEmotion, _lastSignals);
+  for (const d of disruptions) {
+    accumulator.disrupt(d.axis, d.delta);
+  }
+  if (disruptions.length > 0) {
+    _lastEmotion = accumulator.values;
+  }
 
   // Notify listeners (connection targets)
   if (_lastSignals.length > 0) {

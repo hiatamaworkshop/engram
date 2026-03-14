@@ -3,18 +3,20 @@
 // ============================================================
 // Observes B's firing history via a fixed-size FIFO buffer.
 // Derives agent state and emits field adjustments to AmbientEstimator.
+// Detects flow disruptions (spike during flow → pushdown).
 // Does NOT fire signals or control anything directly.
 //
 // Design:
 //   - FIFO buffer of N recent firings (dominant axis only per event)
-//   - Hit rate per axis = count / buffer size
+//   - Hit rate per axis: time-weighted (recent entries weigh more)
 //   - High frustration hit rate → "dangerous environment" → lower other thresholds
-//   - Decay is natural: old entries fall off the buffer as new ones push in
 //   - Agent state derived from hit rates + current emotion + pattern
+//   - Flow disruption: non-flow spike during flow → pushdown instruction
 
-import type { EmotionVector, EmotionAxis, FireSignal } from "./types.js";
-import type { PatternKind } from "./commander.js";
+import type { EmotionVector, EmotionAxis, FireSignal, PatternKind, AgentState } from "./types.js";
 import type { AmbientEstimator } from "./ambient.js";
+
+export type { AgentState } from "./types.js";
 
 // ---- Configuration ----
 
@@ -33,14 +35,18 @@ const MAX_ADJUSTMENT = 0.10;
 /** Field adjustment step per process() call */
 const ADJUSTMENT_STEP = 0.02;
 
-// ---- Agent State ----
+/** Flow disruption: proportion of spike intensity to subtract from flow */
+const FLOW_DISRUPTION_RATIO = 0.3;
 
-export type AgentState =
-  | "deep_work"    // flow state, implementation pattern, low frustration
-  | "exploring"    // reading/searching, not editing
-  | "stuck"        // high frustration, trial_error pattern
-  | "idle"         // silence gate active (no recent events)
-  | "delegating";  // agent calls dominate
+/** Minimum flow level to consider "in flow" for disruption detection */
+const FLOW_DISRUPTION_THRESHOLD = 0.3;
+
+// ---- Disruption instruction ----
+
+export interface Disruption {
+  axis: EmotionAxis;
+  delta: number; // negative = push down
+}
 
 // ---- Buffer Entry ----
 
@@ -94,6 +100,28 @@ export class MetaNeuron {
   }
 
   /**
+   * Check for flow disruption: non-flow spike fires while flow is high.
+   * Returns disruption instructions for the accumulator.
+   *
+   * @param currentEmotion Current accumulated emotion (after impulse)
+   * @param signals Signals that just fired
+   */
+  checkFlowDisruption(
+    currentEmotion: EmotionVector,
+    signals: FireSignal[],
+  ): Disruption[] {
+    if (currentEmotion.flow < FLOW_DISRUPTION_THRESHOLD) return [];
+
+    // Find non-flow signals
+    const nonFlowSignals = signals.filter(s => s.kind !== "flow_active");
+    if (nonFlowSignals.length === 0) return [];
+
+    // Flow disruption: push flow down proportional to spike intensity
+    const maxIntensity = Math.max(...nonFlowSignals.map(s => s.intensity));
+    return [{ axis: "flow", delta: -maxIntensity * FLOW_DISRUPTION_RATIO }];
+  }
+
+  /**
    * Process: derive agent state and emit field adjustments.
    * Called once per ingestEvent cycle, after observe().
    *
@@ -111,7 +139,7 @@ export class MetaNeuron {
     // Derive agent state
     this._lastState = this._deriveState(currentEmotion, pattern, isSilenced);
 
-    // Calculate hit rates
+    // Calculate time-weighted hit rates
     const rates = this._hitRates();
 
     // Emit field adjustments based on firing history + state
@@ -153,6 +181,7 @@ export class MetaNeuron {
 
   // ---- Internals ----
 
+  /** Hit rates: count / buffer size. Position in FIFO encodes recency. */
   private _hitRates(): Record<EmotionAxis, number> {
     const counts: Record<EmotionAxis, number> = {
       frustration: 0, hunger: 0, uncertainty: 0,
@@ -161,7 +190,7 @@ export class MetaNeuron {
     for (const entry of this.buffer) {
       counts[entry.dominant]++;
     }
-    const total = this.buffer.length || 1; // avoid division by zero
+    const total = this.buffer.length || 1;
     return {
       frustration: counts.frustration / total,
       hunger: counts.hunger / total,
@@ -180,11 +209,11 @@ export class MetaNeuron {
     if (isSilenced) return "idle";
     if (pattern === "delegation") return "delegating";
 
-    // stuck: high frustration + trial_error pattern
-    if (emotion.frustration > 0.5 && pattern === "trial_error") return "stuck";
+    // stuck: frustration accumulating + trial_error pattern
+    if (emotion.frustration > 0.3 && pattern === "trial_error") return "stuck";
 
-    // deep_work: flow present + implementation pattern
-    if (emotion.flow > 0.4 && pattern === "implementation") return "deep_work";
+    // deep_work: flow accumulating + implementation pattern
+    if (emotion.flow > 0.2 && pattern === "implementation") return "deep_work";
 
     // exploring: reading/searching patterns
     if (pattern === "exploration" || pattern === "wandering") return "exploring";

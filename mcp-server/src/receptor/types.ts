@@ -44,6 +44,25 @@ export const ZERO_EMOTION: Readonly<EmotionVector> = {
 
 export type EmotionAxis = keyof EmotionVector;
 
+// ---- Commander pattern classification ----
+
+export type PatternKind =
+  | "exploration"     // Read+Grep high, Edit low → hunger
+  | "implementation"  // Edit+Bash high, Grep low → flow/confidence
+  | "trial_error"     // Edit→Bash alternating → frustration
+  | "wandering"       // Grep+Read high, Edit 0 → uncertainty
+  | "delegation"      // Agent high → isolation
+  | "stagnation";     // all low → fatigue
+
+// ---- Agent state (derived by Meta neuron C) ----
+
+export type AgentState =
+  | "deep_work"    // flow state, implementation pattern, low frustration
+  | "exploring"    // reading/searching, not editing
+  | "stuck"        // high frustration, trial_error pattern
+  | "idle"         // silence gate active (no recent events)
+  | "delegating";  // agent calls dominate
+
 // ---- Fire signal (emotion → connection target) ----
 
 export type FireSignalKind =
@@ -60,6 +79,8 @@ export interface FireSignal {
   intensity: number; // 0.0 - 1.0
   ts: number;
   emotion: Readonly<EmotionVector>;
+  agentState: AgentState;
+  pattern: PatternKind;
 }
 
 // ---- Receptor state ----

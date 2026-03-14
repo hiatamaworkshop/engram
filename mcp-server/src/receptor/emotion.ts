@@ -1,17 +1,20 @@
 // ============================================================
-// Receptor — Emotion Engine (6-axis vector computation)
+// Receptor — Emotion Engine (accumulation + time decay)
 // ============================================================
-// Computes emotion vector from commander snapshots + heatmap signals.
-// Fires multi-layered signals based on thresholds.
-// Does NOT know what is connected to signals — fire and forget.
+// Impulse-based: each event contributes small deltas.
+// EmotionAccumulator holds stateful values with exponential decay.
+// All axes decay toward 0 (away from threshold) over time.
+// Idle freezes decay. Does NOT know what is connected to signals.
 
-import type { EmotionVector, EmotionAxis, FireSignal, FireSignalKind, NormalizedEvent } from "./types.js";
+import type { EmotionVector, EmotionAxis, FireSignal, FireSignalKind, NormalizedEvent, PatternKind, AgentState } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import type { WindowSnapshot } from "./commander.js";
 import type { PathHeatmap } from "./heatmap.js";
 import type { AmbientEstimator } from "./ambient.js";
 
-// ---- Thresholds ----
+// ---- Constants ----
+
+const AXES: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
 
 /** Fallback threshold when no AmbientEstimator is provided (backward compat). */
 const SPIKE_THRESHOLD = 0.6;
@@ -25,63 +28,159 @@ function clamp(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
-// ---- Emotion computation ----
+// ============================================================
+// Emotion Accumulator — stateful decay engine
+// ============================================================
+// All accumulated values decay exponentially: value *= exp(-λ·dt)
+// λ = ln(2) / halfLife — so after halfLife ms, value halves.
+// Idle (dt > IDLE_FREEZE_MS) freezes decay — no phantom drain.
 
-export function computeEmotion(
+/** Decay half-life per axis (ms). */
+const HALF_LIFE: Record<EmotionAxis, number> = {
+  frustration: 60_000,   // 1 min — fades as time passes
+  hunger: 90_000,        // 1.5 min — knowledge gaps persist longer
+  uncertainty: 75_000,   // 1.25 min
+  confidence: 60_000,    // 1 min — needs reinforcement
+  fatigue: 300_000,      // 5 min — slow recovery
+  flow: 90_000,          // 1.5 min — sustained state, longer memory
+};
+
+/** If no event for this long, freeze decay (idle). */
+const IDLE_FREEZE_MS = 180_000; // 3 min (matches silence gate)
+
+export class EmotionAccumulator {
+  private _values: EmotionVector = { ...ZERO_EMOTION };
+  private _lastTs = 0;
+
+  /** Current accumulated values (readonly copy). */
+  get values(): EmotionVector { return { ...this._values }; }
+
+  /**
+   * Apply time decay since last update, then add impulse.
+   * Returns the new accumulated emotion vector.
+   */
+  update(impulse: EmotionVector, ts: number): EmotionVector {
+    // Time decay
+    if (this._lastTs > 0) {
+      const dt = ts - this._lastTs;
+      if (dt > 0 && dt < IDLE_FREEZE_MS) {
+        // Normal decay — all axes move toward 0
+        for (const axis of AXES) {
+          const lambda = Math.LN2 / HALF_LIFE[axis];
+          this._values[axis] *= Math.exp(-lambda * dt);
+        }
+      }
+      // dt >= IDLE_FREEZE_MS → idle freeze (no decay)
+      // dt <= 0 → clock skew, skip
+    }
+    this._lastTs = ts;
+
+    // Add impulse (can be negative — e.g. success relieves frustration)
+    for (const axis of AXES) {
+      this._values[axis] = clamp(this._values[axis] + impulse[axis]);
+    }
+
+    return this.values;
+  }
+
+  /** Direct disruption from meta neuron (e.g., flow pushdown during spike). */
+  disrupt(axis: EmotionAxis, delta: number): void {
+    this._values[axis] = clamp(this._values[axis] + delta);
+  }
+
+  /** Clear (watch restart). */
+  clear(): void {
+    this._values = { ...ZERO_EMOTION };
+    this._lastTs = 0;
+  }
+}
+
+// ============================================================
+// Impulse computation — per-event deltas
+// ============================================================
+// Each event contributes small impulses. The accumulator + decay
+// handles memory. No need for medium snapshot — accumulation IS memory.
+
+export function computeImpulse(
   shortSnap: WindowSnapshot,
-  mediumSnap: WindowSnapshot,
-  meta: { totalEvents: number; elapsedMs: number },
-  heatmap: PathHeatmap,
+  sessionMeta: { totalEvents: number; elapsedMs: number },
   lastEvent?: NormalizedEvent,
+  heatmap?: PathHeatmap,
 ): EmotionVector {
-  // -- frustration --
-  const frustration = clamp(
-    shortSnap.editBashAlternation * 0.15 +
-    shortSnap.bashFailRate * 0.4 +
-    (shortSnap.pattern === "trial_error" ? 0.3 : 0) +
-    (mediumSnap.pattern === "trial_error" ? 0.1 : 0),
-  );
+  let frustration = 0;
+  let hunger = 0;
+  let uncertainty = 0;
+  let confidence = 0;
+  let fatigue = 0;
+  let flow = 0;
 
-  // -- hunger --
-  const grepMissRate = mediumSnap.counts.search > 0
-    ? (mediumSnap.counts.memory_read > 0 ? 0.2 : 0) // engram pull present = some gap
-    : 0;
-  const hunger = clamp(
-    (mediumSnap.pattern === "exploration" ? 0.3 : 0) +
-    (mediumSnap.pattern === "wandering" ? 0.4 : 0) +
-    grepMissRate +
-    (lastEvent?.action === "memory_read" && lastEvent.result === "empty" ? 0.3 : 0),
-  );
+  // ---- Event-driven impulses (from this specific event) ----
 
-  // -- uncertainty --
-  const heatShift = heatmap.detectShift();
-  const uncertainty = clamp(
-    (shortSnap.pattern === "wandering" ? 0.4 : 0) +
-    (mediumSnap.counts.file_edit === 0 && mediumSnap.total > 5 ? 0.2 : 0) +
-    (heatShift.shifted ? 0.3 : 0),
-  );
+  if (lastEvent) {
+    switch (lastEvent.action) {
+      case "shell_exec":
+        if (lastEvent.result === "failure") {
+          frustration += 0.10;          // bash fail → strong frustration
+        } else {
+          confidence += 0.08;           // bash success → confidence
+          flow += 0.04;                 // success feeds flow
+          frustration -= 0.03;          // success relieves frustration
+          uncertainty -= 0.02;          // progress reduces uncertainty
+        }
+        break;
+      case "file_edit":
+        confidence += 0.04;            // editing = making progress
+        uncertainty -= 0.01;
+        break;
+      case "search":
+        if (lastEvent.result === "empty") {
+          hunger += 0.08;              // empty search → knowledge gap
+          uncertainty += 0.05;
+        } else {
+          hunger -= 0.03;             // found something → gap narrows
+        }
+        break;
+      case "file_read":
+        hunger += 0.03;              // reading = seeking information
+        break;
+      case "memory_read":
+        hunger += 0.05;              // consulting memory = knowledge need
+        break;
+      case "memory_write":
+        confidence += 0.03;          // saving knowledge = consolidation
+        break;
+    }
+  }
 
-  // -- confidence --
-  const confidence = clamp(
-    (shortSnap.pattern === "implementation" && shortSnap.bashFailRate < 0.2 ? 0.4 : 0) +
-    (lastEvent?.action === "shell_exec" && lastEvent.result === "success" ? 0.2 : 0) +
-    (lastEvent?.action === "file_edit" && lastEvent.result === "success" ? 0.2 : 0),
-  );
+  // ---- Pattern-driven impulses (sustained push from current pattern) ----
 
-  // -- fatigue --
-  const elapsedHours = meta.elapsedMs / 3_600_000;
-  const fatigue = clamp(
-    Math.min(elapsedHours * 0.15, 0.5) +
-    (meta.totalEvents > 200 ? 0.2 : meta.totalEvents > 100 ? 0.1 : 0),
-  );
+  if (shortSnap.pattern === "trial_error") {
+    frustration += 0.05;             // stuck in loop → background frustration
+  }
+  if (shortSnap.pattern === "implementation") {
+    flow += 0.03;                    // implementation → flow (accumulates with bash success)
+    confidence += 0.03;              // productive implementation → confidence
+  }
+  if (shortSnap.pattern === "wandering") {
+    uncertainty += 0.07;             // directionless → uncertainty
+    hunger += 0.06;                  // seeking → hunger
+  }
+  if (shortSnap.pattern === "exploration") {
+    hunger += 0.04;                  // exploring → mild hunger
+  }
 
-  // -- flow --
-  const flow = clamp(
-    (shortSnap.pattern === "implementation" && shortSnap.bashFailRate === 0 ? 0.4 : 0) +
-    (confidence > 0.3 && frustration < 0.2 ? 0.3 : 0) +
-    (mediumSnap.pattern === "implementation" ? 0.2 : 0),
-  );
+  // ---- Heatmap-driven ----
 
+  if (heatmap?.detectShift().shifted) {
+    uncertainty += 0.10;             // context switch → uncertainty spike
+  }
+
+  // ---- Fatigue (tiny per-event, increases with session duration) ----
+
+  const sessionHours = sessionMeta.elapsedMs / 3_600_000;
+  fatigue += 0.005 + sessionHours * 0.003;
+
+  // Return raw impulse — accumulator handles clamping
   return { frustration, hunger, uncertainty, confidence, fatigue, flow };
 }
 
@@ -114,19 +213,35 @@ export function resetHoldState(): void {
 
 // ---- Fire signal generation ----
 
+/** Context snapshot from A/C neurons, attached to every fire signal. */
+export interface SignalContext {
+  agentState: AgentState;
+  pattern: PatternKind;
+}
+
 /**
  * Generate signals from emotion vector.
  * @param emotion Current emotion vector
  * @param ambient Optional AmbientEstimator for dynamic thresholds.
- *                If omitted, falls back to fixed SPIKE_THRESHOLD (backward compat).
+ * @param ctx Context snapshot (agentState + pattern) to attach to signals.
  */
-export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimator): FireSignal[] {
+export function generateSignals(
+  emotion: EmotionVector,
+  ambient?: AmbientEstimator,
+  ctx?: SignalContext,
+): FireSignal[] {
   const signals: FireSignal[] = [];
   const ts = Date.now();
+  const agentState: AgentState = ctx?.agentState ?? "exploring";
+  const pattern: PatternKind = ctx?.pattern ?? "stagnation";
 
   /** Get threshold for an axis — dynamic if ambient provided, else fixed. */
   const thr = (axis: EmotionAxis): number =>
     ambient ? ambient.effectiveThreshold(axis) : SPIKE_THRESHOLD;
+
+  /** Build a FireSignal with full context. */
+  const sig = (kind: FireSignalKind, intensity: number): FireSignal =>
+    ({ kind, intensity, ts, emotion, agentState, pattern });
 
   /**
    * Check if an axis should fire, respecting hold/release.
@@ -162,7 +277,7 @@ export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimat
 
   // flow suppresses all other signals
   if (shouldFire("flow")) {
-    signals.push({ kind: "flow_active", intensity: emotion.flow, ts, emotion });
+    signals.push(sig("flow_active", emotion.flow));
     return signals; // suppress everything else
   }
 
@@ -170,12 +285,7 @@ export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimat
   const frustFires = shouldFire("frustration");
   const hungerFires = shouldFire("hunger");
   if (frustFires && hungerFires) {
-    signals.push({
-      kind: "compound_frustration_hunger",
-      intensity: Math.max(emotion.frustration, emotion.hunger),
-      ts,
-      emotion,
-    });
+    signals.push(sig("compound_frustration_hunger", Math.max(emotion.frustration, emotion.hunger)));
     return signals; // compound takes priority
   }
 
@@ -191,7 +301,7 @@ export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimat
   for (const [axis, kind, precomputed] of checks) {
     const fires = precomputed !== undefined ? precomputed : shouldFire(axis);
     if (fires) {
-      signals.push({ kind, intensity: emotion[axis], ts, emotion });
+      signals.push(sig(kind, emotion[axis]));
     }
   }
 
@@ -201,8 +311,7 @@ export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimat
 // ---- Format emotion for display ----
 
 export function formatEmotion(e: EmotionVector): string {
-  const axes: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
-  return axes.map((a) => `${a}: ${e[a].toFixed(2)}`).join("  ");
+  return AXES.map((a) => `${a}: ${e[a].toFixed(2)}`).join("  ");
 }
 
 export function formatSignals(signals: FireSignal[]): string {

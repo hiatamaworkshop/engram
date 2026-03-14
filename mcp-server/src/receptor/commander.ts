@@ -5,21 +5,15 @@
 // Classifies patterns: exploration, implementation, trial-and-error, etc.
 // Provides "what is the agent doing" signal to emotion system.
 
-import type { NormalizedAction, NormalizedEvent, TimeWindow } from "./types.js";
+import type { NormalizedAction, NormalizedEvent, TimeWindow, PatternKind } from "./types.js";
+
+export type { PatternKind } from "./types.js";
 
 // ---- Time window durations ----
 
 const SHORT_WINDOW_MS = 300_000;     // 5 minutes — spike detection
 const MEDIUM_WINDOW_MS = 1_800_000;  // 30 minutes — trend detection
 // Meta window = entire session (no eviction)
-
-export type PatternKind =
-  | "exploration"     // Read+Grep high, Edit low → hunger
-  | "implementation"  // Edit+Bash high, Grep low → flow/confidence
-  | "trial_error"     // Edit→Bash alternating → frustration
-  | "wandering"       // Grep+Read high, Edit 0 → uncertainty
-  | "delegation"      // Agent high → isolation
-  | "stagnation";     // all low → fatigue
 
 export interface WindowSnapshot {
   counts: Record<NormalizedAction, number>;
@@ -130,6 +124,9 @@ export class Commander {
   ): PatternKind {
     if (total === 0) return "stagnation";
 
+    // Too few events for reliable classification
+    if (total <= 3) return "stagnation";
+
     const readGrep = counts.file_read + counts.search;
     const editBash = counts.file_edit + counts.shell_exec;
 
@@ -147,9 +144,6 @@ export class Commander {
 
     // Implementation: editing/executing dominant
     if (editBash >= total * 0.5) return "implementation";
-
-    // Stagnation: very few events
-    if (total <= 2) return "stagnation";
 
     return "exploration"; // default
   }
