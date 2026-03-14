@@ -35,18 +35,29 @@ function clamp(v: number): number {
 // λ = ln(2) / halfLife — so after halfLife ms, value halves.
 // Idle (dt > IDLE_FREEZE_MS) freezes decay — no phantom drain.
 
-/** Decay half-life per axis (ms). */
+/** Decay half-life per axis (ms).
+ *  Tuned for real work tempo (~30-120s between tool calls).
+ *  Too short = emotions drain before next event, never accumulate.
+ *  Too long = stale emotions linger after situation resolves. */
 const HALF_LIFE: Record<EmotionAxis, number> = {
-  frustration: 60_000,   // 1 min — fades as time passes
-  hunger: 90_000,        // 1.5 min — knowledge gaps persist longer
-  uncertainty: 75_000,   // 1.25 min
-  confidence: 60_000,    // 1 min — needs reinforcement
-  fatigue: 300_000,      // 5 min — slow recovery
-  flow: 90_000,          // 1.5 min — sustained state, longer memory
+  frustration: 180_000,  // 3 min — must survive several event gaps to accumulate
+  hunger: 240_000,       // 4 min — knowledge gaps persist across exploration
+  uncertainty: 180_000,  // 3 min — direction confusion outlasts individual events
+  confidence: 120_000,   // 2 min — needs reinforcement but not instant drain
+  fatigue: 600_000,      // 10 min — very slow recovery, session-level signal
+  flow: 180_000,         // 3 min — flow states have momentum, resist brief interruption
 };
 
-/** If no event for this long, freeze decay (idle). */
+/** If no event for this long, freeze decay entirely (session break). */
 const IDLE_FREEZE_MS = 180_000; // 3 min (matches silence gate)
+
+/** Cap effective dt for decay.
+ *  Agent's subjective time ≠ wall clock.
+ *  Between turns (user typing/reading, LLM reasoning), agent is suspended.
+ *  dt < 30s = intra-turn (agent working) → real-time decay
+ *  30s < dt < 3min = inter-turn (agent sleeping) → decay as if 30s
+ *  dt > 3min = idle freeze (no decay) */
+const INTER_TURN_CAP_MS = 30_000;
 
 export class EmotionAccumulator {
   private _values: EmotionVector = { ...ZERO_EMOTION };
@@ -60,14 +71,15 @@ export class EmotionAccumulator {
    * Returns the new accumulated emotion vector.
    */
   update(impulse: EmotionVector, ts: number): EmotionVector {
-    // Time decay
+    // Time decay with subjective time cap
     if (this._lastTs > 0) {
       const dt = ts - this._lastTs;
       if (dt > 0 && dt < IDLE_FREEZE_MS) {
-        // Normal decay — all axes move toward 0
+        // Cap effective dt: agent was sleeping during inter-turn gaps
+        const effectiveDt = Math.min(dt, INTER_TURN_CAP_MS);
         for (const axis of AXES) {
           const lambda = Math.LN2 / HALF_LIFE[axis];
-          this._values[axis] *= Math.exp(-lambda * dt);
+          this._values[axis] *= Math.exp(-lambda * effectiveDt);
         }
       }
       // dt >= IDLE_FREEZE_MS → idle freeze (no decay)
@@ -155,18 +167,18 @@ export function computeImpulse(
   // ---- Pattern-driven impulses (sustained push from current pattern) ----
 
   if (shortSnap.pattern === "trial_error") {
-    frustration += 0.05;             // stuck in loop → background frustration
+    frustration += 0.08;             // stuck in loop — strong background push
   }
   if (shortSnap.pattern === "implementation") {
-    flow += 0.03;                    // implementation → flow (accumulates with bash success)
-    confidence += 0.03;              // productive implementation → confidence
+    flow += 0.04;                    // implementation → flow (accumulates with bash success)
+    confidence += 0.04;              // productive implementation → confidence
   }
   if (shortSnap.pattern === "wandering") {
-    uncertainty += 0.07;             // directionless → uncertainty
-    hunger += 0.06;                  // seeking → hunger
+    uncertainty += 0.10;             // directionless — strong uncertainty push
+    hunger += 0.08;                  // seeking → hunger
   }
   if (shortSnap.pattern === "exploration") {
-    hunger += 0.04;                  // exploring → mild hunger
+    hunger += 0.05;                  // exploring → mild hunger
   }
 
   // ---- Heatmap-driven ----

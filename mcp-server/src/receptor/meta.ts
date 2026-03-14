@@ -29,11 +29,13 @@ const DANGER_HIT_RATE = 0.5;
 /** Safe environment threshold — below this = relax thresholds */
 const SAFE_HIT_RATE = 0.2;
 
-/** Maximum field adjustment magnitude (per axis) */
-const MAX_ADJUSTMENT = 0.10;
+/** Maximum field adjustment magnitude (per axis).
+ *  0.15: wider range for field coupling with sparser events. */
+const MAX_ADJUSTMENT = 0.15;
 
-/** Field adjustment step per process() call */
-const ADJUSTMENT_STEP = 0.02;
+/** Field adjustment step per process() call.
+ *  0.03: real sessions have sparse events, need faster field accumulation. */
+const ADJUSTMENT_STEP = 0.03;
 
 /** Flow disruption: proportion of spike intensity to subtract from flow */
 const FLOW_DISRUPTION_RATIO = 0.3;
@@ -209,11 +211,11 @@ export class MetaNeuron {
     if (isSilenced) return "idle";
     if (pattern === "delegation") return "delegating";
 
-    // stuck: frustration accumulating + trial_error pattern
-    if (emotion.frustration > 0.3 && pattern === "trial_error") return "stuck";
+    // stuck: frustration above firing threshold + trial_error pattern
+    if (emotion.frustration > 0.25 && pattern === "trial_error") return "stuck";
 
-    // deep_work: flow accumulating + implementation pattern
-    if (emotion.flow > 0.2 && pattern === "implementation") return "deep_work";
+    // deep_work: flow building + implementation pattern
+    if (emotion.flow > 0.15 && pattern === "implementation") return "deep_work";
 
     // exploring: reading/searching patterns
     if (pattern === "exploration" || pattern === "wandering") return "exploring";

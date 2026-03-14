@@ -8,12 +8,36 @@
 // The hook script is a dumb pipe (cat | curl). All parsing is here.
 
 import { createServer, type Server } from "node:http";
+import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { ingestEvent } from "./index.js";
 import type { RawHookEvent } from "./normalizer.js";
 
-const PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
+const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
+const DISCOVERY_DIR = join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".engram");
+const DISCOVERY_FILE = join(DISCOVERY_DIR, "receptor.port");
 
 let _server: Server | null = null;
+let _boundPort: number | null = null;
+
+/** Write the bound port to discovery file so hook scripts can find it. */
+function writeDiscovery(port: number): void {
+  try {
+    mkdirSync(DISCOVERY_DIR, { recursive: true });
+    writeFileSync(DISCOVERY_FILE, String(port), "utf-8");
+  } catch (err) {
+    console.error(`[engram] Failed to write discovery file: ${(err as Error).message}`);
+  }
+}
+
+/** Remove discovery file on shutdown. */
+function removeDiscovery(): void {
+  try {
+    unlinkSync(DISCOVERY_FILE);
+  } catch {
+    // file may already be gone
+  }
+}
 
 export function startReceptorHttp(): void {
   if (_server) return; // already started
@@ -43,18 +67,37 @@ export function startReceptorHttp(): void {
     });
   });
 
-  _server.listen(PORT, "127.0.0.1", () => {
-    console.error(`[engram] Receptor HTTP on 127.0.0.1:${PORT}`);
+  // Try preferred port first, fall back to OS-assigned port on conflict
+  _server.listen(PREFERRED_PORT, "127.0.0.1", () => {
+    _boundPort = (_server!.address() as { port: number }).port;
+    writeDiscovery(_boundPort);
+    console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort}`);
   });
 
   _server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      console.error(`[engram] Receptor HTTP port ${PORT} in use — skipping`);
+      console.error(`[engram] Port ${PREFERRED_PORT} in use — binding to random port`);
+      // Retry with port 0 (OS picks a free port)
+      _server!.listen(0, "127.0.0.1", () => {
+        _boundPort = (_server!.address() as { port: number }).port;
+        writeDiscovery(_boundPort);
+        console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort}`);
+      });
     } else {
       console.error(`[engram] Receptor HTTP error: ${err.message}`);
+      _server = null;
     }
-    _server = null;
   });
+}
+
+/** Stop HTTP server and clean up discovery file. */
+export function stopReceptorHttp(): void {
+  if (_server) {
+    _server.close();
+    _server = null;
+    _boundPort = null;
+    removeDiscovery();
+  }
 }
 
 // ---- Payload parsing ----

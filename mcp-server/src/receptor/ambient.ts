@@ -25,18 +25,22 @@ const SILENCE_GATE_MS = 180_000; // 3 minutes of no events = idle
 /** Minimum value to include in EMA (silence gate — equivalent to soundLimiter's -50dB) */
 const SILENCE_FLOOR = 0.05;
 
-/** Default offset above baseline for spike detection */
+/** Default offset above baseline for spike detection.
+ *  Lower offset = more sensitive (fires sooner).
+ *  Tuned for real work: events are sparse, emotions need to fire
+ *  within realistic accumulation range. */
 const DEFAULT_OFFSETS: Record<EmotionAxis, number> = {
-  frustration: 0.25,
-  hunger: 0.30,
-  uncertainty: 0.30,
-  confidence: 0.25,
-  fatigue: 0.35, // fatigue accumulates slowly, needs larger offset
-  flow: 0.25,
+  frustration: 0.20,   // most critical signal — fire earlier
+  hunger: 0.25,        // knowledge gap — moderate sensitivity
+  uncertainty: 0.25,   // direction loss — moderate
+  confidence: 0.25,    // needs clear signal before firing
+  fatigue: 0.30,       // slow accumulation, still needs higher bar
+  flow: 0.20,          // flow should be recognized promptly
 };
 
-/** Absolute minimum threshold (floor) — never go below this */
-const MIN_THRESHOLD = 0.3;
+/** Absolute minimum threshold (floor) — never go below this.
+ *  0.25 allows offsets to work at zero baseline (0 + 0.25 = 0.25, not clamped to 0.30). */
+const MIN_THRESHOLD = 0.25;
 
 /** Absolute maximum threshold (ceiling) — never go above this */
 const MAX_THRESHOLD = 0.85;
