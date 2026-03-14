@@ -1,0 +1,85 @@
+{
+  "$schema": "Emotion engine numeric profile. Single source of truth for all receptor tuning constants.",
+
+  "accumulator": {
+    "halfLife": {
+      "frustration": 180000,
+      "hunger": 240000,
+      "uncertainty": 180000,
+      "confidence": 120000,
+      "fatigue": 600000,
+      "flow": 180000
+    },
+    "idleFreezeMs": 180000,
+    "interTurnCapMs": 30000
+  },
+
+  "impulse": {
+    "event": {
+      "shell_exec.failure":  { "frustration": 0.10 },
+      "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.03, "uncertainty": -0.02 },
+      "file_edit":           { "confidence": 0.04, "uncertainty": -0.01 },
+      "search.empty":        { "hunger": 0.08, "uncertainty": 0.05 },
+      "search.found":        { "hunger": -0.03 },
+      "file_read":           { "hunger": 0.03 },
+      "memory_read":         { "hunger": 0.05 },
+      "memory_write":        { "confidence": 0.03 }
+    },
+    "pattern": {
+      "trial_error":     { "frustration": 0.08 },
+      "wandering":       { "uncertainty": 0.10, "hunger": 0.08 },
+      "exploration":     { "hunger": 0.05 },
+      "implementation":  { "flow": 0.04, "confidence": 0.04 }
+    },
+    "heatmapShift": { "uncertainty": 0.10 },
+    "fatigue": {
+      "base": 0.005,
+      "hourlyRate": 0.003
+    }
+  },
+
+  "signal": {
+    "defaultThreshold": 0.6,
+    "holdReleaseCount": 3,
+    "compounds": [
+      {
+        "id": "compound_frustration_hunger",
+        "requires": ["frustration", "hunger"],
+        "intensity": "max",
+        "priority": true
+      }
+    ]
+  },
+
+  "ambient": {
+    "timeConstantMs": 600000,
+    "silenceGateMs": 180000,
+    "silenceFloor": 0.05,
+    "offsets": {
+      "frustration": 0.20,
+      "hunger": 0.25,
+      "uncertainty": 0.25,
+      "confidence": 0.25,
+      "fatigue": 0.30,
+      "flow": 0.20
+    },
+    "minThreshold": 0.25,
+    "maxThreshold": 0.85
+  },
+
+  "meta": {
+    "bufferSize": 20,
+    "dangerHitRate": 0.5,
+    "safeHitRate": 0.2,
+    "maxFieldAdjustment": 0.15,
+    "adjustmentStep": 0.03,
+    "flowDisruption": {
+      "ratio": 0.3,
+      "threshold": 0.3
+    },
+    "stateThresholds": {
+      "stuck":     { "axis": "frustration", "min": 0.25, "pattern": "trial_error" },
+      "deep_work": { "axis": "flow",        "min": 0.15, "pattern": "implementation" }
+    }
+  }
+}

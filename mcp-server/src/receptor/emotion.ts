@@ -5,22 +5,29 @@
 // EmotionAccumulator holds stateful values with exponential decay.
 // All axes decay toward 0 (away from threshold) over time.
 // Idle freezes decay. Does NOT know what is connected to signals.
+//
+// All numeric constants loaded from emotion-profile.json via profile.ts.
 
 import type { EmotionVector, EmotionAxis, FireSignal, FireSignalKind, NormalizedEvent, PatternKind, AgentState } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import type { WindowSnapshot } from "./commander.js";
 import type { PathHeatmap } from "./heatmap.js";
 import type { AmbientEstimator } from "./ambient.js";
+import { profile } from "./profile.js";
 
-// ---- Constants ----
+// ---- Constants (from profile) ----
 
 const AXES: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
-
-/** Fallback threshold when no AmbientEstimator is provided (backward compat). */
-const SPIKE_THRESHOLD = 0.6;
-
-/** Number of consecutive sub-threshold readings required to release a hold. */
-const HOLD_RELEASE_COUNT = 3;
+const HALF_LIFE = profile.accumulator.halfLife;
+const IDLE_FREEZE_MS = profile.accumulator.idleFreezeMs;
+const INTER_TURN_CAP_MS = profile.accumulator.interTurnCapMs;
+const SPIKE_THRESHOLD = profile.signal.defaultThreshold;
+const HOLD_RELEASE_COUNT = profile.signal.holdReleaseCount;
+const EVENT_IMPULSE = profile.impulse.event;
+const PATTERN_IMPULSE = profile.impulse.pattern;
+const HEATMAP_SHIFT_IMPULSE = profile.impulse.heatmapShift;
+const FATIGUE_CONF = profile.impulse.fatigue;
+const COMPOUNDS = profile.signal.compounds;
 
 // ---- Clamp utility ----
 
@@ -31,63 +38,26 @@ function clamp(v: number): number {
 // ============================================================
 // Emotion Accumulator — stateful decay engine
 // ============================================================
-// All accumulated values decay exponentially: value *= exp(-λ·dt)
-// λ = ln(2) / halfLife — so after halfLife ms, value halves.
-// Idle (dt > IDLE_FREEZE_MS) freezes decay — no phantom drain.
-
-/** Decay half-life per axis (ms).
- *  Tuned for real work tempo (~30-120s between tool calls).
- *  Too short = emotions drain before next event, never accumulate.
- *  Too long = stale emotions linger after situation resolves. */
-const HALF_LIFE: Record<EmotionAxis, number> = {
-  frustration: 180_000,  // 3 min — must survive several event gaps to accumulate
-  hunger: 240_000,       // 4 min — knowledge gaps persist across exploration
-  uncertainty: 180_000,  // 3 min — direction confusion outlasts individual events
-  confidence: 120_000,   // 2 min — needs reinforcement but not instant drain
-  fatigue: 600_000,      // 10 min — very slow recovery, session-level signal
-  flow: 180_000,         // 3 min — flow states have momentum, resist brief interruption
-};
-
-/** If no event for this long, freeze decay entirely (session break). */
-const IDLE_FREEZE_MS = 180_000; // 3 min (matches silence gate)
-
-/** Cap effective dt for decay.
- *  Agent's subjective time ≠ wall clock.
- *  Between turns (user typing/reading, LLM reasoning), agent is suspended.
- *  dt < 30s = intra-turn (agent working) → real-time decay
- *  30s < dt < 3min = inter-turn (agent sleeping) → decay as if 30s
- *  dt > 3min = idle freeze (no decay) */
-const INTER_TURN_CAP_MS = 30_000;
 
 export class EmotionAccumulator {
   private _values: EmotionVector = { ...ZERO_EMOTION };
   private _lastTs = 0;
 
-  /** Current accumulated values (readonly copy). */
   get values(): EmotionVector { return { ...this._values }; }
 
-  /**
-   * Apply time decay since last update, then add impulse.
-   * Returns the new accumulated emotion vector.
-   */
   update(impulse: EmotionVector, ts: number): EmotionVector {
-    // Time decay with subjective time cap
     if (this._lastTs > 0) {
       const dt = ts - this._lastTs;
       if (dt > 0 && dt < IDLE_FREEZE_MS) {
-        // Cap effective dt: agent was sleeping during inter-turn gaps
         const effectiveDt = Math.min(dt, INTER_TURN_CAP_MS);
         for (const axis of AXES) {
           const lambda = Math.LN2 / HALF_LIFE[axis];
           this._values[axis] *= Math.exp(-lambda * effectiveDt);
         }
       }
-      // dt >= IDLE_FREEZE_MS → idle freeze (no decay)
-      // dt <= 0 → clock skew, skip
     }
     this._lastTs = ts;
 
-    // Add impulse (can be negative — e.g. success relieves frustration)
     for (const axis of AXES) {
       this._values[axis] = clamp(this._values[axis] + impulse[axis]);
     }
@@ -95,12 +65,10 @@ export class EmotionAccumulator {
     return this.values;
   }
 
-  /** Direct disruption from meta neuron (e.g., flow pushdown during spike). */
   disrupt(axis: EmotionAxis, delta: number): void {
     this._values[axis] = clamp(this._values[axis] + delta);
   }
 
-  /** Clear (watch restart). */
   clear(): void {
     this._values = { ...ZERO_EMOTION };
     this._lastTs = 0;
@@ -110,8 +78,19 @@ export class EmotionAccumulator {
 // ============================================================
 // Impulse computation — per-event deltas
 // ============================================================
-// Each event contributes small impulses. The accumulator + decay
-// handles memory. No need for medium snapshot — accumulation IS memory.
+
+/** Apply an AxisRecord impulse map to a mutable vector. */
+function applyImpulse(
+  vec: EmotionVector,
+  deltas: Partial<Record<EmotionAxis, number>> | undefined,
+): void {
+  if (!deltas) return;
+  for (const [axis, val] of Object.entries(deltas)) {
+    if (val !== undefined && axis in vec) {
+      (vec as unknown as Record<string, number>)[axis] += val;
+    }
+  }
+}
 
 export function computeImpulse(
   shortSnap: WindowSnapshot,
@@ -119,92 +98,48 @@ export function computeImpulse(
   lastEvent?: NormalizedEvent,
   heatmap?: PathHeatmap,
 ): EmotionVector {
-  let frustration = 0;
-  let hunger = 0;
-  let uncertainty = 0;
-  let confidence = 0;
-  let fatigue = 0;
-  let flow = 0;
+  const vec: EmotionVector = { ...ZERO_EMOTION };
 
-  // ---- Event-driven impulses (from this specific event) ----
-
+  // ---- Event-driven impulses ----
   if (lastEvent) {
-    switch (lastEvent.action) {
-      case "shell_exec":
-        if (lastEvent.result === "failure") {
-          frustration += 0.10;          // bash fail → strong frustration
-        } else {
-          confidence += 0.08;           // bash success → confidence
-          flow += 0.04;                 // success feeds flow
-          frustration -= 0.03;          // success relieves frustration
-          uncertainty -= 0.02;          // progress reduces uncertainty
-        }
-        break;
-      case "file_edit":
-        confidence += 0.04;            // editing = making progress
-        uncertainty -= 0.01;
-        break;
-      case "search":
-        if (lastEvent.result === "empty") {
-          hunger += 0.08;              // empty search → knowledge gap
-          uncertainty += 0.05;
-        } else {
-          hunger -= 0.03;             // found something → gap narrows
-        }
-        break;
-      case "file_read":
-        hunger += 0.03;              // reading = seeking information
-        break;
-      case "memory_read":
-        hunger += 0.05;              // consulting memory = knowledge need
-        break;
-      case "memory_write":
-        confidence += 0.03;          // saving knowledge = consolidation
-        break;
+    const action = lastEvent.action;
+    const result = lastEvent.result;
+
+    // Compound key: "action.result" or just "action"
+    if (result === "failure" || result === "empty") {
+      applyImpulse(vec, EVENT_IMPULSE[`${action}.failure`] ?? EVENT_IMPULSE[`${action}.empty`]);
+    } else if (result === "success") {
+      applyImpulse(vec, EVENT_IMPULSE[`${action}.success`]);
+    }
+    // Always apply the base action impulse (non-result-specific)
+    applyImpulse(vec, EVENT_IMPULSE[action]);
+
+    // For search with "found" result (non-empty, non-failure)
+    if (action === "search" && result !== "empty" && result !== "failure") {
+      applyImpulse(vec, EVENT_IMPULSE["search.found"]);
     }
   }
 
-  // ---- Pattern-driven impulses (sustained push from current pattern) ----
-
-  if (shortSnap.pattern === "trial_error") {
-    frustration += 0.08;             // stuck in loop — strong background push
-  }
-  if (shortSnap.pattern === "implementation") {
-    flow += 0.04;                    // implementation → flow (accumulates with bash success)
-    confidence += 0.04;              // productive implementation → confidence
-  }
-  if (shortSnap.pattern === "wandering") {
-    uncertainty += 0.10;             // directionless — strong uncertainty push
-    hunger += 0.08;                  // seeking → hunger
-  }
-  if (shortSnap.pattern === "exploration") {
-    hunger += 0.05;                  // exploring → mild hunger
-  }
+  // ---- Pattern-driven impulses ----
+  applyImpulse(vec, PATTERN_IMPULSE[shortSnap.pattern]);
 
   // ---- Heatmap-driven ----
-
   if (heatmap?.detectShift().shifted) {
-    uncertainty += 0.10;             // context switch → uncertainty spike
+    applyImpulse(vec, HEATMAP_SHIFT_IMPULSE);
   }
 
-  // ---- Fatigue (tiny per-event, increases with session duration) ----
-
+  // ---- Fatigue ----
   const sessionHours = sessionMeta.elapsedMs / 3_600_000;
-  fatigue += 0.005 + sessionHours * 0.003;
+  vec.fatigue += FATIGUE_CONF.base + sessionHours * FATIGUE_CONF.hourlyRate;
 
-  // Return raw impulse — accumulator handles clamping
-  return { frustration, hunger, uncertainty, confidence, fatigue, flow };
+  return vec;
 }
 
 // ---- Hold state (verification-based hold/release) ----
-// Per-axis: when a signal fires, holdActive = true.
-// When raw drops below threshold, count consecutive sub-threshold readings.
-// Release only after HOLD_RELEASE_COUNT consecutive readings below threshold.
-// This prevents flapping (fire → release → fire → release...).
 
 interface HoldEntry {
   active: boolean;
-  subThresholdCount: number; // consecutive readings below threshold
+  subThresholdCount: number;
 }
 
 const _holdState: Record<string, HoldEntry> = {};
@@ -216,7 +151,6 @@ function getHold(key: string): HoldEntry {
   return _holdState[key];
 }
 
-/** Reset all hold states (called on watch stop/start). */
 export function resetHoldState(): void {
   for (const key of Object.keys(_holdState)) {
     delete _holdState[key];
@@ -225,18 +159,11 @@ export function resetHoldState(): void {
 
 // ---- Fire signal generation ----
 
-/** Context snapshot from A/C neurons, attached to every fire signal. */
 export interface SignalContext {
   agentState: AgentState;
   pattern: PatternKind;
 }
 
-/**
- * Generate signals from emotion vector.
- * @param emotion Current emotion vector
- * @param ambient Optional AmbientEstimator for dynamic thresholds.
- * @param ctx Context snapshot (agentState + pattern) to attach to signals.
- */
 export function generateSignals(
   emotion: EmotionVector,
   ambient?: AmbientEstimator,
@@ -247,40 +174,30 @@ export function generateSignals(
   const agentState: AgentState = ctx?.agentState ?? "exploring";
   const pattern: PatternKind = ctx?.pattern ?? "stagnation";
 
-  /** Get threshold for an axis — dynamic if ambient provided, else fixed. */
   const thr = (axis: EmotionAxis): number =>
     ambient ? ambient.effectiveThreshold(axis) : SPIKE_THRESHOLD;
 
-  /** Build a FireSignal with full context. */
   const sig = (kind: FireSignalKind, intensity: number): FireSignal =>
     ({ kind, intensity, ts, emotion, agentState, pattern });
 
-  /**
-   * Check if an axis should fire, respecting hold/release.
-   * Returns true if signal should be emitted.
-   */
   function shouldFire(axis: EmotionAxis): boolean {
     const threshold = thr(axis);
     const hold = getHold(axis);
     const value = emotion[axis];
 
     if (value >= threshold) {
-      // Above threshold → fire + hold
       hold.active = true;
       hold.subThresholdCount = 0;
       return true;
     }
 
     if (hold.active) {
-      // Below threshold but hold is active → verify before release
       hold.subThresholdCount++;
       if (hold.subThresholdCount >= HOLD_RELEASE_COUNT) {
-        // Stable below threshold → release
         hold.active = false;
         hold.subThresholdCount = 0;
         return false;
       }
-      // Still in hold → keep signal active (prevent flapping)
       return true;
     }
 
@@ -290,29 +207,39 @@ export function generateSignals(
   // flow suppresses all other signals
   if (shouldFire("flow")) {
     signals.push(sig("flow_active", emotion.flow));
-    return signals; // suppress everything else
+    return signals;
   }
 
-  // Compound: frustration + hunger
-  const frustFires = shouldFire("frustration");
-  const hungerFires = shouldFire("hunger");
-  if (frustFires && hungerFires) {
-    signals.push(sig("compound_frustration_hunger", Math.max(emotion.frustration, emotion.hunger)));
-    return signals; // compound takes priority
+  // Compound signals (from profile)
+  for (const compound of COMPOUNDS) {
+    const fires = compound.requires.map(axis => shouldFire(axis));
+    if (fires.every(Boolean)) {
+      const intensities = compound.requires.map(axis => emotion[axis]);
+      const intensity = compound.intensity === "max"
+        ? Math.max(...intensities)
+        : intensities.reduce((a, b) => a + b, 0);
+      signals.push(sig(compound.id as FireSignalKind, intensity));
+      if (compound.priority) return signals;
+    }
   }
 
-  // Individual spikes (including frustration/hunger if only one fired)
-  const checks: Array<[EmotionAxis, FireSignalKind, boolean?]> = [
-    ["frustration", "frustration_spike", frustFires],
-    ["hunger", "hunger_spike", hungerFires],
+  // Individual spikes
+  const checks: Array<[EmotionAxis, FireSignalKind]> = [
+    ["frustration", "frustration_spike"],
+    ["hunger", "hunger_spike"],
     ["uncertainty", "uncertainty_sustained"],
     ["confidence", "confidence_sustained"],
     ["fatigue", "fatigue_rising"],
   ];
 
-  for (const [axis, kind, precomputed] of checks) {
-    const fires = precomputed !== undefined ? precomputed : shouldFire(axis);
-    if (fires) {
+  for (const [axis, kind] of checks) {
+    // Skip axes already consumed by compounds
+    const inCompound = COMPOUNDS.some(c =>
+      c.requires.includes(axis) && c.requires.every(a => shouldFire(a)),
+    );
+    if (inCompound) continue;
+
+    if (shouldFire(axis)) {
       signals.push(sig(kind, emotion[axis]));
     }
   }
@@ -320,7 +247,7 @@ export function generateSignals(
   return signals;
 }
 
-// ---- Format emotion for display ----
+// ---- Format helpers ----
 
 export function formatEmotion(e: EmotionVector): string {
   return AXES.map((a) => `${a}: ${e[a].toFixed(2)}`).join("  ");
@@ -331,7 +258,6 @@ export function formatSignals(signals: FireSignal[]): string {
   return signals.map((s) => `${s.kind} [${s.intensity.toFixed(2)}]`).join(", ");
 }
 
-/** Get hold state summary for monitoring. */
 export function getHoldSummary(): Record<string, { active: boolean; pending: number }> {
   const result: Record<string, { active: boolean; pending: number }> = {};
   for (const [key, entry] of Object.entries(_holdState)) {

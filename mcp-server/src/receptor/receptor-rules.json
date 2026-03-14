@@ -1,0 +1,77 @@
+{
+  "$schema": "Passive receptor method definitions. See docs/PASSIVE_RECEPTOR_DESIGN.md",
+  "methods": [
+    {
+      "id": "engram_probe",
+      "type": "knowledge_search",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["compound_frustration_hunger"],
+        "states": ["stuck"],
+        "sensitivity": 0.7,
+        "frequency": "low"
+      },
+      "action": {
+        "tool": "engram_pull",
+        "args": { "projectId": "auto" }
+      }
+    },
+    {
+      "id": "mycelium_walk",
+      "type": "knowledge_search",
+      "mode": "notify",
+      "trigger": {
+        "signals": ["uncertainty_sustained"],
+        "states": ["exploring"],
+        "sensitivity": 0.5,
+        "frequency": "medium"
+      },
+      "action": {
+        "tool": "mycelium_walk",
+        "args": {}
+      }
+    },
+    {
+      "id": "frustration_alert",
+      "type": "status_notify",
+      "mode": "notify",
+      "trigger": {
+        "signals": ["frustration_spike", "compound_frustration_hunger"],
+        "states": ["stuck", "exploring"],
+        "sensitivity": 0.8,
+        "frequency": "low"
+      },
+      "action": {
+        "message": "frustration sustained — consider changing approach"
+      }
+    },
+    {
+      "id": "fatigue_warning",
+      "type": "status_notify",
+      "mode": "notify",
+      "trigger": {
+        "signals": ["fatigue_rising"],
+        "states": ["stuck", "exploring", "deep_work"],
+        "sensitivity": 0.6,
+        "frequency": "low"
+      },
+      "action": {
+        "message": "fatigue accumulating — session checkpoint recommended"
+      }
+    },
+    {
+      "id": "engram_push_reminder",
+      "type": "knowledge_persist",
+      "mode": "notify",
+      "trigger": {
+        "signals": ["confidence_sustained"],
+        "states": ["deep_work", "exploring"],
+        "sensitivity": 0.5,
+        "frequency": "low"
+      },
+      "action": {
+        "message": "confidence high — good moment to engram_push current findings"
+      }
+    }
+  ]
+}
