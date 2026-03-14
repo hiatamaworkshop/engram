@@ -47,21 +47,7 @@ const server = new McpServer({
 
 server.tool(
   "engram_pull",
-  `Search Engram for relevant cross-session knowledge. Project-scoped by default.
-
-Modes:
-  - query: Semantic search across stored knowledge
-  - entryId: Fetch a specific node by ID (from scan results)
-
-Set crossProject=true to search across ALL projects.
-
-WHEN TO CALL (proactive triggers):
-  - **Session start**: ALWAYS recall before diving into work. Query your current task.
-  - **Before unfamiliar code**: Recall project structure, file paths, conventions.
-  - **Before repeating a search**: If you're about to grep/glob for something you've searched before, recall first.
-  - **User says "memo/notes/記録/メモ/作業メモ/what did we do/previous session"**: Recall relevant history.
-  - **Debugging**: Recall error patterns — past you may have solved this already.
-  - **Cross-project**: When tech stack is similar, set crossProject=true to leverage other projects.`,
+  "Search stored knowledge. Semantic query or fetch by ID. Project-scoped by default.",
   {
     query: z.string().optional().describe("Natural language search query (omit if using entryId)"),
     entryId: z.string().optional().describe("Fetch a specific node by ID (omit if using query)"),
@@ -158,39 +144,7 @@ const nodeSeedSchema = z.object({
 
 server.tool(
   "engram_push",
-  `Submit knowledge to Engram as capsuleSeeds. You MUST extract and split knowledge before calling this.
-
-WHEN TO CALL (trigger types):
-  - "session-end":    End of session / after /compact.
-  - "milestone":      Mid-session checkpoint after completing a feature, fix, or decision.
-  - "error-resolved": After diagnosing and fixing an error. Highest-value knowledge.
-  - "git-commit":     After a meaningful commit.
-  - "manual":         User explicitly says "remember this".
-  - "convention":     Project convention or CLAUDE.md update.
-  - "environment":    Environment config, ports, Docker setup.
-
-PROACTIVE TRIGGERS — do NOT wait to be asked:
-  - **After fixing a bug**: Ingest the error, root cause, and fix immediately.
-  - **After discovering file paths/structure**: Ingest so future sessions skip the grep.
-  - **After a design decision**: Ingest the "why" before you forget.
-  - **User says "メモ/memo/記録/notes/remember/覚えて"**: Ingest what they want remembered.
-  - **Before /compact**: Last chance — ingest key learnings NOW.
-  - The more mundane the knowledge (file paths, build commands, config locations), the MORE valuable it is.
-
-HOW TO EXTRACT capsuleSeeds:
-  Review the session and create 1-8 NodeSeed objects, each capturing one distinct piece of knowledge:
-  - summary: What was learned/done (10-200 chars, specific, starts with verb/noun)
-  - tags: 1-5 lowercase hyphenated tags (e.g. "docker", "error-handling", "architecture")
-  - content: Optional — root cause, rationale, reproduction steps
-
-  For detailed formatting rules, pull from project "_engram_system" with query "ingest formatting rules".
-
-GUIDANCE:
-  - 1 seed = 1 knowledge unit. Do not mix topics in a single seed.
-  - Always ingest at session end. Mid-session for hard problems or design decisions.
-  - For error-resolved: describe the error, root cause, and fix.
-  - Prefer fewer high-quality seeds (2-5 typical) over many trivial ones.
-  - Do NOT include company names, personal names, or API keys.`,
+  "Submit 1-8 knowledge seeds. 1 seed = 1 topic. See CLAUDE.md for push guidelines.",
   {
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
@@ -309,16 +263,7 @@ server.tool(
 
 server.tool(
   "engram_flag",
-  `Submit a weight signal for a stored knowledge node. Use when recall results are outdated, incorrect, or superseded.
-
-Signals:
-  - "outdated":    Information is no longer current (weight -2)
-  - "incorrect":   Information is factually wrong (weight -3)
-  - "superseded":  A newer/better entry replaces this one (weight -2)
-  - "merged":      This entry was merged into another (weight -1)
-
-Digestor will process weight during batch: low-weight nodes get expired, high-weight nodes get promoted to fixed.
-Do NOT use this for positive feedback — recall hits automatically increase weight.`,
+  "Negative weight signal for outdated/incorrect/superseded nodes. Positive feedback is automatic via recall hits.",
   {
     entryId: z.string().describe("The node ID to send feedback for (from recall/scan results)"),
     signal: z.enum(["outdated", "incorrect", "superseded", "merged"]).describe("Type of negative signal"),
@@ -371,9 +316,7 @@ Do NOT use this for positive feedback — recall hits automatically increase wei
 
 server.tool(
   "engram_ls",
-  `Lightweight listing of stored knowledge. No embedding cost — uses payload filters only.
-Use this to browse entries by tag or status without semantic search.
-For semantic search, use engram_pull instead.`,
+  "List stored knowledge by tag/status. No embedding cost. For semantic search use engram_pull.",
   {
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
     tag: z.string().optional().describe("Filter by tag (exact match, e.g. 'docker')"),
@@ -434,16 +377,7 @@ For semantic search, use engram_pull instead.`,
 
 server.tool(
   "engram_watch",
-  `Toggle receptor watch mode. Monitors agent behavior via hook events and computes a 6-axis emotion vector.
-
-When enabled, the receptor:
-  - Normalizes tool calls into framework-independent events
-  - Tracks path access heatmap (where the agent is working)
-  - Classifies command patterns (exploration, implementation, trial-and-error, etc.)
-  - Computes emotion vector: frustration, hunger, uncertainty, confidence, fatigue, flow
-  - Fires signals to connection targets (mycelium lookahead, push recommendations, etc.)
-
-Use enabled=false to stop and see summary. Omit enabled to see current status.`,
+  "Receptor watch mode. true=start, false=stop+summary, omit=current status.",
   {
     enabled: z.boolean().optional().describe("true=start, false=stop, omit=status"),
     event: z.object({

@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "mcp__engram__engram_pull"
+      "mcp__engram__engram_pull",
+      "Bash(npx tsc:*)"
     ]
   }
 }
