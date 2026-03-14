@@ -17,6 +17,7 @@ import {
 } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
+import { onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue } from "./passive.js";
 
 // ---- Singleton state ----
 
@@ -41,6 +42,13 @@ const _listeners: SignalListener[] = [];
 export function onSignal(listener: SignalListener): void {
   _listeners.push(listener);
 }
+
+// ---- Passive receptor (interpretation layer) ----
+// Registered as built-in listener. Scores methods from receptor-rules.json.
+_listeners.push(onFireSignals);
+
+// Re-export passive receptor API for hotmemo integration
+export { formatRecommendations, drainRecommendations, drainAutoQueue };
 
 // ---- Public API ----
 
