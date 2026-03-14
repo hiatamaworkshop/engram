@@ -9,10 +9,15 @@ import type { EmotionVector, EmotionAxis, FireSignal, FireSignalKind, Normalized
 import { ZERO_EMOTION } from "./types.js";
 import type { WindowSnapshot } from "./commander.js";
 import type { PathHeatmap } from "./heatmap.js";
+import type { AmbientEstimator } from "./ambient.js";
 
 // ---- Thresholds ----
 
+/** Fallback threshold when no AmbientEstimator is provided (backward compat). */
 const SPIKE_THRESHOLD = 0.6;
+
+/** Number of consecutive sub-threshold readings required to release a hold. */
+const HOLD_RELEASE_COUNT = 3;
 
 // ---- Clamp utility ----
 
@@ -80,20 +85,91 @@ export function computeEmotion(
   return { frustration, hunger, uncertainty, confidence, fatigue, flow };
 }
 
+// ---- Hold state (verification-based hold/release) ----
+// Per-axis: when a signal fires, holdActive = true.
+// When raw drops below threshold, count consecutive sub-threshold readings.
+// Release only after HOLD_RELEASE_COUNT consecutive readings below threshold.
+// This prevents flapping (fire → release → fire → release...).
+
+interface HoldEntry {
+  active: boolean;
+  subThresholdCount: number; // consecutive readings below threshold
+}
+
+const _holdState: Record<string, HoldEntry> = {};
+
+function getHold(key: string): HoldEntry {
+  if (!_holdState[key]) {
+    _holdState[key] = { active: false, subThresholdCount: 0 };
+  }
+  return _holdState[key];
+}
+
+/** Reset all hold states (called on watch stop/start). */
+export function resetHoldState(): void {
+  for (const key of Object.keys(_holdState)) {
+    delete _holdState[key];
+  }
+}
+
 // ---- Fire signal generation ----
 
-export function generateSignals(emotion: EmotionVector): FireSignal[] {
+/**
+ * Generate signals from emotion vector.
+ * @param emotion Current emotion vector
+ * @param ambient Optional AmbientEstimator for dynamic thresholds.
+ *                If omitted, falls back to fixed SPIKE_THRESHOLD (backward compat).
+ */
+export function generateSignals(emotion: EmotionVector, ambient?: AmbientEstimator): FireSignal[] {
   const signals: FireSignal[] = [];
   const ts = Date.now();
 
+  /** Get threshold for an axis — dynamic if ambient provided, else fixed. */
+  const thr = (axis: EmotionAxis): number =>
+    ambient ? ambient.effectiveThreshold(axis) : SPIKE_THRESHOLD;
+
+  /**
+   * Check if an axis should fire, respecting hold/release.
+   * Returns true if signal should be emitted.
+   */
+  function shouldFire(axis: EmotionAxis): boolean {
+    const threshold = thr(axis);
+    const hold = getHold(axis);
+    const value = emotion[axis];
+
+    if (value >= threshold) {
+      // Above threshold → fire + hold
+      hold.active = true;
+      hold.subThresholdCount = 0;
+      return true;
+    }
+
+    if (hold.active) {
+      // Below threshold but hold is active → verify before release
+      hold.subThresholdCount++;
+      if (hold.subThresholdCount >= HOLD_RELEASE_COUNT) {
+        // Stable below threshold → release
+        hold.active = false;
+        hold.subThresholdCount = 0;
+        return false;
+      }
+      // Still in hold → keep signal active (prevent flapping)
+      return true;
+    }
+
+    return false;
+  }
+
   // flow suppresses all other signals
-  if (emotion.flow >= SPIKE_THRESHOLD) {
+  if (shouldFire("flow")) {
     signals.push({ kind: "flow_active", intensity: emotion.flow, ts, emotion });
     return signals; // suppress everything else
   }
 
   // Compound: frustration + hunger
-  if (emotion.frustration >= SPIKE_THRESHOLD && emotion.hunger >= SPIKE_THRESHOLD) {
+  const frustFires = shouldFire("frustration");
+  const hungerFires = shouldFire("hunger");
+  if (frustFires && hungerFires) {
     signals.push({
       kind: "compound_frustration_hunger",
       intensity: Math.max(emotion.frustration, emotion.hunger),
@@ -103,17 +179,18 @@ export function generateSignals(emotion: EmotionVector): FireSignal[] {
     return signals; // compound takes priority
   }
 
-  // Individual spikes
-  const checks: Array<[EmotionAxis, FireSignalKind]> = [
-    ["hunger", "hunger_spike"],
-    ["frustration", "frustration_spike"],
+  // Individual spikes (including frustration/hunger if only one fired)
+  const checks: Array<[EmotionAxis, FireSignalKind, boolean?]> = [
+    ["frustration", "frustration_spike", frustFires],
+    ["hunger", "hunger_spike", hungerFires],
     ["uncertainty", "uncertainty_sustained"],
     ["confidence", "confidence_sustained"],
     ["fatigue", "fatigue_rising"],
   ];
 
-  for (const [axis, kind] of checks) {
-    if (emotion[axis] >= SPIKE_THRESHOLD) {
+  for (const [axis, kind, precomputed] of checks) {
+    const fires = precomputed !== undefined ? precomputed : shouldFire(axis);
+    if (fires) {
       signals.push({ kind, intensity: emotion[axis], ts, emotion });
     }
   }
