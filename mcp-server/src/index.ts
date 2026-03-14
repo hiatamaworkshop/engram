@@ -32,6 +32,7 @@ import {
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
 import { setWatch, ingestEvent, formatState } from "./receptor/index.js";
+import { startReceptorHttp } from "./receptor/http.js";
 
 const ctx = loadContext();
 
@@ -535,6 +536,9 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`[engram] MCP v2 running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
+
+  // Start receptor HTTP listener (receives PostToolUse hook events)
+  startReceptorHttp();
 
   // Activate project for Digestor scope
   if (ctx.defaultProjectId) {
