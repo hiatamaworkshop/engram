@@ -57,11 +57,12 @@ const FIRE_THRESHOLD = 0.15;
 /** State mismatch suppression factor (not zero — design doc says ×0.3). */
 const STATE_MISMATCH_FACTOR = 0.3;
 
-/** Recency decay constants per frequency level (ms). */
+/** Recency decay constants per frequency level (ms).
+ *  Calibrated to Claude interaction time scale (tool calls, not wall-clock seconds). */
 const RECENCY_COOLDOWN: Record<string, number> = {
-  low: 120_000,     // 2 min — fire at most once per 2 min
-  medium: 60_000,   // 1 min
-  high: 15_000,     // 15s
+  low:    2_400_000,  // 40 min
+  medium: 1_200_000,  // 20 min
+  high:     300_000,  //  5 min
 };
 
 // ---- State ----
@@ -71,8 +72,13 @@ const methods: MethodDef[] = rules.methods as MethodDef[];
 /** Last fire timestamp per method id. */
 const _lastFired: Record<string, number> = {};
 
-/** Accumulated recommendations (notify mode). Drained on read. */
+/** Accumulated recommendations (notify mode). FIFO — oldest entry dropped when full. */
+const PENDING_MAX = 3;
 let _pending: ScoredMethod[] = [];
+
+/** Auto-execution results. FIFO — oldest entry dropped when full. */
+const AUTO_RESULTS_MAX = 3;
+let _autoResults: string[] = [];
 
 // ---- Scoring ----
 
@@ -170,10 +176,12 @@ function dispatch(fired: ScoredMethod[]): void {
         break;
       case "notify":
         _pending.push(method);
+        if (_pending.length > PENDING_MAX) _pending.shift();
         break;
       case "background":
         // future: background execution
         _pending.push(method); // for now, treat as notify
+        if (_pending.length > PENDING_MAX) _pending.shift();
         break;
     }
   }
@@ -216,6 +224,32 @@ export function drainAutoQueue(): ScoredMethod[] {
   const result = _autoQueue;
   _autoQueue = [];
   return result;
+}
+
+/**
+ * Store auto-execution result for hotmemo display.
+ */
+export function pushAutoResult(text: string): void {
+  _autoResults.push(text);
+  if (_autoResults.length > AUTO_RESULTS_MAX) _autoResults.shift();
+}
+
+/**
+ * Drain auto-execution results. Called by hotmemo after display.
+ */
+export function drainAutoResults(): string[] {
+  const result = _autoResults;
+  _autoResults = [];
+  return result;
+}
+
+/**
+ * Format auto results for hotmemo display.
+ * Returns empty string if nothing (zero noise).
+ */
+export function formatAutoResults(): string {
+  if (_autoResults.length === 0) return "";
+  return _autoResults.join("\n");
 }
 
 /**

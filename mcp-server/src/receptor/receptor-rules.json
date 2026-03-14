@@ -60,6 +60,21 @@
       }
     },
     {
+      "id": "engram_probe_light",
+      "type": "knowledge_search",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["frustration_spike", "hunger_spike"],
+        "states": ["stuck", "exploring"],
+        "sensitivity": 0.4,
+        "frequency": "medium"
+      },
+      "action": {
+        "tool": "engram_pull",
+        "args": { "projectId": "auto" }
+      }
+    },
+    {
       "id": "engram_push_reminder",
       "type": "knowledge_persist",
       "mode": "notify",

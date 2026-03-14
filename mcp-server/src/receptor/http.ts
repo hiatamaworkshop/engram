@@ -15,7 +15,7 @@ import type { RawHookEvent } from "./normalizer.js";
 
 const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
 const DISCOVERY_DIR = join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".engram");
-const DISCOVERY_FILE = join(DISCOVERY_DIR, "receptor.port");
+const DISCOVERY_FILE = join(DISCOVERY_DIR, `receptor.${process.pid}.port`);
 
 let _server: Server | null = null;
 let _boundPort: number | null = null;

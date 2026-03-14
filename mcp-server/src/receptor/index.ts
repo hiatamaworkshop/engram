@@ -6,7 +6,7 @@
 // Three-layer neuron model: A (flow gate) + B (emotion) + C (meta).
 // engram index.ts imports only this file.
 
-import type { NormalizedEvent, ReceptorState, EmotionVector, EmotionAxis, FireSignal } from "./types.js";
+import type { NormalizedEvent, ReceptorState, EmotionVector, EmotionAxis, FireSignal, AgentState } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import { normalize, type RawHookEvent } from "./normalizer.js";
 import { PathHeatmap } from "./heatmap.js";
@@ -17,7 +17,11 @@ import {
 } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
-import { onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue } from "./passive.js";
+import {
+  onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
+  pushAutoResult, formatAutoResults, drainAutoResults,
+  type ScoredMethod,
+} from "./passive.js";
 
 // ---- Singleton state ----
 
@@ -48,7 +52,42 @@ export function onSignal(listener: SignalListener): void {
 _listeners.push(onFireSignals);
 
 // Re-export passive receptor API for hotmemo integration
-export { formatRecommendations, drainRecommendations, drainAutoQueue };
+export { formatRecommendations, drainRecommendations, drainAutoQueue, formatAutoResults, drainAutoResults };
+
+// ---- Method executor (wired from main index.ts) ----
+
+export interface ExecutorContext {
+  topPaths: string[];
+  emotion: EmotionVector;
+  agentState: AgentState;
+}
+
+type MethodExecutor = (method: ScoredMethod, context: ExecutorContext) => Promise<void>;
+let _executor: MethodExecutor | undefined;
+
+/** Register the method executor callback. Called once from main index.ts with ctx closure. */
+export function setMethodExecutor(executor: MethodExecutor): void {
+  _executor = executor;
+}
+
+/** Drain auto queue and fire executor. Non-blocking (fire-and-forget). */
+function executeAutoQueue(): void {
+  if (!_executor) return;
+  const queue = drainAutoQueue();
+  if (queue.length === 0) return;
+
+  const context: ExecutorContext = {
+    topPaths: heatmap.topPaths(5).map(p => p.path),
+    emotion: { ..._lastEmotion },
+    agentState: metaNeuron.state,
+  };
+
+  for (const method of queue) {
+    _executor(method, context).catch(err => {
+      console.error(`[receptor] executor error (${method.id}):`, err);
+    });
+  }
+}
 
 // ---- Turn tracking ----
 
@@ -149,6 +188,9 @@ export function ingestEvent(raw: RawHookEvent): void {
         // listeners must not crash receptor
       }
     }
+
+    // Method resolver: execute auto queue (fire-and-forget)
+    executeAutoQueue();
   }
 }
 

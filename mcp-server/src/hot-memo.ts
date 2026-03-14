@@ -4,7 +4,7 @@
 // Each layer independently decides whether to speak.
 // If none speak, the memo is silent. Zero noise.
 
-import { formatRecommendations, drainRecommendations } from "./receptor/index.js";
+import { formatRecommendations, drainRecommendations, formatAutoResults, drainAutoResults } from "./receptor/index.js";
 
 const LAYER1_TAGS = new Set(["howto", "where", "why", "gotcha"]);
 const MAX_HISTORY = 10;
@@ -90,6 +90,13 @@ export function memoFormat(context: ToolContext): string {
   if (receptorLine) {
     layers.push(receptorLine);
     drainRecommendations(); // consume after display
+  }
+
+  // Layer 6: Receptor — auto-execution results (the coffee on the table)
+  const autoLine = formatAutoResults();
+  if (autoLine) {
+    layers.push(autoLine);
+    drainAutoResults(); // consume after display
   }
 
   if (layers.length === 0) return "";
