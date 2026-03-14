@@ -73,7 +73,7 @@ receptor:  FireSignal → A gate → C label × metrics → learnedDelta → sof
     {
       "id": "mycelium_walk",
       "type": "knowledge_search",
-      "mode": "ask",
+      "mode": "notify",
       "trigger": {
         "signals": ["uncertainty_sustained"],
         "states": ["exploring"],
@@ -125,25 +125,77 @@ states 一致      → スコア ×1.0 / 不一致 → ×0.3 (抑制だが完全
 
 ---
 
-## 2. 配信モード
+## 2. 配信モードと配信経路
+
+### 配信モード
 
 メソッドごとに開発者が指定する。
 
 | mode | 挙動 | エージェント体験 | 用途例 |
 |------|------|-----------------|--------|
-| `auto` | スコア超過で即実行、結果を直接返す | 次の engram_watch に結果が含まれる | engram_probe, mycelium_walk |
-| `ask` | 推奨を提示、エージェントが承認/却下 | 「probe 実行しますか？理由: hunger 0.87」 | コスト高い操作、外部 API |
-| `notify` | 通知枠に蓄積のみ、実行しない | 「frustration 持続中」を表示 | 状態通知、警告 |
+| `auto` | スコア超過で即実行、結果を直接返す | 次の engram_watch に結果が含まれる | engram_probe |
+| `notify` | 推奨メソッドとして蓄積、実行しない | hotmemo 経由で表示 | mycelium_walk, 状態通知 |
 | `background` | バックグラウンド実行、結果を MCP 状態に反映 | エージェントは気づかない、次の watch で見える | プリフェッチ、キャッシュ |
+
+**廃案: `ask` モード** — engram との結合を強めるため廃止。
+推奨は `notify` で hotmemo に差し込めば十分。エージェントが採用するかどうかは
+次のツール呼び出しを観測すれば learnedDelta の学習信号になる。
+
+### 配信経路 — hotmemo 統一
+
+passive receptor の出力は **既存の hotmemo システム** を経由してエージェントに届く。
+
+```
+passive receptor
+  → 推奨メソッドリスト (threshold 超過した全メソッド)
+  → hotmemo にレイヤーとして注入
+  → エージェントが次に engram ツールを呼んだ時に応答末尾に表示
+
+表示例:
+  [receptor] hunger sustained — consider: engram_probe, mycelium_walk
+```
+
+hotmemo の設計原則と完全に整合する:
+- 各レイヤーが独立に「喋るかどうか」を判断
+- 条件を満たさなければ沈黙（ゼロノイズ）
+- 新しい MCP ツールや依存を追加しない
+
+### 複数メソッド同時発火
+
+argmax (トップ1選出) ではなく、**threshold 超過した全メソッドが並行発火** する。
+量子化モデルの「収縮するまでは重ね合わせ」を適用。
+
+```
+FireSignal (hunger_spike, intensity=0.87)
+       |
+       × P (rules.json の全メソッド)
+       |
+       v
+  D = [
+    engram_probe:      0.72  ← threshold 超過 → 発火
+    mycelium_walk:     0.58  ← threshold 超過 → 発火
+    frustration_alert: 0.15  ← threshold 未満 → 沈黙
+  ]
+```
+
+phi-agent は身体が1つだから1行動しか選べない。だが passive receptor は
+実行を外部に委譲するため、同時に複数メソッドを走らせる物理的制約がない。
+
+mode による並行制約:
+
+| mode | 同時発火 |
+|------|---------|
+| `auto` | 複数可 |
+| `background` | 複数可 |
+| `notify` | 複数可 (hotmemo に全て蓄積) |
 
 ### 配信モードと learnedDelta の関係
 
 | mode | 学習信号 | 信号の質 |
 |------|---------|---------|
-| `ask` | 承認/却下が直接 falsePositiveRate に反映 | 最高 (明示的判断) |
 | `auto` | 結果がエージェントに使われたかの暗黙観測 | 中 (間接的) |
 | `background` | 結果がエージェントに使われたかの暗黙観測 | 中 (間接的) |
-| `notify` | 学習信号なし | なし |
+| `notify` | 推奨後にエージェントがそのツールを呼んだか | 中 (間接的) |
 
 ---
 
@@ -308,11 +360,10 @@ receptor-rules.json に登録するだけで接続できる汎用基盤。
 ## 9. 未決定事項
 
 - スコアの threshold 値（auto 実行の最低スコアはいくつか）
-- 確率選出か threshold cut か、あるいは両方か
 - receptor-learned.json のフォーマットと永続化タイミング
 - sensitivity の変更 API（engram_tune 相当の MCP ツール）
-- 複数メソッドが同時にスコア超過した場合の排他制御
-- `ask` モードの承認/却下をどう受け取るか（MCP ツール? watch の引数?）
+- hotmemo レイヤーの表示フォーマット詳細
+- notify の推奨をエージェントが採用したかの観測方法（次のツール呼び出し名との一致？）
 
 ---
 
