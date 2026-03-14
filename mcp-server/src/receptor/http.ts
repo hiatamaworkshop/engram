@@ -147,26 +147,38 @@ function parseHookPayload(json: Record<string, unknown>): RawHookEvent | null {
 
 /**
  * Try to extract Bash exit code from tool_response.
- * Claude Code response format varies — try multiple strategies.
+ *
+ * Actual Claude Code PostToolUse payload (verified 2026-03-14):
+ *   tool_response: { stdout, stderr, interrupted, isImage, noOutputExpected }
+ *   On failure:    { stdout, stderr, interrupted, returnCodeInterpretation, ... }
+ *
+ * There is NO explicit exit_code field. We infer failure from:
+ *   1. returnCodeInterpretation exists (any non-success result)
+ *   2. stderr is non-empty (fallback heuristic)
+ *   3. interrupted === true
  */
 function extractExitCode(response: unknown): number | undefined {
   if (response == null) return undefined;
 
-  // Strategy 1: direct field
   if (typeof response === "object") {
     const r = response as Record<string, unknown>;
+
+    // Direct exit_code field (future-proofing)
     if (typeof r.exit_code === "number") return r.exit_code;
     if (typeof r.exitCode === "number") return r.exitCode;
-    if (typeof r.code === "number") return r.code;
 
-    // Strategy 2: nested in content array
-    if (Array.isArray(r.content)) {
-      for (const item of r.content) {
-        if (typeof item === "object" && item !== null) {
-          const ci = item as Record<string, unknown>;
-          if (typeof ci.exit_code === "number") return ci.exit_code;
-          if (typeof ci.exitCode === "number") return ci.exitCode;
-        }
+    // Interrupted → treat as failure
+    if (r.interrupted === true) return 130; // SIGINT convention
+
+    // returnCodeInterpretation exists → non-zero exit
+    if (typeof r.returnCodeInterpretation === "string") return 1;
+
+    // stderr non-empty → likely failure (heuristic)
+    if (typeof r.stderr === "string" && r.stderr.trim().length > 0) {
+      // Some commands output to stderr legitimately (e.g. npm warnings)
+      // Only treat as failure if stdout is empty
+      if (typeof r.stdout === "string" && r.stdout.trim().length === 0) {
+        return 1;
       }
     }
   }
@@ -176,17 +188,31 @@ function extractExitCode(response: unknown): number | undefined {
 
 /**
  * Try to extract search result count from Grep/Glob response.
- * Grep output often starts with "Found N files".
+ *
+ * Actual Claude Code PostToolUse payload (verified 2026-03-14):
+ *   Grep: { mode, filenames: [...], numFiles: N }
+ *   Glob: { filenames: [...], numFiles: N, durationMs, truncated }
+ *
+ * Primary: numFiles field (structured JSON).
+ * Fallback: filenames array length, then text pattern matching.
  */
 function extractSearchResultCount(response: unknown): number | undefined {
   if (response == null) return undefined;
 
-  // Try to get text content
-  let text = "";
-  if (typeof response === "string") {
-    text = response;
-  } else if (typeof response === "object") {
+  if (typeof response === "object") {
     const r = response as Record<string, unknown>;
+
+    // Primary: numFiles field (Grep & Glob both provide this)
+    if (typeof r.numFiles === "number") return r.numFiles;
+
+    // Secondary: count filenames array
+    if (Array.isArray(r.filenames)) return r.filenames.length;
+
+    // Grep content mode: may have numMatches or similar
+    if (typeof r.numMatches === "number") return r.numMatches;
+
+    // Fallback: text-based extraction (for future format changes)
+    let text = "";
     if (typeof r.text === "string") text = r.text;
     else if (Array.isArray(r.content)) {
       for (const item of r.content) {
@@ -196,24 +222,19 @@ function extractSearchResultCount(response: unknown): number | undefined {
         }
       }
     }
+
+    if (text) {
+      const foundMatch = text.match(/^Found (\d+) (?:files?|total)/m);
+      if (foundMatch) return parseInt(foundMatch[1], 10);
+      if (/No files found|No matches/i.test(text)) return 0;
+    }
   }
 
-  if (!text) return undefined;
-
-  // "Found N files" pattern (Grep files_with_matches)
-  const foundMatch = text.match(/^Found (\d+) files?/m);
-  if (foundMatch) return parseInt(foundMatch[1], 10);
-
-  // "No files found" or empty
-  if (/No files found|No matches/i.test(text)) return 0;
-
-  // Count non-empty lines as fallback for file lists
-  // (only if response looks like a file listing)
-  if (text.includes("\n") && !text.includes(" ")) {
-    const lines = text.trim().split("\n").filter(l => l.length > 0);
-    if (lines.length > 0 && lines.every(l => l.includes("/") || l.includes("\\"))) {
-      return lines.length;
-    }
+  // String response (unlikely but defensive)
+  if (typeof response === "string") {
+    const m = response.match(/^Found (\d+) (?:files?|total)/m);
+    if (m) return parseInt(m[1], 10);
+    if (/No files found|No matches/i.test(response)) return 0;
   }
 
   return undefined;

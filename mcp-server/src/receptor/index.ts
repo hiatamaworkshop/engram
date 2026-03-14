@@ -148,6 +148,80 @@ export function getState(): ReceptorState {
   };
 }
 
+// ---- Formatting helpers ----
+
+/** ASCII bar: ▓ filled, ░ empty. width = max chars for the bar portion. */
+function bar(value: number, max: number, width = 10): string {
+  const filled = Math.round((Math.min(value, max) / max) * width);
+  return "▓".repeat(filled) + "░".repeat(width - filled);
+}
+
+/** Format elapsed time as human-readable. */
+function fmtElapsed(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}m${s}s` : `${m}m`;
+}
+
+/** Format action counts as compact mini-bar. */
+function fmtCounts(snap: { counts: Record<string, number>; total: number }): string {
+  const labels: [string, string][] = [
+    ["file_read", "Rd"],
+    ["file_edit", "Ed"],
+    ["search", "Sr"],
+    ["shell_exec", "Sh"],
+    ["delegation", "Ag"],
+    ["memory_read", "Mr"],
+    ["memory_write", "Mw"],
+  ];
+  const parts: string[] = [];
+  for (const [key, label] of labels) {
+    const n = snap.counts[key] ?? 0;
+    if (n > 0) parts.push(`${label}:${n}`);
+  }
+  return parts.length > 0 ? parts.join(" ") : "(empty)";
+}
+
+/** Render heatmap as indented tree (top branches only, max depth 3). */
+function fmtHeatmapTree(hmap: PathHeatmap, maxLeaves = 5): string {
+  const top = hmap.topPaths(maxLeaves);
+  if (top.length === 0) return "";
+
+  // Build a simple tree from flat paths
+  interface TreeNode { count: number; children: Map<string, TreeNode> }
+  const root: TreeNode = { count: 0, children: new Map() };
+
+  for (const { path, count } of top) {
+    const segs = path.split("/");
+    let node = root;
+    for (const seg of segs) {
+      if (!node.children.has(seg)) {
+        node.children.set(seg, { count: 0, children: new Map() });
+      }
+      node = node.children.get(seg)!;
+    }
+    node.count = count;
+  }
+
+  const lines: string[] = [];
+  const renderNode = (node: TreeNode, prefix: string, depth: number): void => {
+    const entries = [...node.children.entries()];
+    for (let i = 0; i < entries.length; i++) {
+      const [name, child] = entries[i];
+      const isLast = i === entries.length - 1;
+      const connector = isLast ? "└── " : "├── ";
+      const countStr = child.count > 0 ? ` (${child.count})` : "";
+      lines.push(`${prefix}${connector}${name}${countStr}`);
+      if (child.children.size > 0 && depth < 3) {
+        renderNode(child, prefix + (isLast ? "    " : "│   "), depth + 1);
+      }
+    }
+  };
+  renderNode(root, "    ", 0);
+  return lines.join("\n");
+}
+
 /** Format state for MCP tool response — three-layer neuron monitor. */
 export function formatState(): string {
   const state = getState();
@@ -158,21 +232,20 @@ export function formatState(): string {
   const elapsed = state.startedAt ? Math.round((Date.now() - state.startedAt) / 1000) : 0;
   const shortSnap = commander.shortSnapshot();
   const mediumSnap = commander.mediumSnapshot();
-  const topPaths = heatmap.topPaths(3);
+  const rate = elapsed > 0 ? (state.eventCount / (elapsed / 60)).toFixed(1) : "0.0";
 
   // ---- Header ----
   const lines: string[] = [
-    `Receptor: ON (${elapsed}s, ${state.eventCount} events)`,
+    `Receptor: ON  ${fmtElapsed(elapsed)}  ${state.eventCount} events  ${rate}/min`,
   ];
 
   // ---- A: Flow gate (hard neuron) ----
-  // A is the simplest: flow above threshold → suppress everything
   const flowThr = ambient.effectiveThreshold("flow");
   const flowVal = state.lastEmotion.flow;
   const flowFiring = flowVal >= flowThr;
   lines.push("");
   lines.push(`[A] Flow gate: ${flowFiring ? "ACTIVE — suppressing all" : "open"}`);
-  lines.push(`    flow=${flowVal.toFixed(2)} thr=${flowThr.toFixed(2)}`);
+  lines.push(`    flow ${bar(flowVal, 1)} ${flowVal.toFixed(2)}  thr=${flowThr.toFixed(2)}`);
 
   // ---- B: Emotion engine (soft neuron) ----
   lines.push("");
@@ -181,8 +254,6 @@ export function formatState(): string {
   const axes: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
   const holdSummary = getHoldSummary();
 
-  // Emotion values with threshold comparison
-  const emotionParts: string[] = [];
   for (const axis of axes) {
     const val = state.lastEmotion[axis];
     const thr = ambient.effectiveThreshold(axis);
@@ -190,13 +261,17 @@ export function formatState(): string {
     const field = ambient.fieldAdjustment[axis];
 
     let marker = "  ";
-    if (val >= thr) marker = "! "; // firing
-    else if (holdSummary[axis]) marker = "~ "; // hold (pending release)
+    if (val >= thr) marker = "! ";       // firing
+    else if (holdSummary[axis]) marker = "~ ";  // hold (pending release)
 
-    const fieldStr = field !== 0 ? ` field=${field > 0 ? "+" : ""}${field.toFixed(2)}` : "";
-    emotionParts.push(`    ${marker}${axis}: ${val.toFixed(2)} | base=${base.toFixed(2)} thr=${thr.toFixed(2)}${fieldStr}`);
+    const fieldStr = Math.abs(field) > 0.001 ? ` C:${field > 0 ? "+" : ""}${field.toFixed(2)}` : "";
+    // Show threshold marker on the bar
+    const thrPos = Math.round(Math.min(thr, 1) * 10);
+    const barStr = bar(val, 1);
+    const barWithThr = barStr.substring(0, thrPos) + "|" + barStr.substring(thrPos + 1);
+    const abbr = axis.substring(0, 4).toUpperCase().padEnd(4);
+    lines.push(`    ${marker}${abbr} ${barWithThr} ${val.toFixed(2)}  base=${base.toFixed(2)}${fieldStr}`);
   }
-  lines.push(...emotionParts);
 
   // Hold states
   const activeHolds = Object.entries(holdSummary);
@@ -221,16 +296,27 @@ export function formatState(): string {
     }
   }
   if (fieldParts.length > 0) {
-    lines.push(`    field emission: ${fieldParts.join(" ")}`);
+    lines.push(`    field: ${fieldParts.join(" ")}`);
   }
 
-  // ---- Context ----
+  // ---- Commander: action breakdown ----
   lines.push("");
-  lines.push(`Pattern: ${shortSnap.pattern}(5m) ${mediumSnap.pattern}(30m) bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`);
-  if (topPaths.length > 0) {
-    lines.push(`Hot: ${topPaths.map(p => `${p.path}(${p.count})`).join(" ")}`);
+  lines.push(`Pattern: ${shortSnap.pattern}(5m) ${mediumSnap.pattern}(30m)  bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`);
+  lines.push(`  5m:  [${fmtCounts(shortSnap)}] n=${shortSnap.total}`);
+  if (mediumSnap.total !== shortSnap.total) {
+    lines.push(`  30m: [${fmtCounts(mediumSnap)}] n=${mediumSnap.total}`);
   }
+
+  // ---- Heatmap tree ----
+  const tree = fmtHeatmapTree(heatmap, 5);
+  if (tree) {
+    lines.push("");
+    lines.push(`Heatmap (${heatmap.totalHits} hits):`);
+    lines.push(tree);
+  }
+
   if (ambient.isSilenced) {
+    lines.push("");
     lines.push("** silence gate active **");
   }
 
