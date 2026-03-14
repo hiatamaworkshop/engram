@@ -6,12 +6,15 @@
 // Three-layer neuron model: A (flow gate) + B (emotion) + C (meta).
 // engram index.ts imports only this file.
 
-import type { NormalizedEvent, ReceptorState, EmotionVector, FireSignal } from "./types.js";
+import type { NormalizedEvent, ReceptorState, EmotionVector, EmotionAxis, FireSignal } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import { normalize, type RawHookEvent } from "./normalizer.js";
 import { PathHeatmap } from "./heatmap.js";
 import { Commander } from "./commander.js";
-import { computeEmotion, generateSignals, resetHoldState, formatEmotion, formatSignals } from "./emotion.js";
+import {
+  computeEmotion, generateSignals, resetHoldState,
+  formatSignals, getHoldSummary,
+} from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
 
@@ -27,7 +30,7 @@ let _lastEvent: NormalizedEvent | undefined;
 const heatmap = new PathHeatmap();
 const commander = new Commander();
 const ambient = new AmbientEstimator();
-const meta = new MetaNeuron();
+const metaNeuron = new MetaNeuron();
 
 // ---- Signal listeners (connection targets register here) ----
 
@@ -51,7 +54,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     heatmap.clear();
     commander.clear();
     ambient.clear();
-    meta.clear();
+    metaNeuron.clear();
     resetHoldState();
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
@@ -102,8 +105,8 @@ export function ingestEvent(raw: RawHookEvent): void {
 
   // Meta neuron C: observe firings → derive state → adjust ambient field
   // C does NOT generate signals. It only writes to ambient.fieldAdjustment.
-  meta.observe(_lastSignals);
-  meta.process(_lastEmotion, shortSnap.pattern, ambient, ambient.isSilenced);
+  metaNeuron.observe(_lastSignals);
+  metaNeuron.process(_lastEmotion, shortSnap.pattern, ambient, ambient.isSilenced);
 
   // Notify listeners (connection targets)
   if (_lastSignals.length > 0) {
@@ -128,7 +131,7 @@ export function getState(): ReceptorState {
   };
 }
 
-/** Format state for MCP tool response. */
+/** Format state for MCP tool response — three-layer neuron monitor. */
 export function formatState(): string {
   const state = getState();
   if (!state.watching) {
@@ -136,21 +139,83 @@ export function formatState(): string {
   }
 
   const elapsed = state.startedAt ? Math.round((Date.now() - state.startedAt) / 1000) : 0;
-  const topPaths = heatmap.topPaths(5);
   const shortSnap = commander.shortSnapshot();
+  const mediumSnap = commander.mediumSnapshot();
+  const topPaths = heatmap.topPaths(3);
 
-  const lines = [
+  // ---- Header ----
+  const lines: string[] = [
     `Receptor: ON (${elapsed}s, ${state.eventCount} events)`,
-    "",
-    `Emotion: ${formatEmotion(state.lastEmotion)}`,
-    `Signals: ${formatSignals(state.signals)}`,
-    `Pattern: ${shortSnap.pattern} (short) / bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`,
-    `Thresholds: ${ambient.formatThresholds()}`,
-    meta.format(),
-    "",
-    "Hot paths:",
-    ...topPaths.map((p) => `  ${p.path} (${p.count})`),
   ];
+
+  // ---- A: Flow gate (hard neuron) ----
+  // A is the simplest: flow above threshold → suppress everything
+  const flowThr = ambient.effectiveThreshold("flow");
+  const flowVal = state.lastEmotion.flow;
+  const flowFiring = flowVal >= flowThr;
+  lines.push("");
+  lines.push(`[A] Flow gate: ${flowFiring ? "ACTIVE — suppressing all" : "open"}`);
+  lines.push(`    flow=${flowVal.toFixed(2)} thr=${flowThr.toFixed(2)}`);
+
+  // ---- B: Emotion engine (soft neuron) ----
+  lines.push("");
+  lines.push("[B] Emotion");
+
+  const axes: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
+  const holdSummary = getHoldSummary();
+
+  // Emotion values with threshold comparison
+  const emotionParts: string[] = [];
+  for (const axis of axes) {
+    const val = state.lastEmotion[axis];
+    const thr = ambient.effectiveThreshold(axis);
+    const base = ambient.baseline(axis);
+    const field = ambient.fieldAdjustment[axis];
+
+    let marker = "  ";
+    if (val >= thr) marker = "! "; // firing
+    else if (holdSummary[axis]) marker = "~ "; // hold (pending release)
+
+    const fieldStr = field !== 0 ? ` field=${field > 0 ? "+" : ""}${field.toFixed(2)}` : "";
+    emotionParts.push(`    ${marker}${axis}: ${val.toFixed(2)} | base=${base.toFixed(2)} thr=${thr.toFixed(2)}${fieldStr}`);
+  }
+  lines.push(...emotionParts);
+
+  // Hold states
+  const activeHolds = Object.entries(holdSummary);
+  if (activeHolds.length > 0) {
+    const holdStr = activeHolds.map(([k, v]) => `${k}(${v.pending}/${3})`).join(" ");
+    lines.push(`    holds: ${holdStr}`);
+  }
+
+  // Signals
+  lines.push(`    signals: ${formatSignals(state.signals)}`);
+
+  // ---- C: Meta neuron ----
+  lines.push("");
+  lines.push(`[C] ${metaNeuron.format()}`);
+
+  // Field adjustments from C (show only non-zero)
+  const fieldParts: string[] = [];
+  for (const axis of axes) {
+    const f = ambient.fieldAdjustment[axis];
+    if (Math.abs(f) > 0.001) {
+      fieldParts.push(`${axis}:${f > 0 ? "+" : ""}${f.toFixed(2)}`);
+    }
+  }
+  if (fieldParts.length > 0) {
+    lines.push(`    field emission: ${fieldParts.join(" ")}`);
+  }
+
+  // ---- Context ----
+  lines.push("");
+  lines.push(`Pattern: ${shortSnap.pattern}(5m) ${mediumSnap.pattern}(30m) bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`);
+  if (topPaths.length > 0) {
+    lines.push(`Hot: ${topPaths.map(p => `${p.path}(${p.count})`).join(" ")}`);
+  }
+  if (ambient.isSilenced) {
+    lines.push("** silence gate active **");
+  }
 
   return lines.join("\n");
 }

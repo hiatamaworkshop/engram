@@ -209,3 +209,14 @@ export function formatSignals(signals: FireSignal[]): string {
   if (signals.length === 0) return "(no signals)";
   return signals.map((s) => `${s.kind} [${s.intensity.toFixed(2)}]`).join(", ");
 }
+
+/** Get hold state summary for monitoring. */
+export function getHoldSummary(): Record<string, { active: boolean; pending: number }> {
+  const result: Record<string, { active: boolean; pending: number }> = {};
+  for (const [key, entry] of Object.entries(_holdState)) {
+    if (entry.active) {
+      result[key] = { active: true, pending: entry.subThresholdCount };
+    }
+  }
+  return result;
+}
