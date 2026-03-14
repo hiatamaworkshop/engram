@@ -543,16 +543,147 @@ dt > 3min    → effectiveDt = 0       (凍結: セッション中断)
 
 ---
 
-## 10. 未実装（スコープ外）
+## 10. 実装済み拡張 (2026-03-15)
 
-- **Interpretation Layer**: 発火シグナルの解釈とトリガ選定（passive receptor）
-- **receptor-rules.json**: 発火パターン → アクションのマッピング定義
-- **配信モード**: silent / passive / notification / active の判定
-- **learnedDelta**: 解釈層のスコアリングに適用（下記参照）
-- **接続先**: mycelium probe, engram push 推奨等の実アクション
+### emotion-profile.json — 数値定数の外部化
 
-現時点では receptor はシグナルを**発火して listener に通知する**ところまで。
-シグナルの「意味」を解釈して行動に変換する層は別途実装予定。
+emotion.ts, ambient.ts, meta.ts にハードコードされていた全数値定数を
+`receptor/emotion-profile.json` に集約。profile.ts が型定義とローダーを提供。
+
+```
+emotion-profile.json (単一の数値定義)
+       |
+       v
+  profile.ts (型定義 + ローダー)
+       |
+       ├──→ emotion.ts (halfLife, impulse, compounds, timing)
+       ├──→ ambient.ts (EMA定数, offsets, thresholds)
+       └──→ meta.ts (buffer, field, stateThresholds)
+```
+
+**セクション構成**:
+| セクション | 内容 |
+|-----------|------|
+| `accumulator` | 半減期 (per axis), idleFreezeMs, interTurnCapMs |
+| `impulse.event` | アクション×結果ごとのインパルス係数 |
+| `impulse.pattern` | パターンごとのインパルス係数 |
+| `impulse.fatigue` | base + hourlyRate |
+| `signal` | defaultThreshold, holdReleaseCount, compounds 定義 |
+| `ambient` | timeConstantMs, silenceGateMs, offsets, min/maxThreshold |
+| `meta` | bufferSize, hitRate閾値, fieldAdjustment, stateThresholds |
+
+**compounds の宣言的定義**: 以前は emotion.ts にハードコードされていた compound 信号
+（frustration + hunger の同時発火）が JSON で宣言的に定義される。
+新しい compound パターンの追加は JSON に1行追加するだけ。
+
+**設計原理**: チューニングが1ファイルで完結し、receptor-rules.json と同じ語彙を共有。
+ベクトル数値を多目的の1ファイルにハードコードすると保守が破綻するため分離した。
+
+### Passive Receptor — 解釈層
+
+FireSignal[] を受信し、receptor-rules.json のメソッド群をスコアリングして
+配信モードに応じてディスパッチする。
+
+```
+FireSignal[] (B neuron 出力)
+       |
+       v
+  passive.ts: onFireSignals()
+       |
+  [1] A gate check — flow_active 検出 → 全メソッド抑制、即 return
+       |
+  [2] evaluate() — 全メソッドをスコアリング
+       |   score = signalMatch × stateMatch × intensity
+       |         × sensitivity × (1 - falsePositiveRate) × recencyDecay
+       |
+  [3] FIRE_THRESHOLD (0.15) 超過のみ通過
+       |
+  [4] dispatch() — mode 別振り分け
+       ├── auto   → autoQueue (method resolver が消費)
+       ├── notify → pending (hotmemo Layer 5 が表示)
+       └── background → pending (暫定、将来分離)
+```
+
+**スコアリング詳細**:
+| 要素 | 値域 | 算出 |
+|------|------|------|
+| signalMatch | 0 or 1 | trigger.signals に signal.kind が含まれるか |
+| stateMatch | 0.3 or 1.0 | trigger.states に agentState が含まれるか (不一致は ×0.3、完全排除しない) |
+| intensity | 0-1 | signal.intensity (B neuron 出力) |
+| sensitivity | 0-1 | trigger.sensitivity (開発者が宣言) |
+| falsePositiveRate | 0 | learnedDelta (将来: receptor-learned.json から読み込み) |
+| recencyDecay | 0-1 | 前回発火からの経過時間 / cooldown (連発防止) |
+
+**recency cooldown**:
+| frequency | cooldown |
+|-----------|----------|
+| low | 2分 |
+| medium | 1分 |
+| high | 15秒 |
+
+**hotmemo 統合**: hot-memo.ts に Layer 5 として receptor 推奨を注入。
+`formatRecommendations()` が pending メソッドを整形し、`drainRecommendations()` で消費。
+推奨がなければ沈黙 — hotmemo のゼロノイズ原則を継承。
+
+### ターン境界トラッキング
+
+ツール呼び出し回数だけでは work intensity を算出できない（分母がない）。
+`UserPromptSubmit` と `Stop` フックでターン境界を検出し、tools/turn 比率を算出。
+
+```
+[UserPromptSubmit hook] → POST /turn {"type":"user"}  → commander.recordTurn("user")
+[Stop hook]             → POST /turn {"type":"agent"} → commander.recordTurn("agent")
+```
+
+**WindowSnapshot に追加されたフィールド**:
+| フィールド | 意味 |
+|-----------|------|
+| `turns` | ウィンドウ内の完了ターン数 (agent Stop の数) |
+| `toolsPerTurn` | total / turns (0 = ターンデータ未着) |
+
+**表示例**:
+```
+  5m:  [Rd:4 Ed:12 Sh:5] n=21  turns=3 t/t=7.0
+```
+`t/t=7.0` = 1ターンあたり7ツール使用 = 集中的な実装バースト。
+
+**算出可能な指標**:
+| 指標 | 式 | 意味 |
+|------|-----|------|
+| work intensity | tools / turn | ターンあたりの道具使用密度 |
+| interaction tempo | turns / hour | 対話頻度 |
+| output efficiency | edits / turn | ターンあたりの編集出力 |
+| search efficiency | found / (found + empty) per turn | 探索精度 |
+
+**ファイル構成**:
+| ファイル | 役割 |
+|---------|------|
+| `~/.claude/hooks/engram-turn-hook.sh` | ターン境界を `/turn` に送信 |
+| `~/.claude/settings.json` | UserPromptSubmit, Stop フック登録 |
+| `receptor/http.ts` | `/turn` エンドポイント |
+| `receptor/commander.ts` | TurnMark 蓄積 + _turnsInWindow() |
+
+### hunger_spike の false positive 対策
+
+**問題**: hunger は情報消費量 (intake rate) を測っており、欠乏状態ではない。
+設計議論で資料を読むだけで hunger 0.98 に到達し、passive receptor が不要な発火をする。
+
+**対策**: receptor-rules.json で解釈層側で抑制。
+- `engram_probe`: signals を `compound_frustration_hunger` のみに限定、states を `stuck` のみに
+- `mycelium_walk`: signals から `hunger_spike` を除去、`uncertainty_sustained` のみに
+
+**設計方針**: neuron (センサー) 側は修正せず、解釈層で文脈判断する。
+hunger が高くても frustration が低ければ「健全な学習」と判断して抑制。
+
+---
+
+## 11. 未実装（スコープ外）
+
+- **learnedDelta 永続化**: receptor-learned.json のフォーマットと永続化タイミング
+- **method resolver**: auto queue の実行層（tool 呼び出し / MCP / shell command 振り分け）
+- **background mode**: バックグラウンド実行の実装（暫定で notify 扱い）
+- **sensitivity 変更 API**: engram_tune 相当の MCP ツール
+- **notify 採用観測**: 推奨後にエージェントがそのツールを呼んだかの検出方法
 
 ### learnedDelta — 設計決定 (2026-03-15)
 

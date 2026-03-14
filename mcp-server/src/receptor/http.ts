@@ -10,7 +10,7 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ingestEvent } from "./index.js";
+import { ingestEvent, recordTurn } from "./index.js";
 import type { RawHookEvent } from "./normalizer.js";
 
 const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
@@ -43,7 +43,32 @@ export function startReceptorHttp(): void {
   if (_server) return; // already started
 
   _server = createServer((req, res) => {
-    if (req.method !== "POST" || req.url !== "/receptor") {
+    if (req.method !== "POST") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    // /turn — lightweight turn boundary marker (UserPromptSubmit / Stop)
+    if (req.url === "/turn") {
+      let body = "";
+      req.on("data", (chunk: Buffer) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const json = JSON.parse(body);
+          const type = json.type as string; // "user" or "agent"
+          recordTurn(type === "user" ? "user" : "agent");
+          res.writeHead(200);
+          res.end("ok");
+        } catch {
+          res.writeHead(400);
+          res.end("bad request");
+        }
+      });
+      return;
+    }
+
+    if (req.url !== "/receptor") {
       res.writeHead(404);
       res.end();
       return;

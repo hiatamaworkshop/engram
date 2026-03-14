@@ -50,6 +50,13 @@ _listeners.push(onFireSignals);
 // Re-export passive receptor API for hotmemo integration
 export { formatRecommendations, drainRecommendations, drainAutoQueue };
 
+// ---- Turn tracking ----
+
+/** Record a turn boundary event from UserPromptSubmit / Stop hooks. */
+export function recordTurn(type: "user" | "agent"): void {
+  commander.recordTurn(type);
+}
+
 // ---- Public API ----
 
 /** Toggle watch mode. Returns new state. */
@@ -309,10 +316,12 @@ export function formatState(): string {
 
   // ---- Commander: action breakdown ----
   lines.push("");
+  const turnInfo5 = shortSnap.turns > 0 ? `  turns=${shortSnap.turns} t/t=${shortSnap.toolsPerTurn.toFixed(1)}` : "";
+  const turnInfo30 = mediumSnap.turns > 0 ? `  turns=${mediumSnap.turns} t/t=${mediumSnap.toolsPerTurn.toFixed(1)}` : "";
   lines.push(`Pattern: ${shortSnap.pattern}(5m) ${mediumSnap.pattern}(30m)  bash_fail=${(shortSnap.bashFailRate * 100).toFixed(0)}%`);
-  lines.push(`  5m:  [${fmtCounts(shortSnap)}] n=${shortSnap.total}`);
+  lines.push(`  5m:  [${fmtCounts(shortSnap)}] n=${shortSnap.total}${turnInfo5}`);
   if (mediumSnap.total !== shortSnap.total) {
-    lines.push(`  30m: [${fmtCounts(mediumSnap)}] n=${mediumSnap.total}`);
+    lines.push(`  30m: [${fmtCounts(mediumSnap)}] n=${mediumSnap.total}${turnInfo30}`);
   }
 
   // ---- Heatmap tree ----

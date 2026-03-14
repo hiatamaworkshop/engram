@@ -21,6 +21,13 @@ export interface WindowSnapshot {
   pattern: PatternKind;
   bashFailRate: number;
   editBashAlternation: number;
+  turns: number;
+  toolsPerTurn: number;
+}
+
+interface TurnMark {
+  type: "user" | "agent";
+  ts: number;
 }
 
 export class Commander {
@@ -28,6 +35,7 @@ export class Commander {
   private mediumWindow: NormalizedEvent[] = [];
   private allEvents: NormalizedEvent[] = [];
   private _sessionStart = Date.now();
+  private _turns: TurnMark[] = [];
 
   /** Record an event into all windows. */
   record(event: NormalizedEvent): void {
@@ -36,16 +44,21 @@ export class Commander {
     this.allEvents.push(event);
   }
 
+  /** Record a turn boundary (user prompt or agent stop). */
+  recordTurn(type: "user" | "agent"): void {
+    this._turns.push({ type, ts: Date.now() });
+  }
+
   /** Get snapshot for short-term window. */
   shortSnapshot(): WindowSnapshot {
     this._evict(this.shortWindow, SHORT_WINDOW_MS);
-    return this._snapshot(this.shortWindow);
+    return this._snapshot(this.shortWindow, SHORT_WINDOW_MS);
   }
 
   /** Get snapshot for medium-term window. */
   mediumSnapshot(): WindowSnapshot {
     this._evict(this.mediumWindow, MEDIUM_WINDOW_MS);
-    return this._snapshot(this.mediumWindow);
+    return this._snapshot(this.mediumWindow, MEDIUM_WINDOW_MS);
   }
 
   /** Meta-level stats (entire session). */
@@ -61,6 +74,7 @@ export class Commander {
     this.shortWindow = [];
     this.mediumWindow = [];
     this.allEvents = [];
+    this._turns = [];
     this._sessionStart = Date.now();
   }
 
@@ -73,7 +87,14 @@ export class Commander {
     }
   }
 
-  private _snapshot(events: NormalizedEvent[]): WindowSnapshot {
+  /** Count turns within a time window. */
+  private _turnsInWindow(windowMs: number): number {
+    const cutoff = Date.now() - windowMs;
+    // Count "agent" stops as completed turns
+    return this._turns.filter(t => t.ts >= cutoff && t.type === "agent").length;
+  }
+
+  private _snapshot(events: NormalizedEvent[], windowMs: number = SHORT_WINDOW_MS): WindowSnapshot {
     const counts: Record<NormalizedAction, number> = {
       file_read: 0,
       file_edit: 0,
@@ -112,8 +133,10 @@ export class Commander {
     const total = events.length;
     const bashFailRate = bashTotal > 0 ? bashFails / bashTotal : 0;
     const pattern = this._classifyPattern(counts, total, editBashAlternation, bashFailRate);
+    const turns = this._turnsInWindow(windowMs);
+    const toolsPerTurn = turns > 0 ? total / turns : 0;
 
-    return { counts, total, pattern, bashFailRate, editBashAlternation };
+    return { counts, total, pattern, bashFailRate, editBashAlternation, turns, toolsPerTurn };
   }
 
   private _classifyPattern(
