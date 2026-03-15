@@ -1,0 +1,305 @@
+{
+  "$schema": "Calibration scenarios for Phase 1. Each scenario = (x: events+context, y: expected emotion vector). Pattern is declared per-scenario (no Commander dependency).",
+  "intervalMs": 5000,
+  "scenarios": [
+    {
+      "id": "normal_exploration",
+      "description": "grep found 3x, read 2x — normal codebase exploration, nothing wrong",
+      "pattern": "exploration",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 5 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 3 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 8 } }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.08,
+        "uncertainty": 0.03,
+        "confidence": 0.02,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "bash_failure_streak",
+      "description": "bash fail 3x in a row — genuine frustration scenario",
+      "pattern": "trial_error",
+      "events": [
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Bash", "exit_code": 1 }
+      ],
+      "expected": {
+        "frustration": 0.40,
+        "hunger": 0.00,
+        "uncertainty": 0.00,
+        "confidence": -0.10,
+        "fatigue": 0.02
+      }
+    },
+    {
+      "id": "search_dead_end",
+      "description": "grep empty 4x, read 1x — can't find what you're looking for",
+      "pattern": "wandering",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.40,
+        "uncertainty": 0.35,
+        "confidence": 0.00,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "implementation_flow",
+      "description": "edit 3x, bash success 2x — smooth implementation session",
+      "pattern": "implementation",
+      "events": [
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 0 },
+        { "tool_name": "Edit" },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 0 }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.00,
+        "uncertainty": 0.00,
+        "confidence": 0.30,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "trial_error_recovery",
+      "description": "edit, bash fail, read, edit, bash success — one mistake then fix",
+      "pattern": "trial_error",
+      "events": [
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Read" },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 0 }
+      ],
+      "expected": {
+        "frustration": 0.15,
+        "hunger": 0.02,
+        "uncertainty": 0.00,
+        "confidence": 0.10,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "extended_reading",
+      "description": "read 6x — deep reading session, not stuck, just absorbing",
+      "pattern": "exploration",
+      "events": [
+        { "tool_name": "Read" },
+        { "tool_name": "Read" },
+        { "tool_name": "Read" },
+        { "tool_name": "Read" },
+        { "tool_name": "Read" },
+        { "tool_name": "Read" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.12,
+        "uncertainty": 0.02,
+        "confidence": 0.00,
+        "fatigue": 0.04
+      }
+    },
+    {
+      "id": "stuck_loop",
+      "description": "edit, bash fail, edit, bash fail, edit, bash fail — genuinely stuck",
+      "pattern": "trial_error",
+      "events": [
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 1 }
+      ],
+      "expected": {
+        "frustration": 0.45,
+        "hunger": 0.00,
+        "uncertainty": 0.05,
+        "confidence": -0.05,
+        "fatigue": 0.04
+      }
+    },
+    {
+      "id": "mixed_productive",
+      "description": "grep found, read, edit, bash success, engram push — productive cycle",
+      "pattern": "implementation",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 3 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 0 },
+        { "tool_name": "engram_push" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.00,
+        "uncertainty": 0.00,
+        "confidence": 0.20,
+        "fatigue": 0.03
+      }
+    },
+
+    {
+      "id": "wandering_resolved",
+      "description": "grep empty 2x, then grep found, read — uncertainty should decrease after finding results",
+      "pattern": "wandering",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 4 } },
+        { "tool_name": "Read" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.15,
+        "uncertainty": 0.12,
+        "confidence": 0.02,
+        "fatigue": 0.02
+      }
+    },
+    {
+      "id": "search_mixed",
+      "description": "grep found, grep empty, grep found, grep empty, read — intermittent results",
+      "pattern": "exploration",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 3 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 5 } },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Read" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.12,
+        "uncertainty": 0.08,
+        "confidence": 0.00,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "delegation_heavy",
+      "description": "agent 3x, read 1x — delegating to subagents, waiting for results",
+      "pattern": "delegation",
+      "events": [
+        { "tool_name": "Agent" },
+        { "tool_name": "Agent" },
+        { "tool_name": "Read" },
+        { "tool_name": "Agent" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.02,
+        "uncertainty": 0.05,
+        "confidence": 0.02,
+        "fatigue": 0.02
+      }
+    },
+    {
+      "id": "stagnation_idle",
+      "description": "read 1x, long pause, read 1x — low activity, fatigue accumulates",
+      "pattern": "stagnation",
+      "events": [
+        { "tool_name": "Read" },
+        { "tool_name": "Read" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.04,
+        "uncertainty": 0.00,
+        "confidence": 0.00,
+        "fatigue": 0.02
+      }
+    },
+    {
+      "id": "confidence_crash",
+      "description": "bash success 3x then bash fail 2x — momentum broken, confidence should drop",
+      "pattern": "trial_error",
+      "events": [
+        { "tool_name": "Bash", "exit_code": 0 },
+        { "tool_name": "Bash", "exit_code": 0 },
+        { "tool_name": "Bash", "exit_code": 0 },
+        { "tool_name": "Bash", "exit_code": 1 },
+        { "tool_name": "Bash", "exit_code": 1 }
+      ],
+      "expected": {
+        "frustration": 0.20,
+        "hunger": 0.00,
+        "uncertainty": 0.00,
+        "confidence": 0.10,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "memory_heavy",
+      "description": "engram pull 3x, engram push 1x, read 1x — knowledge retrieval session",
+      "pattern": "exploration",
+      "events": [
+        { "tool_name": "engram_pull" },
+        { "tool_name": "engram_pull" },
+        { "tool_name": "Read" },
+        { "tool_name": "engram_pull" },
+        { "tool_name": "engram_push" }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.08,
+        "uncertainty": 0.02,
+        "confidence": 0.05,
+        "fatigue": 0.03
+      }
+    },
+    {
+      "id": "uncertainty_sustained",
+      "description": "grep empty 2x, read 3x, grep empty 1x — reading but not finding answers",
+      "pattern": "wandering",
+      "events": [
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Read" },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } },
+        { "tool_name": "Read" },
+        { "tool_name": "Grep", "tool_input": { "resultCount": 0 } }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.30,
+        "uncertainty": 0.30,
+        "confidence": 0.00,
+        "fatigue": 0.04
+      }
+    },
+    {
+      "id": "quick_fix",
+      "description": "read, edit, bash success — minimal cycle, fast fix",
+      "pattern": "implementation",
+      "events": [
+        { "tool_name": "Read" },
+        { "tool_name": "Edit" },
+        { "tool_name": "Bash", "exit_code": 0 }
+      ],
+      "expected": {
+        "frustration": 0.00,
+        "hunger": 0.00,
+        "uncertainty": 0.00,
+        "confidence": 0.15,
+        "fatigue": 0.02
+      }
+    }
+  ]
+}

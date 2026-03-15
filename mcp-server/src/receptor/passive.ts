@@ -316,9 +316,9 @@ function dispatch(fired: ScoredMethod[]): void {
         if (_pending.length > PENDING_MAX) _pending.shift();
         break;
       case "background":
-        // future: background execution
-        _pending.push(method); // for now, treat as notify
-        if (_pending.length > PENDING_MAX) _pending.shift();
+        // Execute silently — output visibility controlled by action.output targets
+        // (typically ["engram", "log"] — no hotmemo, so agent never sees results)
+        _autoQueue.push(method);
         break;
     }
   }

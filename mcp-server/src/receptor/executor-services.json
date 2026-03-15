@@ -1,23 +1,4 @@
 {
   "$schema": "External executor definitions. Loaded at startup, registered into service registry.",
-  "services": [
-    {
-      "tool": "echo_ping",
-      "type": "mcp",
-      "server": {
-        "command": "node",
-        "args": ["dist/server.js"],
-        "cwd": "../../../../receptor-echo"
-      }
-    },
-    {
-      "tool": "echo_query",
-      "type": "mcp",
-      "server": {
-        "command": "node",
-        "args": ["dist/server.js"],
-        "cwd": "../../../../receptor-echo"
-      }
-    }
-  ]
+  "services": []
 }

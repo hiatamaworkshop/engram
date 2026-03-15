@@ -17,7 +17,7 @@
   "impulse": {
     "event": {
       "shell_exec.failure":  { "frustration": 0.10, "confidence": -0.04 },
-      "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.03, "uncertainty": -0.02 },
+      "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.08, "uncertainty": -0.02 },
       "file_edit":           { "confidence": 0.04, "uncertainty": -0.01, "hunger": -0.02, "flow": 0.02 },
       "search.empty":        { "hunger": 0.08, "uncertainty": 0.05 },
       "search.found":        { "hunger": -0.03 },
