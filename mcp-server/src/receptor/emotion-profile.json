@@ -16,19 +16,19 @@
 
   "impulse": {
     "event": {
-      "shell_exec.failure":  { "frustration": 0.10 },
+      "shell_exec.failure":  { "frustration": 0.10, "confidence": -0.04 },
       "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.03, "uncertainty": -0.02 },
-      "file_edit":           { "confidence": 0.04, "uncertainty": -0.01 },
+      "file_edit":           { "confidence": 0.04, "uncertainty": -0.01, "hunger": -0.02, "flow": 0.02 },
       "search.empty":        { "hunger": 0.08, "uncertainty": 0.05 },
       "search.found":        { "hunger": -0.03 },
-      "file_read":           { "hunger": 0.03 },
-      "memory_read":         { "hunger": 0.05 },
+      "file_read":           { "hunger": 0.02 },
+      "memory_read":         { "hunger": 0.02 },
       "memory_write":        { "confidence": 0.03 }
     },
     "pattern": {
       "trial_error":     { "frustration": 0.08 },
-      "wandering":       { "uncertainty": 0.10, "hunger": 0.08 },
-      "exploration":     { "hunger": 0.05 },
+      "wandering":       { "uncertainty": 0.10, "hunger": 0.04 },
+      "exploration":     { "hunger": 0.02 },
       "implementation":  { "flow": 0.04, "confidence": 0.04 }
     },
     "heatmapShift": { "uncertainty": 0.10 },

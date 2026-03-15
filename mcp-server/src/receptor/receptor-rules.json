@@ -87,6 +87,35 @@
       "action": {
         "message": "confidence high — good moment to engram_push current findings"
       }
+    },
+    {
+      "id": "receptor_test_echo",
+      "type": "status_notify",
+      "mode": "notify",
+      "trigger": {
+        "signals": ["frustration_spike", "hunger_spike", "uncertainty_sustained"],
+        "states": ["stuck", "exploring", "deep_work"],
+        "sensitivity": 0.9,
+        "frequency": "high"
+      },
+      "action": {
+        "message": "receptor test fired! (notify)"
+      }
+    },
+    {
+      "id": "receptor_test_pull",
+      "type": "knowledge_search",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["frustration_spike", "hunger_spike"],
+        "states": ["stuck", "exploring", "deep_work"],
+        "sensitivity": 0.9,
+        "frequency": "high"
+      },
+      "action": {
+        "tool": "engram_pull",
+        "args": { "projectId": "auto" }
+      }
     }
   ]
 }
