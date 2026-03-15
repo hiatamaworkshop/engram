@@ -136,10 +136,10 @@ Hook events → [A] Flow Gate → [B] Emotion Engine → [C] Meta Neuron → Sig
 ```
 
 - **Layer A (Flow Gate)**: Detects flow state. When active, suppresses all other signals to avoid interrupting productive work.
-- **Layer B (Emotion Engine)**: Accumulates frustration, hunger, uncertainty, confidence, fatigue from tool usage patterns. Fires signals when axes exceed dynamic thresholds.
+- **Layer B (Emotion Engine)**: Emotion axes are inferred from tool usage patterns and represent agent cognitive states rather than human emotions. It accumulates frustration, hunger, uncertainty, confidence, fatigue from tool usage patterns. Fires signals when axes exceed dynamic thresholds.
 - **Layer C (Meta Neuron)**: Derives agent state (exploring / deep_work / stuck / idle) and adjusts thresholds via ambient field.
 
-Fired signals are matched against method rules (`receptor-rules.json`). Methods are either `auto` (executed immediately — e.g., proactive engram recall) or `notify` (surfaced via Hot Memo as recommendations).
+Fired signals are matched against method rules (`receptor-rules.json`). Methods are either `auto` (executed immediately — e.g., proactive engram recall) or `notify` (surfaced via Hot Memo as recommendations & proactive suggestions).
 
 ## Node Lifecycle
 
