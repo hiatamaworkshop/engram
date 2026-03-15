@@ -57,6 +57,7 @@ const FIRE_THRESHOLD = 0.15;
 /** State mismatch suppression factor (not zero — design doc says ×0.3). */
 const STATE_MISMATCH_FACTOR = 0.3;
 
+
 /** Recency decay constants per frequency level (ms).
  *  Calibrated to Claude interaction time scale (tool calls, not wall-clock seconds). */
 const RECENCY_COOLDOWN: Record<string, number> = {
@@ -111,12 +112,15 @@ function scoreMethod(method: MethodDef, signal: FireSignal): number {
   const sm = signalMatch(method.trigger, signal.kind);
   if (sm === 0) return 0; // fast path — no match, no score
 
+  // recencyDecay^2: receptor refractory state dominates over signal intensity.
+  // At max intensity, fires at ~61% recovery (≈40% shortening of cooldown).
+  const decay = recencyDecay(method.id, method.trigger.frequency, signal.ts);
   return sm
     * stateMatch(method.trigger, signal.agentState)
     * signal.intensity
     * method.trigger.sensitivity
     * (1 - falsePositiveRate(method.type))
-    * recencyDecay(method.id, method.trigger.frequency, signal.ts);
+    * decay * decay;
 }
 
 // ---- Evaluate ----
