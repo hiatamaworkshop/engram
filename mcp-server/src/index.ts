@@ -518,7 +518,9 @@ async function main() {
     },
   });
 
-  // Auto-push session context when confidence is high (positive trigger)
+  // Context snapshot — record session context to file sink only.
+  // Does NOT push to engram (receptor meta-info pollutes user knowledge).
+  // User can engram_push explicitly if the snapshot is valuable.
   registerExecutor("engram_context_push", {
     type: "internal",
     handler: async (method, context) => {
@@ -529,20 +531,14 @@ async function main() {
         .filter(([, v]) => v > 0.05)
         .map(([k, v]) => `${k}:${(v as number).toFixed(2)}`)
         .join(" ");
-      const content = emotionSnapshot ? `emotion: ${emotionSnapshot}` : undefined;
 
-      const projectId = ctx.defaultProjectId ?? "general";
-      await ingest(ctx, [{
-        summary,
-        content,
-        tags: ["where", "receptor"],
-      }], projectId, "milestone");
+      const raw = emotionSnapshot ? `${summary}\nemotion: ${emotionSnapshot}` : summary;
 
       routeOutput({
         methodId: method.id,
         toolName: "engram_context_push",
         agentState: context.agentState,
-        raw: summary,
+        raw,
         output: method.action.output as import("./receptor/output-router.js").OutputConfig | undefined,
       });
       console.error(`[receptor] engram_context_push: ${summary}`);
