@@ -87,6 +87,21 @@
       "action": {
         "message": "confidence high — good moment to engram_push current findings"
       }
+    },
+    {
+      "id": "echo_test",
+      "type": "external_test",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["frustration_spike", "hunger_spike", "uncertainty_sustained"],
+        "states": ["stuck", "exploring", "deep_work"],
+        "sensitivity": 0.9,
+        "frequency": "high"
+      },
+      "action": {
+        "tool": "echo_query",
+        "args": {}
+      }
     }
   ]
 }

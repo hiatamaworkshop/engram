@@ -64,6 +64,7 @@ export interface ExecutorContext {
 
 // Re-export registry API so callers can register executors via receptor/index
 export { registerExecutor, registeredTools } from "./registry.js";
+export { loadExternalServices } from "./service-loader.js";
 import { resolveAndExecute } from "./registry.js";
 
 /** Drain auto queue and dispatch via registry. Non-blocking (fire-and-forget). */

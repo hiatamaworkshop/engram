@@ -31,9 +31,10 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, registerExecutor } from "./receptor/index.js";
+import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices } from "./receptor/index.js";
 import { pushAutoResult } from "./receptor/passive.js";
 import { startReceptorHttp } from "./receptor/http.js";
+import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
 const ctx = loadContext();
 
@@ -504,6 +505,9 @@ async function main() {
     },
   });
 
+  // Load external executor definitions (executor-services.json)
+  loadExternalServices();
+
   // Activate project for Digestor scope
   if (ctx.defaultProjectId) {
     activateProject(ctx, ctx.defaultProjectId).catch((err) => {
@@ -511,8 +515,9 @@ async function main() {
     });
   }
 
-  // Deactivate on process exit
+  // Cleanup on process exit
   const cleanup = () => {
+    closeAllMcpClients().catch(() => {});
     if (ctx.defaultProjectId) {
       deactivateProject(ctx, ctx.defaultProjectId).catch(() => {});
     }
