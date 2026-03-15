@@ -31,7 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, setMethodExecutor } from "./receptor/index.js";
+import { setWatch, ingestEvent, formatState, registerExecutor } from "./receptor/index.js";
 import { pushAutoResult } from "./receptor/passive.js";
 import { startReceptorHttp } from "./receptor/http.js";
 
@@ -478,33 +478,30 @@ async function main() {
   // Auto-start receptor watch
   setWatch(true);
 
-  // Wire method executor — receptor auto queue → engram_pull
-  setMethodExecutor(async (method, context) => {
-    if (method.action.tool === "engram_pull") {
-      try {
-        // Build query from heatmap hot paths (what the agent is working on)
-        const pathSegments = context.topPaths
-          .flatMap(p => p.split("/").filter(Boolean).slice(-2))  // last 2 segments per path
-          .filter((s, i, arr) => arr.indexOf(s) === i);          // unique
-        const query = pathSegments.join(" ");
-        if (!query) return;
+  // Register executors — receptor auto queue dispatches via service registry
+  registerExecutor("engram_pull", {
+    type: "internal",
+    handler: async (method, context) => {
+      // Build query from heatmap hot paths (what the agent is working on)
+      const pathSegments = context.topPaths
+        .flatMap(p => p.split("/").filter(Boolean).slice(-2))  // last 2 segments per path
+        .filter((s, i, arr) => arr.indexOf(s) === i);          // unique
+      const query = pathSegments.join(" ");
+      if (!query) return;
 
-        const projectId = ctx.defaultProjectId;
-        const response = await recallNodes(ctx, query, projectId, 3);
+      const projectId = ctx.defaultProjectId;
+      const response = await recallNodes(ctx, query, projectId, 3);
 
-        if (response.results.length > 0) {
-          const lines = response.results.map((r, i) =>
-            `  ${i + 1}. ${r.summary} (w=${r.weight}, hits=${r.hitCount})`
-          );
-          pushAutoResult(
-            `[receptor → engram_pull] ${context.agentState} | query: "${query}"\n${lines.join("\n")}`
-          );
-          console.error(`[receptor] auto engram_pull: ${response.results.length} results for "${query}"`);
-        }
-      } catch (err) {
-        console.error(`[receptor] auto engram_pull failed:`, err);
+      if (response.results.length > 0) {
+        const lines = response.results.map((r, i) =>
+          `  ${i + 1}. ${r.summary} (w=${r.weight}, hits=${r.hitCount})`
+        );
+        pushAutoResult(
+          `[receptor → engram_pull] ${context.agentState} | query: "${query}"\n${lines.join("\n")}`
+        );
+        console.error(`[receptor] auto engram_pull: ${response.results.length} results for "${query}"`);
       }
-    }
+    },
   });
 
   // Activate project for Digestor scope

@@ -54,7 +54,7 @@ _listeners.push(onFireSignals);
 // Re-export passive receptor API for hotmemo integration
 export { formatRecommendations, drainRecommendations, drainAutoQueue, formatAutoResults, drainAutoResults };
 
-// ---- Method executor (wired from main index.ts) ----
+// ---- Method executor (via service registry) ----
 
 export interface ExecutorContext {
   topPaths: string[];
@@ -62,17 +62,12 @@ export interface ExecutorContext {
   agentState: AgentState;
 }
 
-type MethodExecutor = (method: ScoredMethod, context: ExecutorContext) => Promise<void>;
-let _executor: MethodExecutor | undefined;
+// Re-export registry API so callers can register executors via receptor/index
+export { registerExecutor, registeredTools } from "./registry.js";
+import { resolveAndExecute } from "./registry.js";
 
-/** Register the method executor callback. Called once from main index.ts with ctx closure. */
-export function setMethodExecutor(executor: MethodExecutor): void {
-  _executor = executor;
-}
-
-/** Drain auto queue and fire executor. Non-blocking (fire-and-forget). */
+/** Drain auto queue and dispatch via registry. Non-blocking (fire-and-forget). */
 function executeAutoQueue(): void {
-  if (!_executor) return;
   const queue = drainAutoQueue();
   if (queue.length === 0) return;
 
@@ -83,7 +78,7 @@ function executeAutoQueue(): void {
   };
 
   for (const method of queue) {
-    _executor(method, context).catch(err => {
+    resolveAndExecute(method, context).catch(err => {
       console.error(`[receptor] executor error (${method.id}):`, err);
     });
   }
