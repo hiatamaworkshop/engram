@@ -77,6 +77,36 @@
       }
     },
     {
+      "id": "path_suggest",
+      "type": "context_assist",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["hunger_spike", "uncertainty_sustained"],
+        "states": ["exploring", "stuck"],
+        "sensitivity": 0.5,
+        "frequency": "medium"
+      },
+      "action": {
+        "tool": "path_suggest",
+        "output": { "targets": ["file"], "format": "json" }
+      }
+    },
+    {
+      "id": "context_snapshot",
+      "type": "context_persist",
+      "mode": "auto",
+      "trigger": {
+        "signals": ["confidence_sustained"],
+        "states": ["deep_work"],
+        "sensitivity": 0.6,
+        "frequency": "low"
+      },
+      "action": {
+        "tool": "engram_context_push",
+        "output": { "targets": ["file", "log"], "format": "summary", "maxLength": 300 }
+      }
+    },
+    {
       "id": "engram_push_reminder",
       "type": "knowledge_persist",
       "mode": "notify",

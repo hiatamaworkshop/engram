@@ -803,11 +803,11 @@ executor result → routeOutput(payload)
                        |
                        ├── OutputConfig から targets を読む
                        |
-                 ┌─────┼─────┬──────────┐
-                 v     v     v          v
-             hotmemo  log  engram    silent
-             (agent   (stderr) (ingest)  (discard)
-              prompt)
+                 ┌─────┼─────┬──────────┬────────┐
+                 v     v     v          v        v
+             hotmemo  log  engram     file    silent
+             (agent  (stderr) (ingest) (JSONL)  (discard)
+              prompt)                  append
 ```
 
 **OutputConfig** (receptor-rules.json の `action.output`):
@@ -827,11 +827,13 @@ executor result → routeOutput(payload)
 
 **Sink registry**: `registerSink(target, fn)` で出力先を追加可能。
 engram sink は `index.ts` で ctx 取得後に遅延登録（receptor モジュールが engram API に直接依存しない）。
+file sink は `receptor-output/receptor-results.jsonl` に JSONL 形式で append（固定パス）。
 
 **delivery mode との関係**:
 | mode | エージェントに見えるか | 典型的な targets |
 |------|----------------------|-----------------|
 | auto | 見える | `["hotmemo"]` or `["hotmemo", "log"]` |
+| auto | 見えない（裏方） | `["file"]` or `["file", "log"]` |
 | notify | 見える（推奨表示） | hotmemo Layer 5 経由 |
 | background | **見えない** | `["engram", "log"]` or `["silent"]` |
 
@@ -908,14 +910,31 @@ npx tsx src/receptor/calibrate.ts [--dry-run] [--merge | --fresh]
 
 共通原則: base は不変、δ は bounded、校正者は外部。
 
-## 11. 未実装（スコープ外）
+## 11. メソッド一覧 (receptor-rules.json)
+
+| id | type | mode | trigger signals | trigger states | 出力先 | 概要 |
+|----|------|------|----------------|---------------|--------|------|
+| `engram_probe` | knowledge_search | auto | compound_frustration_hunger | stuck | hotmemo, log | 行き詰まり時に engram 検索 |
+| `engram_probe_light` | knowledge_search | auto | frustration_spike, hunger_spike | stuck, exploring | hotmemo | 軽量 engram 検索 |
+| `mycelium_walk` | knowledge_search | notify | uncertainty_sustained | exploring | (default) | mycelium フィルタリング推奨 |
+| `frustration_alert` | status_notify | notify | frustration_spike, compound_frustration_hunger | stuck, exploring | — | アプローチ変更を推奨 |
+| `fatigue_warning` | status_notify | notify | fatigue_rising | stuck, exploring, deep_work | — | セッションチェックポイント推奨 |
+| `path_suggest` | context_assist | auto | hunger_spike, uncertainty_sustained | exploring, stuck | file | ホットパス上位を JSONL に保存 |
+| `context_snapshot` | context_persist | auto | confidence_sustained | deep_work | file, log | ポジティブトリガ: セッション文脈を engram に自動保存 |
+| `engram_push_reminder` | knowledge_persist | notify | confidence_sustained | deep_work, exploring | — | engram push を推奨 |
+
+**設計上の分類**:
+- ネガティブトリガ（frustration, hunger, uncertainty, fatigue）→ 検索・警告系
+- ポジティブトリガ（confidence）→ 保存・記録系
+
+## 12. 未実装（スコープ外）
 
 - **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
 - **shell / http executor**: Service Loader に型定義のみ、handler 未実装
 
 ---
 
-## 11. HTTP Bridge — リアルタイムイベント配信
+## 13. HTTP Bridge — リアルタイムイベント配信
 
 ### 課題
 

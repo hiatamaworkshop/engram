@@ -66,7 +66,29 @@ export interface ExecutorContext {
 export { registerExecutor, registeredTools } from "./registry.js";
 export { loadExternalServices } from "./service-loader.js";
 export { routeOutput, registerSink } from "./output-router.js";
-import { resolveAndExecute } from "./registry.js";
+import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
+import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
+
+// ---- Internal executor: path_suggest ----
+// Reads heatmap directly (no external dependency). Output via routeOutput.
+
+_regExec("path_suggest", {
+  type: "internal",
+  handler: async (method, context) => {
+    const top = heatmap.topPaths(10);
+    if (top.length === 0) return;
+
+    const raw = JSON.stringify(top);
+    _routeOut({
+      methodId: method.id,
+      toolName: "path_suggest",
+      agentState: context.agentState,
+      raw,
+      output: method.action.output as OutputConfig | undefined,
+    });
+    console.error(`[receptor] path_suggest: ${top.length} paths`);
+  },
+});
 
 /** Drain auto queue and dispatch via registry. Non-blocking (fire-and-forget). */
 function executeAutoQueue(): void {

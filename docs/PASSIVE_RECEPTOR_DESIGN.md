@@ -134,6 +134,7 @@ states 一致      → スコア ×1.0 / 不一致 → ×0.3 (抑制だが完全
 | mode | 挙動 | エージェント体験 | 用途例 |
 |------|------|-----------------|--------|
 | `auto` | スコア超過で即実行、結果を直接返す | 次の engram_watch に結果が含まれる | engram_probe |
+| `auto` | 即実行、file sink に保存 | エージェントは気づかない | path_suggest, context_snapshot |
 | `notify` | 推奨メソッドとして蓄積、実行しない | hotmemo 経由で表示 | mycelium_walk, 状態通知 |
 | `background` | バックグラウンド実行、結果を MCP 状態に反映 | エージェントは気づかない、次の watch で見える | プリフェッチ、キャッシュ |
 

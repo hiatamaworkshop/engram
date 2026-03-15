@@ -508,6 +508,37 @@ async function main() {
     },
   });
 
+  // Auto-push session context when confidence is high (positive trigger)
+  registerExecutor("engram_context_push", {
+    type: "internal",
+    handler: async (method, context) => {
+      if (context.topPaths.length === 0) return;
+
+      const summary = `session context: ${context.agentState} | hot paths: ${context.topPaths.slice(0, 5).map(p => p.split("/").filter(Boolean).slice(-2).join("/")).join(", ")}`;
+      const emotionSnapshot = Object.entries(context.emotion)
+        .filter(([, v]) => v > 0.05)
+        .map(([k, v]) => `${k}:${(v as number).toFixed(2)}`)
+        .join(" ");
+      const content = emotionSnapshot ? `emotion: ${emotionSnapshot}` : undefined;
+
+      const projectId = ctx.defaultProjectId ?? "general";
+      await ingest(ctx, [{
+        summary,
+        content,
+        tags: ["where", "receptor"],
+      }], projectId, "milestone");
+
+      routeOutput({
+        methodId: method.id,
+        toolName: "engram_context_push",
+        agentState: context.agentState,
+        raw: summary,
+        output: method.action.output as import("./receptor/output-router.js").OutputConfig | undefined,
+      });
+      console.error(`[receptor] engram_context_push: ${summary}`);
+    },
+  });
+
   // Register engram output sink (needs ctx for gateway access)
   registerSink("engram", async (payload, formatted) => {
     try {
