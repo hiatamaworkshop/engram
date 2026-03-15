@@ -6,7 +6,7 @@
 
 import { registerExecutor } from "./registry.js";
 import { callMcpTool, type McpServerDef } from "./mcp-executor.js";
-import { pushAutoResult } from "./passive.js";
+import { routeOutput, type OutputConfig } from "./output-router.js";
 import services from "./executor-services.json" with { type: "json" };
 
 // ---- Types (JSON schema) ----
@@ -47,9 +47,13 @@ export function loadExternalServices(): void {
             const result = await callMcpTool(serverDef, toolName, args);
 
             if (result) {
-              pushAutoResult(
-                `[receptor → ${toolName}] ${context.agentState} | ${result}`
-              );
+              routeOutput({
+                methodId: method.id,
+                toolName,
+                agentState: context.agentState,
+                raw: result,
+                output: method.action.output as OutputConfig | undefined,
+              });
               console.error(`[service-loader] ${toolName}: ok`);
             }
           } catch (err) {

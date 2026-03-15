@@ -13,7 +13,8 @@
       },
       "action": {
         "tool": "engram_pull",
-        "args": { "projectId": "auto" }
+        "args": { "projectId": "auto" },
+        "output": { "targets": ["hotmemo", "log"], "format": "summary", "maxLength": 300 }
       }
     },
     {
@@ -71,7 +72,8 @@
       },
       "action": {
         "tool": "engram_pull",
-        "args": { "projectId": "auto" }
+        "args": { "projectId": "auto" },
+        "output": { "targets": ["hotmemo"], "format": "summary", "maxLength": 200 }
       }
     },
     {
@@ -100,7 +102,8 @@
       },
       "action": {
         "tool": "echo_query",
-        "args": {}
+        "args": {},
+        "output": { "targets": ["hotmemo", "log"], "format": "json", "maxLength": 200 }
       }
     }
   ]

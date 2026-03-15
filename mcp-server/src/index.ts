@@ -31,8 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices } from "./receptor/index.js";
-import { pushAutoResult } from "./receptor/passive.js";
+import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink } from "./receptor/index.js";
 import { startReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
@@ -497,12 +496,29 @@ async function main() {
         const lines = response.results.map((r, i) =>
           `  ${i + 1}. ${r.summary} (w=${r.weight}, hits=${r.hitCount})`
         );
-        pushAutoResult(
-          `[receptor → engram_pull] ${context.agentState} | query: "${query}"\n${lines.join("\n")}`
-        );
+        routeOutput({
+          methodId: method.id,
+          toolName: "engram_pull",
+          agentState: context.agentState,
+          raw: `query: "${query}"\n${lines.join("\n")}`,
+          output: method.action.output as import("./receptor/output-router.js").OutputConfig | undefined,
+        });
         console.error(`[receptor] auto engram_pull: ${response.results.length} results for "${query}"`);
       }
     },
+  });
+
+  // Register engram output sink (needs ctx for gateway access)
+  registerSink("engram", async (payload, formatted) => {
+    try {
+      await ingest(ctx, [{
+        summary: `[receptor] ${payload.toolName}: ${payload.raw.slice(0, 120)}`,
+        tags: ["receptor-output", payload.toolName],
+      }], ctx.defaultProjectId ?? "general", "milestone");
+      console.error(`[output-router] engram sink: pushed for ${payload.methodId}`);
+    } catch (err) {
+      console.error(`[output-router] engram sink error:`, err);
+    }
   });
 
   // Load external executor definitions (executor-services.json)

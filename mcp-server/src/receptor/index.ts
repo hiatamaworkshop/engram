@@ -19,7 +19,7 @@ import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
 import {
   onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
-  pushAutoResult, formatAutoResults, drainAutoResults,
+  formatAutoResults, drainAutoResults,
   type ScoredMethod,
 } from "./passive.js";
 
@@ -65,6 +65,7 @@ export interface ExecutorContext {
 // Re-export registry API so callers can register executors via receptor/index
 export { registerExecutor, registeredTools } from "./registry.js";
 export { loadExternalServices } from "./service-loader.js";
+export { routeOutput, registerSink } from "./output-router.js";
 import { resolveAndExecute } from "./registry.js";
 
 /** Drain auto queue and dispatch via registry. Non-blocking (fire-and-forget). */

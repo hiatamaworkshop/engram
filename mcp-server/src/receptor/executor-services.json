@@ -7,7 +7,7 @@
       "server": {
         "command": "node",
         "args": ["dist/server.js"],
-        "cwd": "../../receptor-echo"
+        "cwd": "../../../../receptor-echo"
       }
     },
     {
@@ -16,7 +16,7 @@
       "server": {
         "command": "node",
         "args": ["dist/server.js"],
-        "cwd": "../../receptor-echo"
+        "cwd": "../../../../receptor-echo"
       }
     }
   ]

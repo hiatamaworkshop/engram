@@ -677,60 +677,244 @@ hunger が高くても frustration が低ければ「健全な学習」と判断
 
 ---
 
-## 11. 未実装（スコープ外）
+### Service Registry + Method Resolver — executor の宣言的管理
 
-- **learnedDelta 永続化**: receptor-learned.json のフォーマットと永続化タイミング
-- ~~**method resolver**~~: **実装済み** (2026-03-15) — `receptor/registry.ts` に Service Registry (`Map<toolName, ExecutorEntry>`) + Method Resolver (`resolveAndExecute`) を導入。executor type は `internal | mcp | shell | http`。現時点では internal (engram_pull) のみ登録。mcp/shell/http は型定義のみ
-- **background mode**: バックグラウンド実行の実装（暫定で notify 扱い）
-- **sensitivity 変更 API**: engram_tune 相当の MCP ツール
-- **notify 採用観測**: 推奨後にエージェントがそのツールを呼んだかの検出方法
+passive.ts が auto queue にメソッドを入れた後、誰がそのメソッドを実行するかを決定する層。
+以前は `index.ts` に if 分岐でハードコードされていたが、Map ベースの動的 dispatch に移行。
 
-### learnedDelta — 設計決定 (2026-03-15)
+```
+passive.ts: autoQueue に ScoredMethod を push
+       |
+       v
+  index.ts: executeAutoQueue()
+       |
+       v
+  registry.ts: resolveAndExecute(method, context)
+       |
+  [1] method.action.tool が null → notify-only (message のみ) → return false
+       |
+  [2] _registry.get(toolName)
+       |
+       ├── found  → entry.handler(method, context) → return true
+       └── not found → console.error → return false
+```
 
-#### 居場所: Interpretation Layer のスコアリング
+**Registry API**:
+| 関数 | 用途 |
+|------|------|
+| `registerExecutor(toolName, entry)` | executor 登録 |
+| `unregisterExecutor(toolName)` | executor 削除 |
+| `hasExecutor(toolName)` | 登録確認 |
+| `registeredTools()` | 全登録済みツール名 |
+| `resolveAndExecute(method, context)` | dispatch |
+
+**ExecutorEntry**:
+```typescript
+interface ExecutorEntry {
+  type: "internal" | "mcp" | "shell" | "http";
+  handler: (method: ScoredMethod, context: ExecutorContext) => Promise<void>;
+}
+```
+
+**登録フロー**: internal executor は `index.ts` の `setMethodExecutor()` で登録。
+external executor は後述の Service Loader が startup 時に一括登録。
+
+### MCP Executor — 外部 MCP サーバー呼び出し
+
+外部 MCP サーバーを子プロセスとして spawn し、stdio transport で接続。
+接続プールにより同一サーバーへの重複接続を防止。
+
+```
+callMcpTool(serverDef, toolName, args)
+       |
+  [1] serverKey(def) → "node|dist/server.js|/abs/path/to/receptor-echo"
+       |
+  [2] _pool.get(key)
+       ├── hit  → refCount++ → 既存 client 返却
+       └── miss → spawn + StdioClientTransport + client.connect()
+                  → _pool.set(key, { client, transport, refCount: 1 })
+       |
+  [3] client.callTool({ name, arguments })
+       |
+  [4] MCP response → text content 抽出 → string 返却
+```
+
+**接続プール**: `Map<serverKey, PoolEntry>` — key は `command|args|resolvedCwd`。
+1 つの MCP サーバープロセスが複数ツールを提供する場合、接続は共有される。
+
+**cwd 解決**: `configDir()` = `dirname(fileURLToPath(import.meta.url))` = ランタイム時 `dist/receptor/`。
+executor-services.json の `cwd` はこのディレクトリからの相対パス。
+
+**shutdown**: `closeAllMcpClients()` で全プール接続を一括切断（プロセス終了時に呼ぶ）。
+
+### Service Loader — executor-services.json から宣言的登録
+
+起動時に `executor-services.json` を読み込み、外部 executor を registry に登録。
+internal executor はコード登録のまま、external (mcp/shell/http) のみ JSON 定義。
+
+```
+executor-services.json
+       |
+  service-loader.ts: loadExternalServices()
+       |
+  for each ServiceDef:
+       ├── type === "mcp" → registerExecutor(toolName, { type: "mcp", handler })
+       ├── type === "shell" → (future)
+       └── type === "http"  → (future)
+```
+
+**executor-services.json 構造**:
+```json
+{
+  "services": [
+    {
+      "tool": "echo_ping",
+      "type": "mcp",
+      "server": {
+        "command": "node",
+        "args": ["dist/server.js"],
+        "cwd": "../../../../receptor-echo"
+      }
+    }
+  ]
+}
+```
+
+**MCP handler の動作**:
+1. `context.topPaths` からヒートマップ上位パスを取得
+2. `args.query` が未設定なら、パス末尾2セグメントを unique 結合して query に注入
+3. `callMcpTool(serverDef, toolName, args)` で外部 MCP サーバー呼び出し
+4. 結果を `pushAutoResult("[receptor → toolName] agentState | result")` で hotmemo に注入
+5. 起動ログ: `[service-loader] registered: echo_ping (mcp → node)`
+
+**cwd パスの注意**: `cwd` は `dist/receptor/` からの相対パス。
+`../../receptor-echo` では `mcp-server/receptor-echo` に解決されてしまう。
+`DockerFiles/receptor-echo` に到達するには `../../../../receptor-echo` が正しい。
+
+---
+
+### Output Router — 宣言的出力ルーティング
+
+executor の実行結果をどこに流すかを、receptor-rules.json で宣言的に制御する。
+以前は `pushAutoResult()` で hotmemo に直接流していたが、出口を多重化。
+
+```
+executor result → routeOutput(payload)
+                       |
+                       ├── OutputConfig から targets を読む
+                       |
+                 ┌─────┼─────┬──────────┐
+                 v     v     v          v
+             hotmemo  log  engram    silent
+             (agent   (stderr) (ingest)  (discard)
+              prompt)
+```
+
+**OutputConfig** (receptor-rules.json の `action.output`):
+```json
+{
+  "targets": ["hotmemo", "log"],
+  "format": "summary",
+  "maxLength": 200
+}
+```
+
+| フィールド | 型 | デフォルト | 意味 |
+|-----------|-----|----------|------|
+| `targets` | string[] | `["hotmemo"]` | 出力先 |
+| `format` | `"raw" \| "summary" \| "json"` | `"raw"` | 整形方式 |
+| `maxLength` | number | 無制限 | 切り詰め文字数 |
+
+**Sink registry**: `registerSink(target, fn)` で出力先を追加可能。
+engram sink は `index.ts` で ctx 取得後に遅延登録（receptor モジュールが engram API に直接依存しない）。
+
+**delivery mode との関係**:
+| mode | エージェントに見えるか | 典型的な targets |
+|------|----------------------|-----------------|
+| auto | 見える | `["hotmemo"]` or `["hotmemo", "log"]` |
+| notify | 見える（推奨表示） | hotmemo Layer 5 経由 |
+| background | **見えない** | `["engram", "log"]` or `["silent"]` |
+
+background mode は output-router の targets から hotmemo を外すことで実現。
+エージェントに見えない副作用（data statistics 挿入、自動クリーンアップ等）に使う。
+
+### learnedDelta — 軸単位のキャリブレーション（実装済み）
+
+#### 居場所: Passive Receptor のスコアリング
 
 learnedDelta は neuron 内部（入力ゲイン、閾値）には **触らない**。
-解釈層のトリガ候補スコアリングに乗算として適用する。
+解釈層のスコアリングに `(1 + δ)` として乗算。
 
 ```
-score(candidate) =
-    signalIntensity                    // B neuron の発火強度
-  × stateWeight(agentState, candidate) // C の state での適切度
-  × recencyDecay(lastSameTrigger)      // 同種トリガからの経過時間による減衰
-  × (1 - falsePositiveRate)            // ← learnedDelta
+score(method, signal) =
+    signalMatch                        // trigger.signals にマッチするか
+  × stateMatch                         // trigger.states にマッチするか (×0.3)
+  × signal.intensity                   // B neuron の発火強度
+  × method.trigger.sensitivity         // 開発者が宣言した感度
+  × (1 + δ[axis])                      // ← learnedDelta (±0.30)
+  × receptorSuppression²               // 軸特異的不応期
 ```
 
-#### 廃案: 入力ゲイン調整
+#### 設計原則: 計測器は校正しない、計測値の解釈を調整する
 
 PREDICTIVE_INFERENCE.md の三層原則:
 > C (Meta): B の閾値を調整。**直接ゲインを操作しない**
 
-learnedDelta もこの原則を継承する。neuron は純粋なセンサーとして保つ。
-「センサーが何を感じたか」は変えない。「感じたことにどう反応するか」を調整する。
+learnedDelta もこの原則を継承。active 側 (B neuron) は純粋なセンサーとして保つ。
+A gate (flow) の不可侵性も維持 — flow は δ 対象外。
 
-#### 学習信号
+#### receptor-learned.json
 
-| 信号源 | 効果 | コスト |
-|--------|------|--------|
-| エージェントが出力を採用した | falsePositiveRate 維持/低下 | ゼロ（観測） |
-| エージェントが dismiss/無視した | falsePositiveRate 上昇 | ゼロ（観測） |
-| エージェントが直接スコア付与 | 即座に補正 | 手動 |
+```json
+{
+  "delta": {
+    "frustration": 0.00,
+    "hunger": 0.00,
+    "uncertainty": 0.00,
+    "confidence": 0.00,
+    "fatigue": 0.00
+  }
+}
+```
+
+- **粒度**: 軸単位（5軸）。methodId 単位ではない
+  - 「hunger にどう反応するか」= 個体差（δ）
+  - 「hunger_spike で何を呼ぶか」= ポリシー（receptor-rules.json）
+- **bounds**: ±0.30（sphere と同じ設計）
+- **flow 除外**: A gate の不可侵性を維持
+- **compound signal**: 複数軸の場合、最大絶対値の δ を採用
+
+#### キャリブレーション（2段階、未実装）
+
+**Phase 1: 単発コマンド評価**
+- 典型的なイベント（Bash 失敗3連続、探索長期化等）をランダム提示
+- エージェントが emotion vector を見て「妥当 / 過敏 / 鈍い」を判定
+- 判定結果から δ を更新
+
+**Phase 2: シナリオパターンリプレイ**
+- 典型的な作業フロー（探索 → 行き詰まり → 突破 → 実装）をリプレイ
+- 全体の介入頻度をエージェントが評価
+- 方向性レベルで δ を調整
+
+キャリブレーション結果は receptor-learned.json に書き出し。
+プロファイル切り替え（aggressive / conservative）、ブレンド、ロールバックが可能。
 
 #### 前例
 
 | プロジェクト | 構造 | 適用先 |
 |-------------|------|--------|
 | sphere | `effective = base × (1 + δ)`, δ ±0.3 | flagBias, returnWeights, qualityVector |
-| mycelium | `personality × feelings → actionProbs` | personality 行列 (immutable, 将来の δ 候補) |
-| receptor | `score × (1 - falsePositiveRate)` | 解釈層のトリガスコア |
+| mycelium | `personality × feelings → actionProbs` | personality 行列 (immutable) |
+| receptor | `score × (1 + δ)`, δ ±0.3 | passive scoring の軸感度 |
 
-共通原則: base (種族個性/offset/personality) は不変。δ は bounded。
-sphere は Digestor が校正、receptor はエージェント自身が校正。
+共通原則: base は不変、δ は bounded、校正者は外部。
 
-#### 実装タイミング
+## 11. 未実装（スコープ外）
 
-Interpretation Layer と同時に実装する。解釈層なしに learnedDelta だけ作っても
-接続先がない。解釈層の設計が learnedDelta の粒度（何のスコアを記録するか）を決める。
+- **キャリブレーションスクリプト**: Phase 1 / Phase 2 の実装
+- **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
+- **sensitivity 変更 API**: engram_tune 相当の MCP ツール
+- **shell / http executor**: Service Loader に型定義のみ、handler 未実装
 
 ---
 

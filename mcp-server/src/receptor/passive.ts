@@ -20,6 +20,7 @@
 import type { FireSignal, EmotionVector, EmotionAxis } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import rules from "./receptor-rules.json" with { type: "json" };
+import learned from "./receptor-learned.json" with { type: "json" };
 
 // ---- Types ----
 
@@ -30,10 +31,17 @@ interface MethodTrigger {
   frequency: "low" | "medium" | "high";
 }
 
+interface MethodOutput {
+  targets: string[];
+  format?: "raw" | "summary" | "json";
+  maxLength?: number;
+}
+
 interface MethodAction {
   tool?: string;
   args?: Record<string, unknown>;
   message?: string;
+  output?: MethodOutput;
 }
 
 interface MethodDef {
@@ -83,6 +91,32 @@ const SIGNAL_AXES: Record<string, EmotionAxis[]> = {
 const EMOTION_KEYS: EmotionAxis[] = [
   "frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow",
 ];
+
+// ---- Learned delta (cross-session calibration) ----
+
+const DELTA_BOUND = 0.30;
+const _learnedDelta: Record<string, number> = {};
+
+// Load and clamp deltas from receptor-learned.json
+{
+  const raw = (learned as { delta: Record<string, number> }).delta;
+  for (const [axis, val] of Object.entries(raw)) {
+    _learnedDelta[axis] = Math.max(-DELTA_BOUND, Math.min(DELTA_BOUND, val));
+  }
+}
+
+/** Get learned delta for a signal kind's primary axis. Returns 0 if unknown. */
+function learnedDelta(signalKind: string): number {
+  const axes = SIGNAL_AXES[signalKind];
+  if (!axes || axes.length === 0) return 0;
+  // Use max absolute delta across signal's axes
+  let maxDelta = 0;
+  for (const axis of axes) {
+    const d = _learnedDelta[axis] ?? 0;
+    if (Math.abs(d) > Math.abs(maxDelta)) maxDelta = d;
+  }
+  return maxDelta;
+}
 
 // ---- State ----
 
@@ -192,11 +226,6 @@ function stateMatch(trigger: MethodTrigger, agentState: string): number {
   return trigger.states.includes(agentState) ? 1.0 : STATE_MISMATCH_FACTOR;
 }
 
-function falsePositiveRate(_methodType: string): number {
-  // learnedDelta — future: load from receptor-learned.json
-  return 0;
-}
-
 function scoreMethod(method: MethodDef, signal: FireSignal): number {
   const sm = signalMatch(method.trigger, signal.kind);
   if (sm === 0) return 0; // fast path — no match, no score
@@ -205,11 +234,13 @@ function scoreMethod(method: MethodDef, signal: FireSignal): number {
     method.id, signal.kind, method.trigger.frequency, signal.ts,
   );
 
+  const delta = learnedDelta(signal.kind);
+
   return sm
     * stateMatch(method.trigger, signal.agentState)
     * signal.intensity
     * method.trigger.sensitivity
-    * (1 - falsePositiveRate(method.type))
+    * (1 + delta)
     * suppression;
 }
 

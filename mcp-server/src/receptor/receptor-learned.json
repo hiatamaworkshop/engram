@@ -1,0 +1,10 @@
+{
+  "$schema": "Learned delta per emotion axis. Adjusts passive receptor sensitivity. Bounds: ±0.30. Flow excluded (A gate invariant).",
+  "delta": {
+    "frustration": 0.00,
+    "hunger": 0.00,
+    "uncertainty": 0.00,
+    "confidence": 0.00,
+    "fatigue": 0.00
+  }
+}
