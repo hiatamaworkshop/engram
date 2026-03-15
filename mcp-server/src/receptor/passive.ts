@@ -4,18 +4,21 @@
 // Receives FireSignal[] from B neuron, scores methods from
 // receptor-rules.json, and routes results by delivery mode.
 //
-// Scoring formula (from PASSIVE_RECEPTOR_DESIGN.md):
+// Scoring formula:
 //   score(method, signal) =
 //       signalMatch    (0 or 1)
 //     × stateMatch     (1.0 or 0.3)
 //     × signal.intensity
 //     × method.trigger.sensitivity
-//     × (1 - falsePositiveRate)          // learnedDelta (future)
-//     × recencyDecay(frequency)          // anti-spam
+//     × (1 - falsePositiveRate)
+//     × receptorSuppression²       // axis-specific refractory
 //
-// Does NOT know what executes the methods — that is method resolver's job.
+// Receptor desensitization: after firing, the receptor absorbs the
+// signal's emotion vector. High satiation on an axis suppresses
+// future signals on THAT axis, while remaining receptive to others.
 
-import type { FireSignal, FireSignalKind, AgentState } from "./types.js";
+import type { FireSignal, EmotionVector, EmotionAxis } from "./types.js";
+import { ZERO_EMOTION } from "./types.js";
 import rules from "./receptor-rules.json" with { type: "json" };
 
 // ---- Types ----
@@ -57,21 +60,43 @@ const FIRE_THRESHOLD = 0.15;
 /** State mismatch suppression factor (not zero — design doc says ×0.3). */
 const STATE_MISMATCH_FACTOR = 0.3;
 
-
-/** Recency decay constants per frequency level (ms).
- *  Calibrated to Claude interaction time scale (tool calls, not wall-clock seconds). */
+/** Cooldown per frequency level (ms).
+ *  Calibrated to Claude interaction time scale. */
 const RECENCY_COOLDOWN: Record<string, number> = {
   low:    2_400_000,  // 40 min
   medium: 1_200_000,  // 20 min
   high:     300_000,  //  5 min
 };
 
+/** Signal kind → primary emotion axes.
+ *  Used to determine which receptor axes provide suppression. */
+const SIGNAL_AXES: Record<string, EmotionAxis[]> = {
+  frustration_spike:          ["frustration"],
+  hunger_spike:               ["hunger"],
+  compound_frustration_hunger: ["frustration", "hunger"],
+  uncertainty_sustained:      ["uncertainty"],
+  confidence_sustained:       ["confidence"],
+  fatigue_rising:             ["fatigue"],
+  flow_active:                ["flow"],
+};
+
+const EMOTION_KEYS: EmotionAxis[] = [
+  "frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow",
+];
+
 // ---- State ----
 
 const methods: MethodDef[] = rules.methods as MethodDef[];
 
-/** Last fire timestamp per method id. */
-const _lastFired: Record<string, number> = {};
+/** Per-method receptor state — emotion vector that accumulates on fire. */
+interface ReceptorMark {
+  emotion: EmotionVector;
+  ts: number;
+}
+const _receptorState: Record<string, ReceptorMark> = {};
+
+/** Emotion of the best-matching signal per method (set during evaluate, consumed by dispatch). */
+const _evalEmotions: Map<string, EmotionVector> = new Map();
 
 /** Accumulated recommendations (notify mode). FIFO — oldest entry dropped when full. */
 const PENDING_MAX = 3;
@@ -80,6 +105,82 @@ let _pending: ScoredMethod[] = [];
 /** Auto-execution results. FIFO — oldest entry dropped when full. */
 const AUTO_RESULTS_MAX = 3;
 let _autoResults: string[] = [];
+
+// ---- Receptor suppression (axis-specific refractory) ----
+
+/**
+ * Compute receptor suppression for a method + signal kind.
+ *
+ * After firing, the receptor's emotion vector is high on the axes
+ * that triggered the fire. This acts as defense — high satiation
+ * on the signal's primary axis(es) suppresses future reception.
+ *
+ * Other axes remain low → the receptor stays receptive to different signals.
+ * Decay is linear over cooldown: receptor fully recovers when cooldown elapses.
+ *
+ * Returns: suppression factor (0 = fully suppressed, 1 = fully receptive).
+ */
+function receptorSuppression(
+  methodId: string,
+  signalKind: string,
+  frequency: string,
+  now: number,
+): number {
+  const state = _receptorState[methodId];
+  if (!state) return 1.0; // never fired — fully receptive
+
+  const cooldown = RECENCY_COOLDOWN[frequency] ?? RECENCY_COOLDOWN.low;
+  const elapsed = now - state.ts;
+  if (elapsed >= cooldown) return 1.0; // fully recovered
+
+  // Linear time factor: 1.0 at fire → 0.0 at cooldown
+  const remaining = 1 - elapsed / cooldown;
+
+  // Find the signal's primary axes
+  const axes = SIGNAL_AXES[signalKind];
+  if (!axes || axes.length === 0) return 1.0; // unknown signal — no suppression
+
+  // Max receptor satiation on relevant axes (decayed by time)
+  let maxLevel = 0;
+  for (const axis of axes) {
+    const level = state.emotion[axis] * remaining;
+    if (level > maxLevel) maxLevel = level;
+  }
+
+  // Suppression: high level → low receptivity, squared for receptor dominance
+  const receptivity = 1 - maxLevel;
+  return receptivity * receptivity;
+}
+
+/**
+ * Blend the incoming signal's emotion into the receptor's state (simple average).
+ * Decays existing state to present time before blending.
+ */
+function blendReceptor(methodId: string, signalEmotion: EmotionVector, now: number, frequency: string): void {
+  const cooldown = RECENCY_COOLDOWN[frequency] ?? RECENCY_COOLDOWN.low;
+
+  // Decay existing state to present time
+  let current: EmotionVector;
+  const existing = _receptorState[methodId];
+  if (existing) {
+    const elapsed = now - existing.ts;
+    const remaining = Math.max(0, 1 - elapsed / cooldown);
+    current = {} as EmotionVector;
+    for (const axis of EMOTION_KEYS) {
+      current[axis] = existing.emotion[axis] * remaining;
+    }
+  } else {
+    current = { ...ZERO_EMOTION };
+  }
+
+  // Simple average blend
+  const blended = {} as EmotionVector;
+  for (const axis of EMOTION_KEYS) {
+    blended[axis] = (current[axis] + signalEmotion[axis]) / 2;
+  }
+
+  _receptorState[methodId] = { emotion: blended, ts: now };
+}
 
 // ---- Scoring ----
 
@@ -91,18 +192,6 @@ function stateMatch(trigger: MethodTrigger, agentState: string): number {
   return trigger.states.includes(agentState) ? 1.0 : STATE_MISMATCH_FACTOR;
 }
 
-function recencyDecay(methodId: string, frequency: string, now: number): number {
-  const last = _lastFired[methodId];
-  if (!last) return 1.0;
-
-  const cooldown = RECENCY_COOLDOWN[frequency] ?? RECENCY_COOLDOWN.low;
-  const elapsed = now - last;
-  if (elapsed >= cooldown) return 1.0;
-
-  // Linear decay: 0 at fire time → 1 at cooldown
-  return elapsed / cooldown;
-}
-
 function falsePositiveRate(_methodType: string): number {
   // learnedDelta — future: load from receptor-learned.json
   return 0;
@@ -112,15 +201,16 @@ function scoreMethod(method: MethodDef, signal: FireSignal): number {
   const sm = signalMatch(method.trigger, signal.kind);
   if (sm === 0) return 0; // fast path — no match, no score
 
-  // recencyDecay^2: receptor refractory state dominates over signal intensity.
-  // At max intensity, fires at ~61% recovery (≈40% shortening of cooldown).
-  const decay = recencyDecay(method.id, method.trigger.frequency, signal.ts);
+  const suppression = receptorSuppression(
+    method.id, signal.kind, method.trigger.frequency, signal.ts,
+  );
+
   return sm
     * stateMatch(method.trigger, signal.agentState)
     * signal.intensity
     * method.trigger.sensitivity
     * (1 - falsePositiveRate(method.type))
-    * decay * decay;
+    * suppression;
 }
 
 // ---- Evaluate ----
@@ -136,17 +226,23 @@ function evaluate(signals: FireSignal[]): ScoredMethod[] {
     return [];
   }
 
+  _evalEmotions.clear();
   const results: ScoredMethod[] = [];
 
   for (const method of methods) {
     // Best score across all signals for this method
     let bestScore = 0;
+    let bestEmotion: EmotionVector | undefined;
     for (const signal of signals) {
       const s = scoreMethod(method, signal);
-      if (s > bestScore) bestScore = s;
+      if (s > bestScore) {
+        bestScore = s;
+        bestEmotion = signal.emotion;
+      }
     }
 
     if (bestScore >= FIRE_THRESHOLD) {
+      _evalEmotions.set(method.id, bestEmotion!);
       results.push({
         id: method.id,
         type: method.type,
@@ -171,8 +267,14 @@ function dispatch(fired: ScoredMethod[]): void {
   const now = Date.now();
 
   for (const method of fired) {
-    // Record fire time for recency decay
-    _lastFired[method.id] = now;
+    // Look up method definition for frequency
+    const methodDef = methods.find(m => m.id === method.id);
+    const signalEmotion = _evalEmotions.get(method.id);
+
+    // Blend receptor state with incoming signal's emotion vector
+    if (methodDef && signalEmotion) {
+      blendReceptor(method.id, signalEmotion, now, methodDef.trigger.frequency);
+    }
 
     switch (method.mode) {
       case "auto":
