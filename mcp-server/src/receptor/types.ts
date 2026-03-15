@@ -16,6 +16,7 @@ export type NormalizedAction =
   | "memory_write";
 
 export interface NormalizedEvent {
+  eventId: number;
   action: NormalizedAction;
   path?: string;
   result?: "success" | "failure" | "empty";

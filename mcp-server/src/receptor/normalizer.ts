@@ -32,14 +32,20 @@ export interface RawHookEvent {
   // Claude Code hooks provide these fields
 }
 
+// ---- Event ID (session-scoped monotonic counter) ----
+
+let _nextEventId = 1;
+
 // ---- Normalize ----
 
 export function normalize(raw: RawHookEvent): NormalizedEvent | null {
   const { tool_name, tool_input, exit_code } = raw;
+  const eventId = _nextEventId++;
 
   // engram tools → memory_read / memory_write
   if (tool_name.startsWith("engram_pull") || tool_name === "engram_ls") {
     return {
+      eventId,
       action: "memory_read",
       ts: Date.now(),
       result: "success", // hit/miss determined by response content
@@ -47,6 +53,7 @@ export function normalize(raw: RawHookEvent): NormalizedEvent | null {
   }
   if (tool_name === "engram_push" || tool_name === "engram_flag") {
     return {
+      eventId,
       action: "memory_write",
       ts: Date.now(),
       result: "success",
@@ -70,7 +77,7 @@ export function normalize(raw: RawHookEvent): NormalizedEvent | null {
     if (count === 0) result = "empty";
   }
 
-  return { action, path, result, ts: Date.now() };
+  return { eventId, action, path, result, ts: Date.now() };
 }
 
 // ---- Path extraction ----
