@@ -31,7 +31,7 @@
         { "tool_name": "Bash", "exit_code": 1 }
       ],
       "expected": {
-        "frustration": 0.40,
+        "frustration": 0.45,
         "hunger": 0.00,
         "uncertainty": 0.00,
         "confidence": -0.10,
@@ -51,8 +51,8 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.40,
-        "uncertainty": 0.35,
+        "hunger": 0.45,
+        "uncertainty": 0.50,
         "confidence": 0.00,
         "fatigue": 0.03
       }
@@ -72,7 +72,7 @@
         "frustration": 0.00,
         "hunger": 0.00,
         "uncertainty": 0.00,
-        "confidence": 0.30,
+        "confidence": 0.38,
         "fatigue": 0.03
       }
     },
@@ -88,7 +88,7 @@
         { "tool_name": "Bash", "exit_code": 0 }
       ],
       "expected": {
-        "frustration": 0.15,
+        "frustration": 0.30,
         "hunger": 0.02,
         "uncertainty": 0.00,
         "confidence": 0.10,
@@ -109,7 +109,7 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.12,
+        "hunger": 0.18,
         "uncertainty": 0.02,
         "confidence": 0.00,
         "fatigue": 0.04
@@ -128,7 +128,7 @@
         { "tool_name": "Bash", "exit_code": 1 }
       ],
       "expected": {
-        "frustration": 0.45,
+        "frustration": 0.55,
         "hunger": 0.00,
         "uncertainty": 0.05,
         "confidence": -0.05,
@@ -150,7 +150,7 @@
         "frustration": 0.00,
         "hunger": 0.00,
         "uncertainty": 0.00,
-        "confidence": 0.20,
+        "confidence": 0.28,
         "fatigue": 0.03
       }
     },
@@ -167,8 +167,8 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.15,
-        "uncertainty": 0.12,
+        "hunger": 0.25,
+        "uncertainty": 0.35,
         "confidence": 0.02,
         "fatigue": 0.02
       }
@@ -186,7 +186,7 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.12,
+        "hunger": 0.18,
         "uncertainty": 0.08,
         "confidence": 0.00,
         "fatigue": 0.03
@@ -238,7 +238,7 @@
         { "tool_name": "Bash", "exit_code": 1 }
       ],
       "expected": {
-        "frustration": 0.20,
+        "frustration": 0.28,
         "hunger": 0.00,
         "uncertainty": 0.00,
         "confidence": 0.10,
@@ -258,7 +258,7 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.08,
+        "hunger": 0.14,
         "uncertainty": 0.02,
         "confidence": 0.05,
         "fatigue": 0.03
@@ -278,8 +278,8 @@
       ],
       "expected": {
         "frustration": 0.00,
-        "hunger": 0.30,
-        "uncertainty": 0.30,
+        "hunger": 0.42,
+        "uncertainty": 0.50,
         "confidence": 0.00,
         "fatigue": 0.04
       }
@@ -297,7 +297,7 @@
         "frustration": 0.00,
         "hunger": 0.00,
         "uncertainty": 0.00,
-        "confidence": 0.15,
+        "confidence": 0.20,
         "fatigue": 0.02
       }
     }

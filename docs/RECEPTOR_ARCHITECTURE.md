@@ -884,20 +884,19 @@ A gate (flow) の不可侵性も維持 — flow は δ 対象外。
 - **flow 除外**: A gate の不可侵性を維持
 - **compound signal**: 複数軸の場合、最大絶対値の δ を採用
 
-#### キャリブレーション（2段階、未実装）
+#### キャリブレーション
 
-**Phase 1: 単発コマンド評価**
-- 典型的なイベント（Bash 失敗3連続、探索長期化等）をランダム提示
-- エージェントが emotion vector を見て「妥当 / 過敏 / 鈍い」を判定
-- 判定結果から δ を更新
+開発者がオンデマンドで実行し、δ を receptor-learned.json に反映する。
 
-**Phase 2: シナリオパターンリプレイ**
-- 典型的な作業フロー（探索 → 行き詰まり → 突破 → 実装）をリプレイ
-- 全体の介入頻度をエージェントが評価
-- 方向性レベルで δ を調整
+```
+npx tsx src/receptor/calibrate.ts [--dry-run] [--merge | --fresh]
+```
 
-キャリブレーション結果は receptor-learned.json に書き出し。
-プロファイル切り替え（aggressive / conservative）、ブレンド、ロールバックが可能。
+- `--fresh`: δ をゼロから再計算（デフォルト、現行動作）
+- `--merge`: 現在の δ を起点に、誤差を LEARNING_RATE で混合
+
+シナリオ定義（calibration-scenarios.json）の期待値とニューロン出力の誤差から δ を算出。
+冪等。Phase 1 実装済み（16シナリオ）。チューニングはシナリオの追加・期待値調整で行う。
 
 #### 前例
 
@@ -911,9 +910,7 @@ A gate (flow) の不可侵性も維持 — flow は δ 対象外。
 
 ## 11. 未実装（スコープ外）
 
-- **キャリブレーションスクリプト**: Phase 1 / Phase 2 の実装
 - **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
-- **sensitivity 変更 API**: engram_tune 相当の MCP ツール
 - **shell / http executor**: Service Loader に型定義のみ、handler 未実装
 
 ---

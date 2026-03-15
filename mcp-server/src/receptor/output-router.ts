@@ -11,6 +11,8 @@
 // Default (omitted output): { targets: ["hotmemo"], format: "raw" }
 
 import { pushAutoResult } from "./passive.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // ---- Types ----
 
@@ -20,7 +22,7 @@ export interface OutputConfig {
   maxLength?: number;
 }
 
-export type OutputTarget = "hotmemo" | "log" | "engram" | "silent";
+export type OutputTarget = "hotmemo" | "log" | "engram" | "file" | "silent";
 
 export interface OutputPayload {
   methodId: string;
@@ -62,6 +64,30 @@ registerSink("log", (payload, formatted) => {
 
 // silent: discard (useful for testing or fire-and-forget methods)
 registerSink("silent", () => {});
+
+// file: append formatted output to a fixed file path.
+// Path is resolved relative to the receptor data directory.
+const FILE_SINK_DIR = path.join(
+  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
+  "receptor-output",
+);
+const FILE_SINK_PATH = path.join(FILE_SINK_DIR, "receptor-results.jsonl");
+
+registerSink("file", (payload, formatted) => {
+  try {
+    fs.mkdirSync(FILE_SINK_DIR, { recursive: true });
+    const entry = JSON.stringify({
+      ts: Date.now(),
+      method: payload.methodId,
+      tool: payload.toolName,
+      state: payload.agentState,
+      result: formatted,
+    });
+    fs.appendFileSync(FILE_SINK_PATH, entry + "\n");
+  } catch (err) {
+    console.error(`[output-router] file sink error:`, err);
+  }
+});
 
 // engram: deferred — registered by index.ts when ctx is available
 // (receptor module has no direct access to engram API)
