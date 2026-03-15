@@ -120,7 +120,7 @@ Set crossProject=true to search across ALL projects.`,
     {
       capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("1-8 NodeSeeds"),
       projectId: z.string().describe("Project identifier"),
-      trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved", "manual", "convention", "environment"])
+      trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved", "manual", "design-decision", "environment"])
         .default("session-end"),
       sessionId: z.string().optional(),
     },

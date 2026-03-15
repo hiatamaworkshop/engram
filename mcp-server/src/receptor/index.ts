@@ -302,7 +302,7 @@ function fmtHeatmapTree(hmap: PathHeatmap, maxLeaves = 5): string {
 export function formatState(): string {
   const state = getState();
   if (!state.watching) {
-    return "Receptor: OFF\nUse engram_watch(enabled=true) to start monitoring.";
+    return "Receptor: OFF\nUse engram_watch(action='start') to begin monitoring.";
   }
 
   const elapsed = state.startedAt ? Math.round((Date.now() - state.startedAt) / 1000) : 0;

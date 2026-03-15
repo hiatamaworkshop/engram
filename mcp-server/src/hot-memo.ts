@@ -19,6 +19,7 @@ interface PushRecord {
 
 const history: PushRecord[] = [];
 let toolCallsSinceLastPush = 0;
+let _trendShownThisSession = false;
 
 // ---- Public API ----
 
@@ -67,16 +68,17 @@ export function memoFormat(context: ToolContext): string {
     layers.push(`[session] ${history.length} pushes this session`);
   }
 
-  // Layer 3: Data Menial — trend detection across recent pushes
-  if (history.length >= 3) {
+  // Layer 3: Data Menial — trend detection across recent pushes (once per session)
+  if (history.length >= 3 && !_trendShownThisSession) {
     const recent = history.slice(-3);
     const briefCount = recent.filter((p) => p.flags.includes("brief")).length;
-    if (briefCount >= 2) {
-      layers.push("[trend] recent pushes have brief summaries");
-    }
     const noTagCount = recent.filter((p) => p.flags.includes("no type tag")).length;
-    if (noTagCount >= 2) {
-      layers.push("[trend] recent pushes missing type tags");
+    if (briefCount >= 2 || noTagCount >= 2) {
+      const parts: string[] = [];
+      if (briefCount >= 2) parts.push("brief summaries");
+      if (noTagCount >= 2) parts.push("missing type tags");
+      layers.push(`[trend] recent pushes: ${parts.join(", ")}`);
+      _trendShownThisSession = true;
     }
   }
 

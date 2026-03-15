@@ -8,8 +8,46 @@
 // Usage: npx tsx src/receptor/simulate.ts [scenario]
 // Scenarios: exploration, trial_error, implementation, mixed
 
-import { setWatch, ingestEvent, formatState } from "./index.js";
+import { setWatch, ingestEvent, formatState, registerExecutor } from "./index.js";
+import { formatRecommendations, drainRecommendations, formatAutoResults, drainAutoResults } from "./passive.js";
 import type { RawHookEvent } from "./normalizer.js";
+import type { OutputConfig } from "./output-router.js";
+import { routeOutput } from "./output-router.js";
+
+// ---- Mock executors ----
+// Register mock executors so the full pipeline (fire → dispatch → execute → output) is testable.
+
+registerExecutor("engram_pull", {
+  type: "internal",
+  handler: async (method, context) => {
+    const query = context.topPaths.map(p => p.split("/").slice(-2).join("/")).join(" ");
+    const mockResult = `[mock] engram_pull query="${query}" (${context.agentState})`;
+    routeOutput({
+      methodId: method.id,
+      toolName: "engram_pull",
+      agentState: context.agentState,
+      raw: mockResult,
+      output: method.action.output as OutputConfig | undefined,
+    });
+    console.error(`  >> EXECUTOR: ${mockResult}`);
+  },
+});
+
+registerExecutor("engram_context_push", {
+  type: "internal",
+  handler: async (method, context) => {
+    const summary = `state=${context.agentState} paths=[${context.topPaths.slice(0, 3).join(",")}]`;
+    const mockResult = `[mock] engram_context_push: ${summary}`;
+    routeOutput({
+      methodId: method.id,
+      toolName: "engram_context_push",
+      agentState: context.agentState,
+      raw: mockResult,
+      output: method.action.output as OutputConfig | undefined,
+    });
+    console.error(`  >> EXECUTOR: ${mockResult}`);
+  },
+});
 
 // ---- Time control ----
 // Override Date.now() so all modules see our simulated time
@@ -190,6 +228,18 @@ function run(scenarioName: string) {
     console.log(`--- [${timeStr}] Event ${i + 1}/${scenario.events.length}: ${label ?? raw.tool_name} ---`);
     ingestEvent(raw);
     console.log(formatState());
+
+    // Show receptor outputs (notify recommendations + auto results)
+    const recs = formatRecommendations();
+    if (recs) {
+      console.log(`\n  ★ NOTIFY: ${recs}`);
+      drainRecommendations();
+    }
+    const auto = formatAutoResults();
+    if (auto) {
+      console.log(`\n  ★ AUTO: ${auto}`);
+      drainAutoResults();
+    }
     console.log("");
   }
 

@@ -14,7 +14,7 @@ export type IngestTrigger =
   | "git-commit"
   | "error-resolved"
   | "manual"
-  | "convention"
+  | "design-decision"
   | "environment";
 
 // ---- NodeSeed (from Claude session — pre-extracted knowledge unit) ----

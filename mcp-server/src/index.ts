@@ -81,11 +81,10 @@ server.tool(
         const r = response.results[0];
         const detail = [
           r.summary,
-          r.content ? `\n${r.content}` : null,
-          "",
-          `hits: ${r.hitCount}  weight: ${r.weight}  status: ${r.status}`,
-          `tags: ${r.tags.join(", ") || "(none)"}`,
-          `id: ${r.id}`,
+          r.content ? `    ${r.content}` : null,
+          `    hits=${r.hitCount} weight=${r.weight} status=${r.status}`,
+          `    tags: ${r.tags.join(", ") || "(none)"}`,
+          `    id: ${r.id}`,
         ].filter(Boolean).join("\n");
         return { content: [{ type: "text", text: detail + memoFormat("pull") }] };
       }
@@ -101,8 +100,18 @@ server.tool(
 
       if (response.results.length === 0) {
         const scope = projectId ? ` in project:${projectId}` : "";
+        const hints = [
+          `No results for "${query}"${scope}.`,
+          "",
+          "Try:",
+          "- Broaden your query (fewer specific terms)",
+          minWeight !== undefined ? `- Remove minWeight filter (currently ${minWeight})` : null,
+          projectId ? `- Search cross-project: crossProject=true` : null,
+          "- Check engram_status() for project list and node counts",
+          "- Browse tags with engram_ls",
+        ].filter(Boolean).join("\n");
         return {
-          content: [{ type: "text", text: `No results found for "${query}"${scope}.\n\nHint: No knowledge exists for this topic yet. Consider ingesting relevant knowledge with engram_push.` }],
+          content: [{ type: "text", text: hints }],
         };
       }
 
@@ -149,7 +158,7 @@ server.tool(
   {
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
-    trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved", "manual", "convention", "environment"])
+    trigger: z.enum(["session-end", "milestone", "git-commit", "error-resolved", "manual", "design-decision", "environment"])
       .default("session-end").describe("What triggered this ingestion"),
     sessionId: z.string().optional().describe("Session identifier (auto-generated if omitted)"),
   },
@@ -378,30 +387,31 @@ server.tool(
 
 server.tool(
   "engram_watch",
-  "Receptor watch mode. true=start, false=stop+summary, omit=current status.",
+  "Receptor watch mode. Controls behavior monitoring and emotion tracking.",
   {
-    enabled: z.boolean().optional().describe("true=start, false=stop, omit=status"),
+    action: z.enum(["start", "stop", "status"]).optional()
+      .describe("start=begin monitoring, stop=end+summary, omit or status=show current state"),
     event: z.object({
       tool_name: z.string(),
       tool_input: z.record(z.unknown()).optional(),
       exit_code: z.number().optional(),
-    }).optional().describe("Raw hook event to ingest (internal use)"),
+    }).optional().describe("[Internal] Hook event from Claude Code. Do not set manually."),
   },
-  async ({ enabled, event }) => {
+  async ({ action, event }) => {
     // Ingest event if provided
     if (event) {
       ingestEvent(event);
     }
 
-    // Toggle or status
-    if (enabled !== undefined) {
-      const result = setWatch(enabled);
+    // Start/stop
+    if (action === "start" || action === "stop") {
+      const result = setWatch(action === "start");
       return {
         content: [{ type: "text", text: result.message }],
       };
     }
 
-    // Status
+    // Status (default)
     return {
       content: [{ type: "text", text: formatState() }],
     };
@@ -539,17 +549,11 @@ async function main() {
     },
   });
 
-  // Register engram output sink (needs ctx for gateway access)
-  registerSink("engram", async (payload, formatted) => {
-    try {
-      await ingest(ctx, [{
-        summary: `[receptor] ${payload.toolName}: ${payload.raw.slice(0, 120)}`,
-        tags: ["receptor-output", payload.toolName],
-      }], ctx.defaultProjectId ?? "general", "milestone");
-      console.error(`[output-router] engram sink: pushed for ${payload.methodId}`);
-    } catch (err) {
-      console.error(`[output-router] engram sink error:`, err);
-    }
+  // Engram sink disabled — receptor results go to file sink only
+  // (receptor-output/receptor-results.jsonl). Auto-pushing meta-info
+  // pollutes the user's knowledge base. File is readable on demand.
+  registerSink("engram", (_payload, _formatted) => {
+    // no-op: file sink handles persistence
   });
 
   // Load external executor definitions (executor-services.json)
