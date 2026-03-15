@@ -680,7 +680,7 @@ hunger が高くても frustration が低ければ「健全な学習」と判断
 ## 11. 未実装（スコープ外）
 
 - **learnedDelta 永続化**: receptor-learned.json のフォーマットと永続化タイミング
-- **method resolver**: auto queue の実行層（tool 呼び出し / MCP / shell command 振り分け）
+- ~~**method resolver**~~: **実装済み** (2026-03-15) — `receptor/registry.ts` に Service Registry (`Map<toolName, ExecutorEntry>`) + Method Resolver (`resolveAndExecute`) を導入。executor type は `internal | mcp | shell | http`。現時点では internal (engram_pull) のみ登録。mcp/shell/http は型定義のみ
 - **background mode**: バックグラウンド実行の実装（暫定で notify 扱い）
 - **sensitivity 変更 API**: engram_tune 相当の MCP ツール
 - **notify 採用観測**: 推奨後にエージェントがそのツールを呼んだかの検出方法

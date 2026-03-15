@@ -303,7 +303,7 @@ passive receptor から見れば **他の外部メソッドと同じ rules.json 
 passive receptor (スコアリング + 選出のみ)
        |
        v
-  method resolver (action の type を見て振り分け)
+  method resolver (action.tool → registry lookup → dispatch)
        ├── tool: "engram_pull"   → 内部呼び出し (たまたま同一プロセス)
        ├── tool: "mycelium_walk" → MCP 呼び出し
        └── tool: "custom_hook"   → shell command / HTTP
@@ -312,6 +312,23 @@ passive receptor (スコアリング + 選出のみ)
 passive receptor は呼び出し先が同一プロセスかどうかを知らない。
 実行の振り分けは method resolver の責務。
 これにより初期テスト (engram/mycelium) と将来の外部メソッド追加で作法が変わらない。
+
+### 実装状況 (2026-03-15)
+
+Service Registry + Method Resolver を `receptor/registry.ts` に実装済み。
+
+```
+Service Registry: Map<toolName, ExecutorEntry>
+  "engram_pull" → { type: "internal", handler: recallNodes closure }
+
+Method Resolver: resolveAndExecute(method, context)
+  method.action.tool → registry.get(toolName) → entry.handler()
+```
+
+- **executor type**: `internal | mcp | shell | http` (現時点では internal のみ)
+- **登録**: `registerExecutor(toolName, { type, handler })` を起動時に呼ぶ
+- **依存方向**: resolver → registry (一方向)。registry は resolver を知らない
+- **if 分岐は除去済み** — 新サービスは registerExecutor() で追加するだけ
 
 ---
 
