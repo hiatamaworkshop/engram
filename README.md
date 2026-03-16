@@ -18,8 +18,8 @@ Persistent, searchable memory with a metabolic lifecycle — unused knowledge ex
 │  MCP Server                                          │
 │  ┌────────────┐  ┌──────────┐  ┌──────────────────┐ │
 │  │  5 tools   │  │ Hot Memo │  │    Receptor       │ │
-│  │  + watch   │  │ (session │  │ (3-layer neuron   │ │
-│  │            │  │  aware)  │  │  behavior model)  │ │
+│  │  + watch   │  │ (session │  │ (behavior signal  │ │
+│  │            │  │  context)│  │  pipeline)        │ │
 │  └────────────┘  └──────────┘  └──────────────────┘ │
 └──────────────────┬──────────────────────────────────┘
                    │ HTTP
@@ -121,25 +121,25 @@ Engram works with any MCP-compatible client. Only the registration format differ
 | Tool | Purpose |
 |------|---------|
 | `engram_pull` | Semantic search or fetch by ID |
-| `engram_push` | Submit 1-8 knowledge seeds (capsuleSeeds) |
-| `engram_flag` | Negative weight signal (outdated / incorrect / superseded / merged) |
+| `engram_push` | Submit 1-8 knowledge nodes |
+| `engram_flag` | Mark as outdated / incorrect / superseded / merged (lowers weight) |
 | `engram_ls` | Lightweight listing by tag/status (no embedding cost) |
 | `engram_status` | Store health, node counts, project list |
 | `engram_watch` | Receptor control — start/stop/status of behavior monitoring |
 
 ## Receptor
 
-Three-layer neuron model that observes agent behavior in real-time via Claude Code hooks.
+Behavior signal pipeline that observes agent activity in real-time via Claude Code hooks.
 
 ```
-Hook events → [A] Flow Gate → [B] Emotion Engine → [C] Meta Neuron → Signals → Methods
+Hook events → [A] Flow Gate → [B] Activity Metrics → [C] State Classifier → Signals → Actions
 ```
 
-- **Layer A (Flow Gate)**: Detects flow state. When active, suppresses all other signals to avoid interrupting productive work.
-- **Layer B (Emotion Engine)**: Emotion axes are inferred from tool usage patterns and represent agent cognitive states rather than human emotions. It accumulates frustration, hunger, uncertainty, confidence, fatigue from tool usage patterns. Fires signals when axes exceed dynamic thresholds.
-- **Layer C (Meta Neuron)**: Derives agent state (exploring / deep_work / stuck / idle) and adjusts thresholds via ambient field.
+- **Flow Gate**: Detects flow state. When active, suppresses all signals to avoid interrupting productive work.
+- **Activity Metrics**: Tracks agent cognitive load from tool usage patterns — frustration, information deficit, uncertainty, confidence, fatigue. Emits signals when metrics exceed adaptive thresholds.
+- **State Classifier**: Infers agent state (`exploring` / `deep_work` / `stuck` / `idle`) and adjusts metric thresholds based on context.
 
-Fired signals are matched against method rules (`receptor-rules.json`). Methods are either `auto` (executed immediately — e.g., proactive engram recall) or `notify` (surfaced via Hot Memo as recommendations & proactive suggestions).
+Emitted signals trigger actions defined in `receptor-rules.json`. Actions are either `auto` (executed immediately — e.g., proactive knowledge recall) or `notify` (surfaced via Hot Memo as suggestions).
 
 ## Node Lifecycle
 
