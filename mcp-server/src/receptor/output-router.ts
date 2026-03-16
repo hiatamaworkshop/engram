@@ -10,7 +10,7 @@
 //
 // Default (omitted output): { targets: ["hotmemo"], format: "raw" }
 
-import { pushAutoResult } from "./passive.js";
+import { pushSubsystemResult } from "./subsystem-fifo.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -22,7 +22,7 @@ export interface OutputConfig {
   maxLength?: number;
 }
 
-export type OutputTarget = "hotmemo" | "log" | "engram" | "file" | "silent";
+export type OutputTarget = "hotmemo" | "log" | "engram" | "file" | "subsystem" | "silent";
 
 export interface OutputPayload {
   methodId: string;
@@ -52,9 +52,18 @@ export function registerSink(target: OutputTarget, fn: SinkFn): void {
 
 // ---- Built-in sinks ----
 
-// hotmemo: push to passive.ts autoResults (existing mechanism)
+/** Extract subsystem entry from output payload. */
+function toSubsystemEntry(payload: OutputPayload, formatted: string): { system: string; fn: string; ts: number; message: string } {
+  const system = payload.toolName.split("_")[0] || payload.toolName;
+  const fn = payload.toolName.split("_").slice(1).join("_") || "run";
+  const msgStart = formatted.indexOf("| ");
+  const message = msgStart >= 0 ? formatted.slice(msgStart + 2).trim() : formatted;
+  return { system, fn, ts: Date.now(), message };
+}
+
+// hotmemo: unified into subsystem FIFO (same ring buffer as all executors)
 registerSink("hotmemo", (payload, formatted) => {
-  pushAutoResult(formatted);
+  pushSubsystemResult(toSubsystemEntry(payload, formatted));
 });
 
 // log: stderr output (visible in MCP server logs)
@@ -87,6 +96,11 @@ registerSink("file", (payload, formatted) => {
   } catch (err) {
     console.error(`[output-router] file sink error:`, err);
   }
+});
+
+// subsystem: alias for hotmemo — both route to same FIFO
+registerSink("subsystem", (payload, formatted) => {
+  pushSubsystemResult(toSubsystemEntry(payload, formatted));
 });
 
 // engram: deferred — registered by index.ts when ctx is available

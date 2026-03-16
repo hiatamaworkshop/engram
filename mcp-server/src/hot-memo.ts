@@ -4,7 +4,7 @@
 // Each layer independently decides whether to speak.
 // If none speak, the memo is silent. Zero noise.
 
-import { formatRecommendations, drainRecommendations, formatAutoResults, drainAutoResults } from "./receptor/index.js";
+import { formatRecommendations, drainRecommendations, formatSubsystemForHotmemo } from "./receptor/index.js";
 
 const LAYER1_TAGS = new Set(["howto", "where", "why", "gotcha"]);
 const MAX_HISTORY = 10;
@@ -94,11 +94,10 @@ export function memoFormat(context: ToolContext): string {
     drainRecommendations(); // consume after display
   }
 
-  // Layer 6: Receptor — auto-execution results (the coffee on the table)
-  const autoLine = formatAutoResults();
-  if (autoLine) {
-    layers.push(autoLine);
-    drainAutoResults(); // consume after display
+  // Layer 6: Executor results — unified ring buffer (all executors + subsystems)
+  const subsystemLine = formatSubsystemForHotmemo();
+  if (subsystemLine) {
+    layers.push(subsystemLine);
   }
 
   if (layers.length === 0) return "";

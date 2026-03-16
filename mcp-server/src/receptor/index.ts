@@ -19,7 +19,6 @@ import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
 import {
   onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
-  formatAutoResults, drainAutoResults,
   type ScoredMethod,
 } from "./passive.js";
 
@@ -52,7 +51,7 @@ export function onSignal(listener: SignalListener): void {
 _listeners.push(onFireSignals);
 
 // Re-export passive receptor API for hotmemo integration
-export { formatRecommendations, drainRecommendations, drainAutoQueue, formatAutoResults, drainAutoResults };
+export { formatRecommendations, drainRecommendations, drainAutoQueue };
 
 // ---- Method executor (via service registry) ----
 
@@ -66,8 +65,12 @@ export interface ExecutorContext {
 export { registerExecutor, registeredTools } from "./registry.js";
 export { loadExternalServices } from "./service-loader.js";
 export { routeOutput, registerSink } from "./output-router.js";
+export {
+  formatSubsystemResults, allSubsystemResults, subsystemCount, clearSubsystem,
+} from "./subsystem-fifo.js";
 import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
+import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 
 // ---- Internal executor: path_suggest ----
 // Reads heatmap directly (no external dependency). Output via routeOutput.
@@ -89,6 +92,13 @@ _regExec("path_suggest", {
     console.error(`[receptor] path_suggest: ${top.length} paths`);
   },
 });
+
+/** Format subsystem FIFO for hotmemo Layer 7. Shows newest 3 entries. */
+export function formatSubsystemForHotmemo(): string {
+  const body = _fmtSub(3);
+  if (!body) return "";
+  return `[subsystem]\n${body}`;
+}
 
 /** Drain auto queue and dispatch via registry. Non-blocking (fire-and-forget). */
 function executeAutoQueue(): void {
@@ -131,6 +141,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     metaNeuron.clear();
     accumulator.clear();
     resetHoldState();
+    clearSubsystem();
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
   if (!enabled && _watching) {

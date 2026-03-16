@@ -136,9 +136,6 @@ const _evalEmotions: Map<string, EmotionVector> = new Map();
 const PENDING_MAX = 3;
 let _pending: ScoredMethod[] = [];
 
-/** Auto-execution results. FIFO — oldest entry dropped when full. */
-const AUTO_RESULTS_MAX = 3;
-let _autoResults: string[] = [];
 
 // ---- Receptor suppression (axis-specific refractory) ----
 
@@ -363,31 +360,6 @@ export function drainAutoQueue(): ScoredMethod[] {
   return result;
 }
 
-/**
- * Store auto-execution result for hotmemo display.
- */
-export function pushAutoResult(text: string): void {
-  _autoResults.push(text);
-  if (_autoResults.length > AUTO_RESULTS_MAX) _autoResults.shift();
-}
-
-/**
- * Drain auto-execution results. Called by hotmemo after display.
- */
-export function drainAutoResults(): string[] {
-  const result = _autoResults;
-  _autoResults = [];
-  return result;
-}
-
-/**
- * Format auto results for hotmemo display.
- * Returns empty string if nothing (zero noise).
- */
-export function formatAutoResults(): string {
-  if (_autoResults.length === 0) return "";
-  return _autoResults.join("\n");
-}
 
 /**
  * Format pending recommendations for hotmemo display.

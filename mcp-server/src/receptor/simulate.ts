@@ -9,7 +9,8 @@
 // Scenarios: exploration, trial_error, implementation, mixed
 
 import { setWatch, ingestEvent, formatState, registerExecutor } from "./index.js";
-import { formatRecommendations, drainRecommendations, formatAutoResults, drainAutoResults } from "./passive.js";
+import { formatRecommendations, drainRecommendations } from "./passive.js";
+import { formatSubsystemResults } from "./subsystem-fifo.js";
 import type { RawHookEvent } from "./normalizer.js";
 import type { OutputConfig } from "./output-router.js";
 import { routeOutput } from "./output-router.js";
@@ -235,10 +236,9 @@ function run(scenarioName: string) {
       console.log(`\n  ★ NOTIFY: ${recs}`);
       drainRecommendations();
     }
-    const auto = formatAutoResults();
-    if (auto) {
-      console.log(`\n  ★ AUTO: ${auto}`);
-      drainAutoResults();
+    const sub = formatSubsystemResults(5);
+    if (sub) {
+      console.log(`\n  ★ EXECUTOR: ${sub}`);
     }
     console.log("");
   }
