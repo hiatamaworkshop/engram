@@ -5,7 +5,7 @@
 // Directory nodes = sum of children (structural property).
 // Provides "where is the agent working" signal to emotion system.
 
-import type { HeatNode, NormalizedEvent } from "./types.js";
+import type { HeatNode, NormalizedEvent, HeatmapSnapshot } from "./types.js";
 
 export class PathHeatmap {
   private root: HeatNode = { count: 0, children: new Map() };
@@ -61,6 +61,15 @@ export class PathHeatmap {
       node = child;
     }
     return node.count <= 1; // 1 = just recorded for first time
+  }
+
+  /** Serializable snapshot of current heatmap state. */
+  snapshot(topN = 15): HeatmapSnapshot {
+    return {
+      ts: Date.now(),
+      totalHits: this._totalHits,
+      topPaths: this.topPaths(topN),
+    };
   }
 
   get totalHits(): number {

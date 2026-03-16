@@ -71,6 +71,30 @@ export {
 import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+// ---- Heatmap sink (periodic file snapshot) ----
+// Writes topPaths to receptor-output/heatmap.json every HEATMAP_FLUSH_INTERVAL events.
+// Overwrite (not append) — always reflects current session state.
+
+const HEATMAP_FLUSH_MIN_MS = 300_000; // minimum 5min between flushes
+let _lastHeatmapFlush = 0;
+const _heatmapSinkDir = path.join(
+  process.env.ENGRAM_DATA_DIR ?? (import.meta.dirname ? path.join(import.meta.dirname, "..") : "."),
+  "receptor-output",
+);
+const _heatmapSinkPath = path.join(_heatmapSinkDir, "heatmap.json");
+
+function flushHeatmap(): void {
+  try {
+    const snapshot = heatmap.snapshot(15);
+    fs.mkdirSync(_heatmapSinkDir, { recursive: true });
+    fs.writeFileSync(_heatmapSinkPath, JSON.stringify(snapshot, null, 2) + "\n");
+  } catch (err) {
+    console.error("[receptor] heatmap sink error:", err);
+  }
+}
 
 // ---- Internal executor: path_suggest ----
 // Reads heatmap directly (no external dependency). Output via routeOutput.
@@ -142,9 +166,12 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     accumulator.clear();
     resetHoldState();
     clearSubsystem();
+    _lastHeatmapFlush = 0;
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
   if (!enabled && _watching) {
+    // Final heatmap flush before stop
+    if (heatmap.totalHits > 0) flushHeatmap();
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
     const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.`;
     _watching = false;
@@ -221,6 +248,13 @@ export function ingestEvent(raw: RawHookEvent): void {
 
     // Method resolver: execute auto queue (fire-and-forget)
     executeAutoQueue();
+  }
+
+  // Periodic heatmap flush to file (time-gated, not event-count)
+  const now = Date.now();
+  if (now - _lastHeatmapFlush >= HEATMAP_FLUSH_MIN_MS) {
+    _lastHeatmapFlush = now;
+    flushHeatmap();
   }
 }
 

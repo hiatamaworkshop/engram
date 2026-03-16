@@ -101,6 +101,12 @@ export interface HeatNode {
   children: Map<string, HeatNode>;
 }
 
+export interface HeatmapSnapshot {
+  ts: number;
+  totalHits: number;
+  topPaths: Array<{ path: string; count: number }>;
+}
+
 // ---- Commander time window ----
 
 export interface TimeWindow {
