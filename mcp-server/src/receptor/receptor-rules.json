@@ -18,18 +18,24 @@
       }
     },
     {
-      "id": "mycelium_walk",
+      "id": "mycelium_filter",
       "type": "knowledge_search",
-      "mode": "notify",
+      "mode": "background",
       "trigger": {
-        "signals": ["uncertainty_sustained"],
-        "states": ["exploring"],
-        "sensitivity": 0.5,
-        "frequency": "medium"
+        "signals": ["frustration_spike", "uncertainty_sustained"],
+        "states": ["stuck", "exploring"],
+        "sensitivity": 0.6,
+        "frequency": "low"
       },
       "action": {
-        "tool": "mycelium_walk",
-        "args": {}
+        "tool": "mycelium_filter",
+        "args": {
+          "sourceQdrantUrl": "http://localhost:6333",
+          "collections": "engram",
+          "runs": 3,
+          "format": "summary"
+        },
+        "output": { "targets": ["subsystem", "file", "log"], "format": "summary", "maxLength": 300 }
       }
     },
     {
