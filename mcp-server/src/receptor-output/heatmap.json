@@ -1,0 +1,38 @@
+{
+  "ts": 1773664287424,
+  "totalHits": 11,
+  "topPaths": [
+    {
+      "path": "src/index.ts",
+      "count": 1
+    },
+    {
+      "path": "src/types.ts",
+      "count": 1
+    },
+    {
+      "path": "src/utils.ts",
+      "count": 1
+    },
+    {
+      "path": "src/**/*.ts",
+      "count": 1
+    },
+    {
+      "path": "src/config.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server.ts",
+      "count": 1
+    },
+    {
+      "path": "src/handler.ts",
+      "count": 1
+    },
+    {
+      "path": "docs/README.md",
+      "count": 1
+    }
+  ]
+}

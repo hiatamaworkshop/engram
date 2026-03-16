@@ -158,6 +158,11 @@ engram   | pull   | 2026-03-16 14:35:12 | 3 results
 2. file sink (能動的)
    → receptor-output/receptor-results.jsonl を読む
    → 全件、JSONL 形式、永続
+
+3. heatmap sink (参照用)
+   → receptor-output/heatmap.json を読む
+   → 5分間隔で上書き更新、上位15パス + ヒット数
+   → エージェントの作業領域を非同期参照
 ```
 
 ---

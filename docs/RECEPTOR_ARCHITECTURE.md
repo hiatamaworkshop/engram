@@ -404,6 +404,36 @@ topPaths(3) → [{ path: "src/main.ts", count: 2 }, ...]
 1. uncertainty の算出（コンテキスト急変 → 方向性不明）
 2. AmbientEstimator の reset トリガ
 
+### Heatmap File Sink
+
+heatmap はニューロン駆動ではなく**時間ゲート**で定期的にファイルに保存される。
+
+```
+receptor-output/heatmap.json  (上書き、常に最新状態)
+```
+
+**設計判断**: heatmap はニューロンパイプラインの**入力**であり出力ではない。
+ニューロン駆動にすると循環依存が発生するため、独立した時間ベースの flush を採用。
+
+- **フラッシュ間隔**: 5分（`HEATMAP_FLUSH_MIN_MS = 300_000`）
+- **追加フラッシュ**: watch 停止時に最終スナップショット
+- **コスト**: イベントごとに `Date.now()` 比較のみ（実質ゼロ）
+- **保存内容**: `HeatmapSnapshot { ts, totalHits, topPaths[15] }`
+
+```json
+{
+  "ts": 1773664287424,
+  "totalHits": 11,
+  "topPaths": [
+    { "path": "src/main.ts", "count": 5 },
+    { "path": "src/config.ts", "count": 3 }
+  ]
+}
+```
+
+外部ツールやサブシステムが `receptor-output/heatmap.json` を読むだけで
+「エージェントがどこで作業しているか」を非同期に参照できる。
+
 ---
 
 ## 7. シミュレーション結果から見えた挙動特性
@@ -670,7 +700,7 @@ FireSignal[] (B neuron 出力)
 
 **対策**: receptor-rules.json で解釈層側で抑制。
 - `engram_probe`: signals を `compound_frustration_hunger` のみに限定、states を `stuck` のみに
-- `mycelium_walk`: signals から `hunger_spike` を除去、`uncertainty_sustained` のみに
+- `mycelium_filter`: signals は frustration_spike + uncertainty_sustained、mode は background
 
 **設計方針**: neuron (センサー) 側は修正せず、解釈層で文脈判断する。
 hunger が高くても frustration が低ければ「健全な学習」と判断して抑制。
@@ -916,7 +946,7 @@ npx tsx src/receptor/calibrate.ts [--dry-run] [--merge | --fresh]
 |----|------|------|----------------|---------------|--------|------|
 | `engram_probe` | knowledge_search | auto | compound_frustration_hunger | stuck | hotmemo, log | 行き詰まり時に engram 検索 |
 | `engram_probe_light` | knowledge_search | auto | frustration_spike, hunger_spike | stuck, exploring | hotmemo | 軽量 engram 検索 |
-| `mycelium_walk` | knowledge_search | notify | uncertainty_sustained | exploring | (default) | mycelium フィルタリング推奨 |
+| `mycelium_filter` | knowledge_search | background | frustration_spike, uncertainty_sustained | stuck, exploring | subsystem, file, log | mycelium フィルタリング (MCP subsystem) |
 | `frustration_alert` | status_notify | notify | frustration_spike, compound_frustration_hunger | stuck, exploring | — | アプローチ変更を推奨 |
 | `fatigue_warning` | status_notify | notify | fatigue_rising | stuck, exploring, deep_work | — | セッションチェックポイント推奨 |
 | `path_suggest` | context_assist | auto | hunger_spike, uncertainty_sustained | exploring, stuck | file | ホットパス上位を JSONL に保存 |
