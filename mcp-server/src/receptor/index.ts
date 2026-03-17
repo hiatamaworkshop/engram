@@ -72,7 +72,8 @@ import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
-import { buildQuery, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
+import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
+import { exportEnrichedCentroid } from "./sphere-shaper.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -165,6 +166,15 @@ _regExec("future_probe", {
       output: method.action.output as OutputConfig | undefined,
     });
     console.error(`[receptor] future_probe: ${results.length} predictions (α=${query.alpha.toFixed(2)})`);
+
+    // Sphere data shaping: enrich centroid → anonymize → write to sphere-ready.jsonl
+    buildEnrichedCentroid(probeCtx).then(enriched => {
+      if (enriched) {
+        exportEnrichedCentroid(enriched);
+      }
+    }).catch(err => {
+      console.error("[receptor] sphere shaping error:", err);
+    });
   },
 });
 

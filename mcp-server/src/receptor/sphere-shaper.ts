@@ -1,0 +1,137 @@
+// ============================================================
+// Receptor — Sphere Shaper (anonymization + data export)
+// ============================================================
+// Transforms enriched centroid data into Sphere-ready payloads.
+//
+// Two stages:
+//   1. anonymize(): strip identifying info (paths, projectId, local text)
+//   2. export to sphere-ready.jsonl (structured JSON, one per line)
+//
+// Sphere upload itself is NOT wired here — just the data pipeline
+// that produces clean, shaped output ready for future federation.
+
+import type { EnrichedCentroid, LinkedKnowledge } from "./future-probe.js";
+import type { EmotionVector } from "./types.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+// ---- Anonymized centroid (what leaves the machine) ----
+
+export interface SpherePayload {
+  centroid_embedding: number[];
+  emotion_avg: Partial<EmotionVector>;
+  entropy_range: [number, number];
+  pattern: string;            // state transitions only (no paths)
+  outcome: string;
+  linked_knowledge: LinkedKnowledge[];
+  window_size: number;
+  alpha: number;
+  ts: number;
+  version: number;            // schema version for forward compat
+}
+
+const SCHEMA_VERSION = 1;
+
+// ---- Anonymization ----
+
+/** Regex patterns that indicate local/identifying content. */
+const PATH_PATTERN = /(?:[A-Za-z]:)?(?:\/|\\)[\w\-./\\]+/g;
+const PROJECT_ID_PATTERN = /projectId[=:]\s*["']?[\w\-./]+["']?/gi;
+
+/**
+ * Scrub a text field of file paths and projectId references.
+ * Replaces full paths with last 2 segments (preserving semantic meaning).
+ */
+function scrubText(text: string): string {
+  return text
+    .replace(PATH_PATTERN, (match) => {
+      const segs = match.replace(/\\/g, "/").split("/").filter(Boolean);
+      return segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
+    })
+    .replace(PROJECT_ID_PATTERN, "");
+}
+
+/**
+ * Scrub linked knowledge summaries of identifying content.
+ */
+function scrubLinkedKnowledge(linked: LinkedKnowledge[]): LinkedKnowledge[] {
+  return linked.map(lk => ({
+    summary: scrubText(lk.summary),
+    tags: lk.tags.filter(t => !isIdentifyingTag(t)),
+    similarity: lk.similarity,
+  }));
+}
+
+/** Tags that are likely project-specific identifiers. */
+function isIdentifyingTag(tag: string): boolean {
+  // Keep generic knowledge-type tags, filter project-specific ones
+  const safePatterns = [
+    "howto", "where", "why", "gotcha",
+    "gateway", "mcp-server", "receptor", "docker",
+    "qdrant", "embedding", "passive", "centroid",
+    "future-probe", "action-logger", "error-resolved",
+  ];
+  return !safePatterns.includes(tag) && /[A-Z]/.test(tag);
+}
+
+/**
+ * Validate that a pattern string contains only state transitions.
+ * Pattern should be like "stuck→exploring→deep_work", not contain paths.
+ */
+function scrubPattern(pattern: string): string {
+  // State names are safe; scrub anything that looks like a path
+  return scrubText(pattern);
+}
+
+// ---- Shaping: EnrichedCentroid → SpherePayload ----
+
+/**
+ * Transform an enriched centroid into an anonymized Sphere payload.
+ */
+export function shapeForSphere(enriched: EnrichedCentroid): SpherePayload {
+  return {
+    centroid_embedding: enriched.centroid_embedding,
+    emotion_avg: enriched.emotion_avg,
+    entropy_range: enriched.entropy_range,
+    pattern: scrubPattern(enriched.pattern),
+    outcome: enriched.outcome,
+    linked_knowledge: scrubLinkedKnowledge(enriched.linked_knowledge),
+    window_size: enriched.window_size,
+    alpha: enriched.alpha,
+    ts: enriched.ts,
+    version: SCHEMA_VERSION,
+  };
+}
+
+// ---- File export ----
+
+const SPHERE_OUTPUT_DIR = path.join(
+  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
+  "receptor-output",
+);
+const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
+
+/**
+ * Append a shaped payload to sphere-ready.jsonl.
+ * One JSON object per line — ready for batch upload when Sphere is wired.
+ */
+export function writeSpherePayload(payload: SpherePayload): void {
+  try {
+    fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
+    fs.appendFileSync(SPHERE_OUTPUT_PATH, JSON.stringify(payload) + "\n");
+    console.error(
+      `[sphere-shaper] wrote payload: pattern=${payload.pattern} linked=${payload.linked_knowledge.length} v=${SCHEMA_VERSION}`,
+    );
+  } catch (err) {
+    console.error("[sphere-shaper] write error:", err);
+  }
+}
+
+/**
+ * Full pipeline: enrich → anonymize → write.
+ */
+export function exportEnrichedCentroid(enriched: EnrichedCentroid): SpherePayload {
+  const payload = shapeForSphere(enriched);
+  writeSpherePayload(payload);
+  return payload;
+}

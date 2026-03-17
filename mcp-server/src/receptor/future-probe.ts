@@ -64,6 +64,28 @@ interface ActionLogPoint {
   vector: number[];
   entropy: number;
   ts: number;
+  emotion?: EmotionVector;
+  state?: string;
+}
+
+// ---- Enriched centroid (Sphere-ready payload before anonymization) ----
+
+export interface LinkedKnowledge {
+  summary: string;
+  tags: string[];
+  similarity: number;
+}
+
+export interface EnrichedCentroid {
+  pattern: string;                // e.g. "stuck→exploring"
+  centroid_embedding: number[];   // 384d
+  emotion_avg: Partial<EmotionVector>;
+  entropy_range: [number, number]; // [min, max]
+  outcome: string;                // final state in window
+  linked_knowledge: LinkedKnowledge[];
+  window_size: number;
+  alpha: number;
+  ts: number;
 }
 
 // ---- Embedding via gateway (fallback for cold start) ----
@@ -121,6 +143,8 @@ async function scrollRecentVectors(
       vector: p.vector,
       entropy: p.payload.entropy ?? 0,
       ts: p.payload.ts ?? 0,
+      emotion: p.payload.emotion as EmotionVector | undefined,
+      state: p.payload.state as string | undefined,
     }));
   } catch {
     return [];
@@ -249,6 +273,138 @@ export async function buildQuery(ctx: ProbeContext): Promise<ProbeQuery | null> 
     alpha,
     windowSize: splitAt,
   };
+}
+
+// ---- Enriched centroid builder (Sphere-ready data shaping) ----
+
+/**
+ * Build an enriched centroid from the current action_log window.
+ *
+ * Computes:
+ *   - emotion_avg: average emotion across the new window
+ *   - entropy_range: [min, max] entropy in the window
+ *   - pattern: state transition summary (e.g. "stuck→exploring")
+ *   - outcome: final state in window (newest entry)
+ *   - linked_knowledge: top-3 fixed engram nodes near the centroid
+ *
+ * Returns null if insufficient data (same cold-start guard as buildQuery).
+ */
+export async function buildEnrichedCentroid(ctx: ProbeContext): Promise<EnrichedCentroid | null> {
+  const intensity = Math.min(1, Math.max(ctx.emotion.frustration, ctx.entropy / 3));
+  const windowN = WINDOW_N_BASE + Math.round(intensity * WINDOW_N_MAX_EXPAND);
+
+  const points = await scrollRecentVectors(windowN * 2, ctx.projectId);
+  if (points.length < 2) return null;
+
+  const splitAt = Math.min(windowN, Math.floor(points.length / 2));
+  const windowNew = points.slice(0, splitAt);
+  const windowOld = points.slice(splitAt);
+
+  const centroidNew = weightedCentroid(windowNew);
+  if (!centroidNew) return null;
+
+  const centroidOld = weightedCentroid(windowOld);
+  const delta = centroidOld ? vecSub(centroidNew, centroidOld) : vecZero(centroidNew.length);
+  const entropyFactor = Math.max(0.1, 1 - ctx.entropy / 4);
+  const alpha = entropyFactor * 0.5;
+
+  // ---- Emotion average across new window ----
+  const emotionAxes: (keyof EmotionVector)[] = [
+    "frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow",
+  ];
+  const emotionAvg: Partial<EmotionVector> = {};
+  let emotionCount = 0;
+  for (const pt of windowNew) {
+    if (!pt.emotion) continue;
+    emotionCount++;
+    for (const axis of emotionAxes) {
+      emotionAvg[axis] = (emotionAvg[axis] ?? 0) + (pt.emotion[axis] ?? 0);
+    }
+  }
+  if (emotionCount > 0) {
+    for (const axis of emotionAxes) {
+      emotionAvg[axis] = Math.round(((emotionAvg[axis] ?? 0) / emotionCount) * 1000) / 1000;
+    }
+  }
+
+  // ---- Entropy range ----
+  const entropies = points.map(p => p.entropy);
+  const entropyRange: [number, number] = [
+    Math.round(Math.min(...entropies) * 100) / 100,
+    Math.round(Math.max(...entropies) * 100) / 100,
+  ];
+
+  // ---- State pattern + outcome ----
+  const states = points
+    .map(p => p.state)
+    .filter((s): s is string => !!s);
+  const uniqueStates: string[] = [];
+  for (const s of states.reverse()) { // oldest→newest
+    if (uniqueStates.length === 0 || uniqueStates[uniqueStates.length - 1] !== s) {
+      uniqueStates.push(s);
+    }
+  }
+  const pattern = uniqueStates.length > 0 ? uniqueStates.join("→") : "unknown";
+  const outcome = uniqueStates.length > 0 ? uniqueStates[uniqueStates.length - 1] : "unknown";
+
+  // ---- Linked knowledge: search engram fixed nodes near centroid ----
+  const linked = await searchFixedNearCentroid(centroidNew, ctx.projectId);
+
+  return {
+    pattern,
+    centroid_embedding: centroidNew,
+    emotion_avg: emotionAvg,
+    entropy_range: entropyRange,
+    outcome,
+    linked_knowledge: linked,
+    window_size: splitAt,
+    alpha,
+    ts: Date.now(),
+  };
+}
+
+/**
+ * Search engram collection for fixed nodes near the centroid.
+ * score_threshold=0.5 to avoid irrelevant matches.
+ */
+async function searchFixedNearCentroid(
+  centroid: number[],
+  projectId?: string,
+): Promise<LinkedKnowledge[]> {
+  try {
+    const filter: Record<string, any> = {
+      must: [{ key: "status", match: { value: "fixed" } }],
+    };
+    if (projectId) {
+      filter.must.push({ key: "projectId", match: { value: projectId } });
+    }
+
+    const res = await fetch(`${QDRANT_URL}/collections/${ENGRAM_COLLECTION}/points/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vector: centroid,
+        limit: 3,
+        score_threshold: 0.5,
+        with_payload: true,
+        filter,
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      result: Array<{ score: number; payload: Record<string, any> }>;
+    };
+
+    return (data.result ?? []).map(r => ({
+      summary: r.payload.summary || "(no summary)",
+      tags: r.payload.tags || [],
+      similarity: Math.round(r.score * 1000) / 1000,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // ---- Search execution (swappable target) ----
