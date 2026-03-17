@@ -168,6 +168,10 @@ centroid_new ─── centroid_old
 
 No linear extrapolation in embedding space — non-linearity makes projected positions unreliable. Instead, search at the current centroid and let delta direction + emotion state filter the results. All computation is pure math: cosine similarity, L2 norms, EMA thresholds. Zero LLM inference.
 
+### Behavioral Prior & Persona System (planned)
+
+Engram provides information continuity (what you know). The planned Behavioral Prior will add behavioral continuity (how you move) — saving receptor state across sessions so agents don't start from zero. The Persona System extends this to species-level: successful sessions export a statistical fingerprint (firing stats, pattern distributions, learned deltas) to the Sphere pipeline. Other agents may encounter these personas by chance via Future Probe, blending them into their own priors. See [docs/RECEPTOR_ARCHITECTURE.md](docs/RECEPTOR_ARCHITECTURE.md) §12 for the full design.
+
 ### Sphere Shaping — Data Export Pipeline
 
 Enriched centroids (behavioral patterns + emotion averages + linked fixed knowledge) are anonymized and exported for future [Sphere](https://github.com/hiatamaworkshop) federation. Individual experience, metabolically filtered, becomes collective intelligence.
