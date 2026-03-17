@@ -98,15 +98,15 @@ export interface ActionSnapshot {
 
 /**
  * Determine if current state is a keypoint worth recording.
- * Keypoints: state transitions, entropy spikes (>0.5 delta).
+ * Keypoints: state transitions, entropy spikes (>0.2 delta).
  */
 export function isKeypoint(snap: ActionSnapshot): boolean {
   // State transition
   if (_prevState !== null && snap.agentState !== _prevState) {
     return true;
   }
-  // Entropy spike (absolute delta > 0.5)
-  if (Math.abs(snap.entropy - _prevEntropy) > 0.5) {
+  // Entropy spike (absolute delta > 0.2)
+  if (Math.abs(snap.entropy - _prevEntropy) > 0.2) {
     return true;
   }
   // First event

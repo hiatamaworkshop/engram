@@ -167,12 +167,7 @@ export class MetaNeuron {
   ): void {
     const fa = ambient.fieldAdjustment;
 
-    if (rates.frustration > CONF.dangerHitRate) {
-      fa.seeking = Math.max(-CONF.maxFieldAdjustment, fa.seeking - CONF.adjustmentStep);
-    } else if (rates.frustration < CONF.safeHitRate) {
-      fa.seeking = this._decayToward(fa.seeking, 0, CONF.adjustmentStep);
-    }
-
+    // ---- Frustration: suppress noise during deep_work, sensitize during stuck ----
     if (this._lastState === "deep_work") {
       fa.frustration = Math.min(CONF.maxFieldAdjustment, fa.frustration + CONF.adjustmentStep);
     } else if (this._lastState === "stuck") {
@@ -181,8 +176,27 @@ export class MetaNeuron {
       fa.frustration = this._decayToward(fa.frustration, 0, CONF.adjustmentStep);
     }
 
-    fa.flow = this._decayToward(fa.flow, 0, CONF.adjustmentStep);
-    fa.confidence = this._decayToward(fa.confidence, 0, CONF.adjustmentStep);
+    // ---- Seeking: decay only — no directional bias from frustration ----
+    // Seeking has sign semantics (+curiosity/-desperation); biasing the
+    // threshold based on frustration hitRate would amplify both polarities
+    // indiscriminately. Let the raw signal speak for itself.
+    fa.seeking = this._decayToward(fa.seeking, 0, CONF.adjustmentStep);
+
+    // ---- Flow: suppress threshold during sustained confidence ----
+    // High confidence sustained → lower flow threshold → easier to enter flow
+    if (rates.confidence > CONF.dangerHitRate) {
+      fa.flow = Math.max(-CONF.maxFieldAdjustment, fa.flow - CONF.adjustmentStep);
+    } else {
+      fa.flow = this._decayToward(fa.flow, 0, CONF.adjustmentStep);
+    }
+
+    // ---- Confidence: raise threshold during sustained confidence ----
+    // Prevents confidence from saturating — makes room for other signals
+    if (rates.confidence > CONF.dangerHitRate) {
+      fa.confidence = Math.min(CONF.maxFieldAdjustment, fa.confidence + CONF.adjustmentStep);
+    } else {
+      fa.confidence = this._decayToward(fa.confidence, 0, CONF.adjustmentStep);
+    }
   }
 
   private _decayToward(value: number, target: number, step: number): number {
