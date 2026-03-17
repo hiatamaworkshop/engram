@@ -1,6 +1,11 @@
 # Receptor — 実装済みアーキテクチャ解説
 
 > 2026-03-14 時点の実装に基づく。設計思想は PREDICTIVE_INFERENCE.md、ここは動作原理。
+>
+> **更新 (2026-03-17)**: EmotionVector 6 軸→5 軸 (hunger+uncertainty → seeking, 符号付き)。
+> Future Probe: 線形外挿廃止 → centroid 近傍検索 + trigger-scaled radius + 3 層 post-filter。
+> Meta neuron: confidence 持続時に flow threshold 低下 + confidence threshold 上昇（飽和防止）。
+> 本ドキュメントの 6 軸記述は設計経緯として残す。実装は `mcp-server/src/receptor/` を参照。
 
 ## 全体構造
 

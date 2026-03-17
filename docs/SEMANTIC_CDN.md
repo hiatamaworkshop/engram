@@ -1,6 +1,9 @@
 # Semantic CDN — エージェントの意味的位置に基づく知識配信
 
 > 2026-03-17 設計構想。HOTLOAD_DESIGN.md の議論から派生。
+>
+> **更新 (2026-03-17)**: Sphere アクセスは Facade 経由の DNS ルーティングモデルに移行。
+> エージェントは facadeUrl のみ知っていれば良い。domain → Sphere の解決は Facade が担当。
 
 ---
 

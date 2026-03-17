@@ -1,6 +1,9 @@
 # Sphere Federation — engram → Sphere 自動プッシュ構想
 
-> 2026-03-16 構想メモ。未実装。
+> 2026-03-16 構想メモ。sphere-shaper 実装済み、Sphere HTTP 配線は未実装。
+>
+> **更新 (2026-03-17)**: Facade DNS ルーティングモデル追加。ProjectMeta (techStack/domain) で
+> Sphere 自動振り分け。SpherePayload v2。score_threshold 0.5→0.35。seeking 軸統合反映。
 
 ---
 
@@ -189,8 +192,8 @@ Sphere (グローバル)
   ▼
 フェッチトリガ (receptor future_probe)
   │
-  │  receptor が Δv + entropy でクエリを生成
-  │  → Sphere へアクセス、データ取得
+  │  receptor が centroid + triggerStrength + emotion でクエリを生成
+  │  → Facade へ lookup リクエスト（Facade が domain → Sphere を DNS 解決）
   │  → ローカルキャッシュに展開
   │  → 近傍内は Sphere アクセスなし
   │  → shift 検知で再フェッチ
@@ -217,7 +220,7 @@ Sphere にはパターンの統計的価値だけが上がる。
 ローカル action_log（全情報）:
   text: "stuck src/receptor/index.ts, heatmap.ts entropy=2.3"
   vector: [384d MiniLM embedding]
-  emotion: { frustration: 0.72, hunger: 0.41, ... }
+  emotion: { frustration: 0.72, seeking: -0.41, ... }
   state: "stuck"
   entropy: 2.3
   projectId: "engram"
@@ -234,7 +237,7 @@ Sphere にはパターンの統計的価値だけが上がる。
 
 Sphere 投入データ:
   text: "stuck, high entropy, file editing pattern, resolved"
-  emotion: { frustration: 0.72, hunger: 0.41, ... }
+  emotion: { frustration: 0.72, seeking: -0.41, ... }
   state: "stuck"
   entropy: 2.3
   outcome: "resolved"
@@ -256,9 +259,9 @@ action-logger.ts の upsert を Sphere 向けに切り替える時に、
 変換関数 `anonymizeForSphere(actionLog) → SpherePayload` を挟むだけ。
 現在の設計で結合箇所は変わらない。
 
-**クエリ生成は receptor の付加価値**。Sphere の API では Δv や直交方向探索を
-表現できない。receptor が「向かっている先」を計算し、それを Sphere への
-検索クエリに変換する。この変換層が engram の独自価値。
+**クエリ生成は receptor の付加価値**。Sphere の API では triggerStrength や
+delta alignment post-filter を表現できない。receptor が centroid + 感情 + delta を
+計算し、Facade lookup への検索クエリに変換する。この変換層が engram の独自価値。
 
 ### phi-agent による非同期データ取得
 
@@ -323,8 +326,8 @@ phi-agent 側:
   を決定する
 ```
 
-Δv はローカル予測として残すが、Sphere 経由では**二重の最適化**が効く:
-- receptor のセマンティック方向（v_future をクエリ/初期位置として提供）
+delta は post-filter 用に保持されるが、Sphere 経由では**二重の最適化**が効く:
+- receptor の triggerStrength + delta alignment（centroid をクエリ/初期位置として提供）
 - 種族のスコアリングバイアス（Loadout が探索行動を制御）
 
 #### 連携フロー
@@ -423,8 +426,9 @@ action_log（大量、ノイジー）
   │  Qdrant query:
   │    vector: セントロイド embedding
   │    filter: status="fixed" (代謝を生き延びた知識のみ)
-  │    score_threshold: 0.5 (無関係な fixed を混ぜない足切り)
+  │    score_threshold: 0.35 (centroid averaging dilutes cosine ~0.15-0.2)
   │    limit: 3
+  │    cross-project (projectId フィルタなし — fixed は universal knowledge)
   │
   ▼ 感情ベクトルでフィルタリング
   │  セントロイドの avg_emotion と fixed 参照時の emotion の距離
@@ -616,8 +620,9 @@ const results = await searchQdrant(ENGRAM_COLLECTION, centroid, 5, projectId);
 const results = await sphereLookup(centroid, { radius, emotion, limit: 5 });
 ```
 
-receptor のクエリ生成（Δv + α + emotion）は変更なし。
-検索バックエンドが Qdrant → Sphere API に差し替わるだけ。
+receptor のクエリ生成（centroid + triggerStrength + emotion + delta）は変更なし。
+検索バックエンドが Qdrant → Facade lookup に差し替わるだけ。
+Facade が domain → Sphere を内部解決する（DNS モデル）。
 
 #### Evaluation Buffer — lookup で失われる評価ループの補完
 
@@ -732,6 +737,54 @@ Phase 4: 集合知
   evaluation buffer により有用な知識が Sphere 内で fixed に昇格
   emotion vector による「同じ苦しみ方をした時の解法」優先
 ```
+
+---
+
+## Facade DNS ルーティングモデル
+
+Sphere は複数インスタンスがフォーク前提で存在する（法律 Sphere、AI Sphere 等）。
+エージェントは個々の Sphere を知る必要がない — Facade が DNS として機能する。
+
+### ProjectMeta
+
+各 engram インスタンスは `project-meta.json` でプロジェクトのメタデータを定義:
+
+```json
+{
+  "techStack": ["typescript", "qdrant", "docker", "mcp"],
+  "domain": ["ai-agent", "memory-system", "knowledge-graph"],
+  "facadeUrl": "http://facade.example.com:3100"
+}
+```
+
+- `techStack` / `domain` はカテゴリ情報 — 匿名化後も SpherePayload に残る
+- `facadeUrl` は単一のエントリポイント — エージェントはこの URL だけ知っていればよい
+
+### Facade の 2 つのインタラクションパターン
+
+```
+1. push (バッチ投入):
+   sphere-shaper → POST /push { payload, techStack, domain }
+   → Facade が domain にマッチする Sphere を catalog から選択
+   → 該当 Sphere の ingest API に転送
+
+2. lookup (ステートレス検索):
+   future_probe → POST /lookup { vector, techStack, domain, emotion_filter? }
+   → Facade が domain にマッチする Sphere を catalog から選択
+   → 該当 Sphere の search API に転送
+   → 結果をそのまま返す（非介入原則）
+```
+
+エージェントは Sphere の存在を意識しない。
+Facade に聞いたら答えが来る、という体験だけがある。
+
+### dive との共存
+
+Facade は既に dive（WebSocket, stateful journey）をサポートしている。
+lookup は dive を置き換えるものではなく、共存する:
+
+- **lookup**: 即応が必要な場面（ms 単位、future_probe 駆動）
+- **dive**: 深い探索体験が必要な場面（分単位、phi-agent 駆動）
 
 ---
 

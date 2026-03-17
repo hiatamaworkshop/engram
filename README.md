@@ -136,14 +136,14 @@ Hook events → [A] Flow Gate → [B] Activity Metrics → [C] State Classifier 
 ```
 
 - **Flow Gate**: Detects flow state. When active, suppresses all signals to avoid interrupting productive work.
-- **Activity Metrics**: Tracks agent cognitive load from tool usage patterns — frustration, information deficit, uncertainty, confidence, fatigue. Emits signals when metrics exceed adaptive thresholds.
+- **Activity Metrics**: Tracks agent cognitive load from tool usage patterns — frustration, seeking (curiosity/desperation), confidence, fatigue, flow. Five-axis emotion vector, all computed without LLM inference. Emits signals when metrics exceed adaptive thresholds.
 - **State Classifier**: Infers agent state (`exploring` / `deep_work` / `stuck` / `idle`) and adjusts metric thresholds based on context.
 
 Emitted signals trigger actions defined in `receptor-rules.json`. Actions are either `auto` (executed immediately — e.g., proactive knowledge recall) or `notify` (surfaced via Hot Memo as suggestions).
 
 ### Future Probe — Predictive Knowledge Supply
 
-The receptor doesn't just observe — it predicts. The Future Probe computes movement vectors in semantic embedding space to anticipate what knowledge the agent will need next.
+The receptor doesn't just observe — it predicts. The Future Probe searches for relevant knowledge near the agent's current behavioral position, with trigger-scaled radius and multi-layer post-filtering.
 
 ```
 action_log entries (recent tool embeddings, newest-first)
@@ -152,17 +152,21 @@ action_log entries (recent tool embeddings, newest-first)
   │
 centroid_new ─── centroid_old
   │                   │
-  └──── Δv = new - old (movement direction in meaning space)
-              │
-              ▼
-  v_future = centroid_new + α × Δv   (α adjusted by entropy)
-              │
-              ▼
-  Search engram + action_log with v_future
-  → Knowledge that lies *ahead* on the agent's trajectory
+  └──── Δv = new - old (movement direction — for post-filter, NOT extrapolation)
+  │
+  ▼ Search at centroid_new (current position, no linear extrapolation)
+  │   triggerStrength = emotionNorm × 0.6 + entropy × 0.4
+  │   → dynamic score_threshold: 0.5 (calm) → 0.3 (max intensity)
+  │
+  ▼ Post-filter (3 layers):
+  │   1. Delta alignment — candidates moving in same direction get bonus
+  │   2. Emotion proximity — cosine similarity of emotion vectors
+  │   3. Tag heuristics — gotcha/error-resolved boosted under frustration
+  │
+  → Knowledge relevant to where the agent *is*, filtered by where it's *heading*
 ```
 
-This is not keyword search or RAG. It's trajectory-based prediction in semantic space — the agent's recent behavioral pattern determines a direction, and knowledge along that direction is supplied before the agent asks for it.
+No linear extrapolation in embedding space — non-linearity makes projected positions unreliable. Instead, search at the current centroid and let delta direction + emotion state filter the results. All computation is pure math: cosine similarity, L2 norms, EMA thresholds. Zero LLM inference.
 
 ### Sphere Shaping — Data Export Pipeline
 

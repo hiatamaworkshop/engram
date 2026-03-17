@@ -1,6 +1,9 @@
 # Passive Receptor — 解釈層設計メモ
 
 > 2026-03-15 概念設計議論に基づく。実装前の設計合意。
+>
+> **更新 (2026-03-17)**: hunger_spike → seeking_spike、compound_frustration_hunger → compound_frustration_seeking。
+> ask mode 廃止済み。EmotionVector 5 軸。実装は `mcp-server/src/receptor/passive.ts` を参照。
 
 ---
 

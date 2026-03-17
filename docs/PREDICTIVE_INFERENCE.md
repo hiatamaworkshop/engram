@@ -1,8 +1,11 @@
 # Predictive Inference — Agent Emotion System + Mycelium 先読み推論
 
 > Date: 2026-03-14
-> Status: 構想段階
+> Status: 構想段階（多くの概念は実装済み）
 > 依存: engram, mycelium_universal, Sphere (neuron triangle), phi-agent (feelings)
+>
+> **更新 (2026-03-17)**: EmotionVector 6 軸→5 軸 (hunger+uncertainty → seeking)。
+> 本ドキュメントの 6 軸記述は初期構想として残す。実装は `mcp-server/src/receptor/` を参照。
 
 ## 概要
 
