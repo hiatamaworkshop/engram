@@ -50,12 +50,13 @@ export class MetaNeuron {
     }
 
     const emotion = strongest.emotion;
-    const axes: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
+    const axes: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue", "flow"];
     let dominant: EmotionAxis = "frustration";
     let maxVal = -1;
     for (const axis of axes) {
-      if (emotion[axis] > maxVal) {
-        maxVal = emotion[axis];
+      const v = axis === "seeking" ? Math.abs(emotion[axis]) : emotion[axis];
+      if (v > maxVal) {
+        maxVal = v;
         dominant = axis;
       }
     }
@@ -124,7 +125,7 @@ export class MetaNeuron {
 
   private _hitRates(): Record<EmotionAxis, number> {
     const counts: Record<EmotionAxis, number> = {
-      frustration: 0, hunger: 0, uncertainty: 0,
+      frustration: 0, seeking: 0,
       confidence: 0, fatigue: 0, flow: 0,
     };
     for (const entry of this.buffer) {
@@ -133,8 +134,7 @@ export class MetaNeuron {
     const total = this.buffer.length || 1;
     return {
       frustration: counts.frustration / total,
-      hunger: counts.hunger / total,
-      uncertainty: counts.uncertainty / total,
+      seeking: counts.seeking / total,
       confidence: counts.confidence / total,
       fatigue: counts.fatigue / total,
       flow: counts.flow / total,
@@ -168,11 +168,9 @@ export class MetaNeuron {
     const fa = ambient.fieldAdjustment;
 
     if (rates.frustration > CONF.dangerHitRate) {
-      fa.hunger = Math.max(-CONF.maxFieldAdjustment, fa.hunger - CONF.adjustmentStep);
-      fa.uncertainty = Math.max(-CONF.maxFieldAdjustment, fa.uncertainty - CONF.adjustmentStep);
+      fa.seeking = Math.max(-CONF.maxFieldAdjustment, fa.seeking - CONF.adjustmentStep);
     } else if (rates.frustration < CONF.safeHitRate) {
-      fa.hunger = this._decayToward(fa.hunger, 0, CONF.adjustmentStep);
-      fa.uncertainty = this._decayToward(fa.uncertainty, 0, CONF.adjustmentStep);
+      fa.seeking = this._decayToward(fa.seeking, 0, CONF.adjustmentStep);
     }
 
     if (this._lastState === "deep_work") {

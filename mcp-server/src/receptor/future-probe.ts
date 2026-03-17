@@ -310,7 +310,7 @@ export async function buildEnrichedCentroid(ctx: ProbeContext): Promise<Enriched
 
   // ---- Emotion average across new window ----
   const emotionAxes: (keyof EmotionVector)[] = [
-    "frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow",
+    "frustration", "seeking", "confidence", "fatigue", "flow",
   ];
   const emotionAvg: Partial<EmotionVector> = {};
   let emotionCount = 0;
@@ -492,8 +492,8 @@ function applyEmotionWeight(
     if (pastState === "stuck") weight *= 1.3;
   }
 
-  if (query.emotion.hunger > 0.5) {
-    // Hunger high → prioritize howto/where
+  if (Math.abs(query.emotion.seeking) > 0.5) {
+    // High seeking intensity → prioritize howto/where
     if (tags.includes("howto") || tags.includes("where")) weight *= 1.4;
   }
 

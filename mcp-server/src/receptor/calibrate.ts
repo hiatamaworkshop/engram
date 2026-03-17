@@ -31,7 +31,7 @@ const VERBOSE = args.includes("--verbose");
 const DELTA_BOUND = 0.30;
 const LEARNING_RATE = 0.5;  // how aggressively to correct
 const CALIBRATION_AXES: EmotionAxis[] = [
-  "frustration", "hunger", "uncertainty", "confidence", "fatigue",
+  "frustration", "seeking", "confidence", "fatigue",
 ];
 // flow excluded — A gate invariant
 

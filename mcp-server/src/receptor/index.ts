@@ -435,7 +435,7 @@ export function formatState(): string {
   lines.push("");
   lines.push("[B] Emotion");
 
-  const axes: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
+  const axes: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue", "flow"];
   const holdSummary = getHoldSummary();
 
   for (const axis of axes) {
@@ -444,17 +444,21 @@ export function formatState(): string {
     const base = ambient.baseline(axis);
     const field = ambient.fieldAdjustment[axis];
 
+    // seeking uses absolute value for threshold comparison and bar display
+    const displayVal = axis === "seeking" ? Math.abs(val) : val;
+    const sign = axis === "seeking" ? (val >= 0 ? "+" : "-") : " ";
+
     let marker = "  ";
-    if (val >= thr) marker = "! ";       // firing
+    if (displayVal >= thr) marker = "! ";       // firing
     else if (holdSummary[axis]) marker = "~ ";  // hold (pending release)
 
     const fieldStr = Math.abs(field) > 0.001 ? ` C:${field > 0 ? "+" : ""}${field.toFixed(2)}` : "";
     // Show threshold marker on the bar
     const thrPos = Math.round(Math.min(thr, 1) * 10);
-    const barStr = bar(val, 1);
+    const barStr = bar(displayVal, 1);
     const barWithThr = barStr.substring(0, thrPos) + "|" + barStr.substring(thrPos + 1);
-    const abbr = axis.substring(0, 4).toUpperCase().padEnd(4);
-    lines.push(`    ${marker}${abbr} ${barWithThr} ${val.toFixed(2)}  base=${base.toFixed(2)}${fieldStr}`);
+    const abbr = axis === "seeking" ? "SEEK" : axis.substring(0, 4).toUpperCase().padEnd(4);
+    lines.push(`    ${marker}${abbr} ${barWithThr} ${sign}${displayVal.toFixed(2)}  base=${base.toFixed(2)}${fieldStr}`);
   }
 
   // Hold states

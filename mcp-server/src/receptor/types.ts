@@ -23,12 +23,11 @@ export interface NormalizedEvent {
   ts: number;
 }
 
-// ---- Emotion vector (6-axis) ----
+// ---- Emotion vector (5-axis) ----
 
 export interface EmotionVector {
   frustration: number; // negative: stuck, no solution visible
-  hunger: number;      // negative: knowledge gap
-  uncertainty: number; // negative: direction lost
+  seeking: number;     // positive=curiosity (exploring after success), negative=desperation (searching after failure)
   confidence: number;  // positive: hypothesis confirmed
   fatigue: number;     // meta: cognitive load accumulation
   flow: number;        // positive: thought and action aligned
@@ -36,8 +35,7 @@ export interface EmotionVector {
 
 export const ZERO_EMOTION: Readonly<EmotionVector> = {
   frustration: 0,
-  hunger: 0,
-  uncertainty: 0,
+  seeking: 0,
   confidence: 0,
   fatigue: 0,
   flow: 0,
@@ -48,10 +46,10 @@ export type EmotionAxis = keyof EmotionVector;
 // ---- Commander pattern classification ----
 
 export type PatternKind =
-  | "exploration"     // Read+Grep high, Edit low → hunger
+  | "exploration"     // Read+Grep high, Edit low → seeking (sign from context)
   | "implementation"  // Edit+Bash high, Grep low → flow/confidence
   | "trial_error"     // Edit→Bash alternating → frustration
-  | "wandering"       // Grep+Read high, Edit 0 → uncertainty
+  | "wandering"       // Grep+Read high, Edit 0 → seeking (negative)
   | "delegation"      // Agent high → isolation
   | "stagnation";     // all low → fatigue
 
@@ -68,12 +66,11 @@ export type AgentState =
 
 export type FireSignalKind =
   | "frustration_spike"
-  | "hunger_spike"
-  | "uncertainty_sustained"
+  | "seeking_spike"
   | "confidence_sustained"
   | "fatigue_rising"
   | "flow_active"
-  | "compound_frustration_hunger";
+  | "compound_frustration_seeking";
 
 export interface FireSignal {
   kind: FireSignalKind;

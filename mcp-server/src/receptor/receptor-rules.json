@@ -6,7 +6,7 @@
       "type": "knowledge_search",
       "mode": "auto",
       "trigger": {
-        "signals": ["compound_frustration_hunger"],
+        "signals": ["compound_frustration_seeking"],
         "states": ["stuck"],
         "sensitivity": 0.7,
         "frequency": "low"
@@ -22,7 +22,7 @@
       "type": "knowledge_search",
       "mode": "background",
       "trigger": {
-        "signals": ["frustration_spike", "uncertainty_sustained"],
+        "signals": ["frustration_spike", "seeking_spike"],
         "states": ["stuck", "exploring"],
         "sensitivity": 0.6,
         "frequency": "low"
@@ -43,7 +43,7 @@
       "type": "status_notify",
       "mode": "notify",
       "trigger": {
-        "signals": ["frustration_spike", "compound_frustration_hunger"],
+        "signals": ["frustration_spike", "compound_frustration_seeking"],
         "states": ["stuck", "exploring"],
         "sensitivity": 0.8,
         "frequency": "low"
@@ -71,7 +71,7 @@
       "type": "knowledge_search",
       "mode": "auto",
       "trigger": {
-        "signals": ["frustration_spike", "hunger_spike"],
+        "signals": ["frustration_spike", "seeking_spike"],
         "states": ["stuck", "exploring"],
         "sensitivity": 0.4,
         "frequency": "medium"
@@ -87,7 +87,7 @@
       "type": "context_assist",
       "mode": "auto",
       "trigger": {
-        "signals": ["hunger_spike", "uncertainty_sustained"],
+        "signals": ["seeking_spike"],
         "states": ["exploring", "stuck"],
         "sensitivity": 0.5,
         "frequency": "medium"
@@ -146,7 +146,7 @@
       "type": "knowledge_search",
       "mode": "background",
       "trigger": {
-        "signals": ["frustration_spike", "uncertainty_sustained", "hunger_spike"],
+        "signals": ["frustration_spike", "seeking_spike"],
         "states": ["exploring", "stuck"],
         "sensitivity": 0.5,
         "frequency": "medium"

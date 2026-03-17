@@ -12,7 +12,7 @@ import { profile } from "./profile.js";
 // ---- Constants (from profile) ----
 
 const CONF = profile.ambient;
-const AXES: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
+const AXES: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue", "flow"];
 
 // ---- AmbientEstimator ----
 
@@ -29,11 +29,11 @@ export class AmbientEstimator {
 
   constructor() {
     this.ema = {
-      frustration: 0, hunger: 0, uncertainty: 0,
+      frustration: 0, seeking: 0,
       confidence: 0, fatigue: 0, flow: 0,
     };
     this.fieldAdjustment = {
-      frustration: 0, hunger: 0, uncertainty: 0,
+      frustration: 0, seeking: 0,
       confidence: 0, fatigue: 0, flow: 0,
     };
     this.offsets = { ...CONF.offsets };
@@ -60,7 +60,8 @@ export class AmbientEstimator {
 
     for (const axis of AXES) {
       const value = emotion[axis];
-      if (axis !== "fatigue" && value < CONF.silenceFloor) continue;
+      const absValue = axis === "seeking" ? Math.abs(value) : value;
+      if (axis !== "fatigue" && absValue < CONF.silenceFloor) continue;
       this.ema[axis] += alpha * (value - this.ema[axis]);
     }
 

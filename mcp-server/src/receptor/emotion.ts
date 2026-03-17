@@ -17,7 +17,7 @@ import { profile } from "./profile.js";
 
 // ---- Constants (from profile) ----
 
-const AXES: EmotionAxis[] = ["frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow"];
+const AXES: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue", "flow"];
 const HALF_LIFE = profile.accumulator.halfLife;
 const IDLE_FREEZE_MS = profile.accumulator.idleFreezeMs;
 const INTER_TURN_CAP_MS = profile.accumulator.interTurnCapMs;
@@ -31,8 +31,8 @@ const COMPOUNDS = profile.signal.compounds;
 
 // ---- Clamp utility ----
 
-function clamp(v: number): number {
-  return Math.max(0, Math.min(1, v));
+function clamp(v: number, allowNegative = false): number {
+  return allowNegative ? Math.max(-1, Math.min(1, v)) : Math.max(0, Math.min(1, v));
 }
 
 // ============================================================
@@ -59,7 +59,7 @@ export class EmotionAccumulator {
     this._lastTs = ts;
 
     for (const axis of AXES) {
-      this._values[axis] = clamp(this._values[axis] + impulse[axis]);
+      this._values[axis] = clamp(this._values[axis] + impulse[axis], axis === "seeking");
     }
 
     return this.values;
@@ -183,7 +183,8 @@ export function generateSignals(
   function shouldFire(axis: EmotionAxis): boolean {
     const threshold = thr(axis);
     const hold = getHold(axis);
-    const value = emotion[axis];
+    // seeking uses absolute value (both curiosity and desperation trigger)
+    const value = axis === "seeking" ? Math.abs(emotion[axis]) : emotion[axis];
 
     if (value >= threshold) {
       hold.active = true;
@@ -224,10 +225,10 @@ export function generateSignals(
   }
 
   // Individual spikes
+  // For seeking: fire on absolute value (both curiosity and desperation are signal-worthy)
   const checks: Array<[EmotionAxis, FireSignalKind]> = [
     ["frustration", "frustration_spike"],
-    ["hunger", "hunger_spike"],
-    ["uncertainty", "uncertainty_sustained"],
+    ["seeking", "seeking_spike"],
     ["confidence", "confidence_sustained"],
     ["fatigue", "fatigue_rising"],
   ];

@@ -93,7 +93,7 @@ const scenarios: Record<string, Scenario> = {
   // Exploration: lots of reading and searching, no edits
   exploration: {
     name: "exploration",
-    description: "Agent reading/searching codebase — should trigger hunger/uncertainty",
+    description: "Agent reading/searching codebase — should trigger seeking",
     events: [
       { raw: ev("Read", { path: "src/index.ts" }), label: "read index", delaySec: 0 },
       { raw: ev("Grep", { path: "src/", resultCount: 5 }), label: "grep results" },

@@ -15,8 +15,7 @@ const ctx: ProbeContext = {
   topPaths: ["mcp-server/src/receptor/future-probe.ts", "mcp-server/src/receptor/index.ts"],
   emotion: {
     frustration: 0.3,
-    hunger: 0.5,
-    uncertainty: 0.1,
+    seeking: -0.4,
     confidence: 0.2,
     fatigue: 0.1,
     flow: 0.1,

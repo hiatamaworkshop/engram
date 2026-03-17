@@ -79,17 +79,16 @@ const RECENCY_COOLDOWN: Record<string, number> = {
 /** Signal kind → primary emotion axes.
  *  Used to determine which receptor axes provide suppression. */
 const SIGNAL_AXES: Record<string, EmotionAxis[]> = {
-  frustration_spike:          ["frustration"],
-  hunger_spike:               ["hunger"],
-  compound_frustration_hunger: ["frustration", "hunger"],
-  uncertainty_sustained:      ["uncertainty"],
-  confidence_sustained:       ["confidence"],
-  fatigue_rising:             ["fatigue"],
-  flow_active:                ["flow"],
+  frustration_spike:            ["frustration"],
+  seeking_spike:                ["seeking"],
+  compound_frustration_seeking: ["frustration", "seeking"],
+  confidence_sustained:         ["confidence"],
+  fatigue_rising:               ["fatigue"],
+  flow_active:                  ["flow"],
 };
 
 const EMOTION_KEYS: EmotionAxis[] = [
-  "frustration", "hunger", "uncertainty", "confidence", "fatigue", "flow",
+  "frustration", "seeking", "confidence", "fatigue", "flow",
 ];
 
 // ---- Learned delta (cross-session calibration) ----

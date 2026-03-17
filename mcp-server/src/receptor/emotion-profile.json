@@ -4,8 +4,7 @@
   "accumulator": {
     "halfLife": {
       "frustration": 180000,
-      "hunger": 240000,
-      "uncertainty": 180000,
+      "seeking": 210000,
       "confidence": 120000,
       "fatigue": 600000,
       "flow": 180000
@@ -17,21 +16,21 @@
   "impulse": {
     "event": {
       "shell_exec.failure":  { "frustration": 0.10, "confidence": -0.04 },
-      "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.08, "uncertainty": -0.02 },
-      "file_edit":           { "confidence": 0.04, "uncertainty": -0.01, "hunger": -0.02, "flow": 0.02 },
-      "search.empty":        { "hunger": 0.08, "uncertainty": 0.05 },
-      "search.found":        { "hunger": -0.03 },
-      "file_read":           { "hunger": 0.02 },
-      "memory_read":         { "hunger": 0.02 },
+      "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.08, "seeking": 0.03 },
+      "file_edit":           { "confidence": 0.04, "seeking": 0.02, "flow": 0.02 },
+      "search.empty":        { "seeking": -0.10 },
+      "search.found":        { "seeking": 0.05 },
+      "file_read":           { "seeking": -0.02 },
+      "memory_read":         { "seeking": -0.02 },
       "memory_write":        { "confidence": 0.03 }
     },
     "pattern": {
       "trial_error":     { "frustration": 0.08 },
-      "wandering":       { "uncertainty": 0.10, "hunger": 0.04 },
-      "exploration":     { "hunger": 0.02 },
+      "wandering":       { "seeking": -0.12 },
+      "exploration":     { "seeking": -0.04 },
       "implementation":  { "flow": 0.04, "confidence": 0.04 }
     },
-    "heatmapShift": { "uncertainty": 0.10 },
+    "heatmapShift": { "seeking": -0.08 },
     "fatigue": {
       "base": 0.005,
       "hourlyRate": 0.003
@@ -43,8 +42,9 @@
     "holdReleaseCount": 3,
     "compounds": [
       {
-        "id": "compound_frustration_hunger",
-        "requires": ["frustration", "hunger"],
+        "id": "compound_frustration_seeking",
+        "requires": ["frustration", "seeking"],
+        "seekingSign": "negative",
         "intensity": "max",
         "priority": true
       }
@@ -57,8 +57,7 @@
     "silenceFloor": 0.05,
     "offsets": {
       "frustration": 0.20,
-      "hunger": 0.25,
-      "uncertainty": 0.25,
+      "seeking": 0.25,
       "confidence": 0.25,
       "fatigue": 0.30,
       "flow": 0.20
