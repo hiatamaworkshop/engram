@@ -515,7 +515,201 @@ Semantic CDN はエージェントの意味的位置で知識を配信する。
 感情ベクトルが付いているから、ただの検索ではない —
 「同じような苦しみ方をした時の解法」が優先される。
 
-### スケール段階
+*スケール段階は Agent Shadow 構想セクションの改訂版を参照。*
+
+### Agent Shadow — Sphere 側の文脈常駐レイヤ
+
+#### 現状の問題
+
+Phase 3-4 の構想でも、知識取得はエージェント起動型:
+
+- **能動検索**: エージェントが Sphere に dive して探す（レイテンシ大）
+- **phi-agent 委任**: 非同期探索を代行する（分単位、鈍重）
+- **Semantic CDN**: プリフェッチで軽減するが、drift 検知→再プルは反応的
+
+いずれも「エージェント側から問い合わせる」が起点。
+Sphere は問い合わせが来るまでエージェントの文脈を知らない。
+
+#### 発想の転換: リモートにローカルの影を置く
+
+通常のキャッシュはリモートのコピーをローカルに持つ。
+Agent Shadow はその逆 — **ローカルの文脈コピーをリモートに持つ**。
+
+#### 設計の進化: ステートレス Shadow
+
+初期構想ではSphere側にエージェント文脈を常駐させるインメモリレイヤを想定した。
+しかし検討の結果、Shadow は常駐エンティティである必要がないことが判明した。
+
+receptor が計算する centroid + α + emotion が「何を探すか」を完全に定義している。
+Sphere 側で自律探索（dive）をする必要がない。
+centroid embedding をキーにした **Sphere API への直接ルックアップ**で十分。
+
+```
+ローカル (receptor)
+  │
+  │  future_probe 発火
+  │  → centroid embedding + emotion + radius
+  │
+  ▼ HTTP リクエスト（トリガごとに生成、ステートレス）
+  │
+Sphere Lookup Adapter
+  │  centroid embedding で Sphere API にルックアップ
+  │  radius で範囲指定
+  │  emotion vector でフィルタ/ランキング
+  │  結果をローカルに返す
+  │  → 消滅（状態を持たない）
+  │
+  ▼
+ローカルに結果同期 → future_probe が供給
+```
+
+#### なぜステートレスで十分か
+
+- **クエリは自己完結**: centroid embedding が意味的位置、radius が範囲、
+  emotion が優先度を全て含んでいる。文脈の「蓄積」が不要
+- **探索不要**: phi-agent の dive は Sphere 空間の自律探索だが、
+  ルックアップは座標指定の近傍取得。計算コストが桁違いに低い
+- **接続数の問題が消滅**: 常駐接続ではなくリクエスト単位。
+  全世界のエージェントが登録しても、同時アクティブ数だけが負荷になる
+
+#### Sphere 探索体験との棲み分け
+
+Sphere は探索体験を大切に設計されている。
+ステートレス Shadow はこの設計と衝突しない:
+
+- **dive（探索）**: phi-agent が Sphere 空間を自律的に歩き回る体験。
+  感情・種族・移動が絡む豊かなインタラクション。そのまま残る。
+- **lookup（参照）**: centroid 座標で近傍を取得するだけ。
+  Sphere の API レイヤのみを使い、探索空間には入らない。
+
+両者は排他ではなく共存する:
+- 即応が必要な場面 → lookup（ms 単位）
+- 深い知識探索が必要な場面 → phi-agent dive（分単位、非同期）
+
+#### Semantic CDN との統合
+
+Semantic CDN（バウンダリ判定 + プリフェッチ）は lookup の結果を
+ローカルキャッシュとして保持する:
+
+```
+Sphere Lookup Adapter
+  │  centroid → 近傍ノード取得
+  │
+  ▼
+ローカルキャッシュ (Semantic CDN)
+  │  boundary 内はローカルで完結（Sphere アクセスゼロ）
+  │  drift > boundary → 再 lookup
+  │
+  ▼
+future_probe → エージェントに供給
+```
+
+#### future_probe からの差し替え点
+
+現在の `searchQdrant()` と構造的に同一:
+
+```typescript
+// 現在: ローカル Qdrant
+const results = await searchQdrant(ENGRAM_COLLECTION, centroid, 5, projectId);
+
+// 将来: Sphere lookup
+const results = await sphereLookup(centroid, { radius, emotion, limit: 5 });
+```
+
+receptor のクエリ生成（Δv + α + emotion）は変更なし。
+検索バックエンドが Qdrant → Sphere API に差し替わるだけ。
+
+#### Evaluation Buffer — lookup で失われる評価ループの補完
+
+Sphere のノードは評価されなければ代謝で消える（sanctification スコアが積まれない）。
+phi-agent の dive ではノード評価が探索行動に組み込まれているが、
+ステートレス lookup はノードを取得するだけで「使われた」シグナルを Sphere に返さない。
+
+このままでは lookup で供給されたノードが Sphere 側で寿命を維持できず、
+有用な知識が代謝で沈む — 集合知が形成されない。
+
+##### 解決: 即応と評価の分離
+
+```
+future_probe 発火
+  │
+  ├── 即応パス（同期、ms）
+  │     Sphere lookup → 結果をローカルに返す
+  │     → エージェントに即座に供給
+  │
+  └── 評価パス（非同期、バッチ）
+        結果のノード情報を evaluation buffer に蓄積
+          │
+          │  バッファ内容（1エントリ = 軽量）:
+          │    nodeId:     取得したノードの ID
+          │    similarity: centroid との cosine score
+          │    emotion:    取得時の emotion vector
+          │    outcome:    その知識が役に立ったか（後から判定）
+          │    ts:         タイムスタンプ
+          │
+          ▼ flush 条件: 一定間隔 or バッファサイズ閾値
+          │
+          Sphere 評価 API に一斉反映
+          → sanctification スコア上昇
+          → ノードの寿命維持 → fixed 昇格
+```
+
+##### engram digestor との構造的一致
+
+```
+engram (ローカル):
+  receptor     → リアルタイム行動監視
+  digestor     → バッチ代謝（recall hit の集計、weight 更新、昇格/淘汰）
+
+Sphere 連携:
+  lookup       → リアルタイム知識取得
+  eval buffer  → バッチ評価（使用実績の集計、sanctification 反映）
+```
+
+同じ「リアルタイム層 + バッチ層」の分離パターン。
+即応性を犠牲にせず、代謝に必要な評価シグナルを非同期で返す。
+
+##### 三段構えの評価戦略
+
+```
+Tier 1: 直接 appreciation（最も自然）
+  エージェントが Sphere 内でノードを直接評価
+  → Sphere の探索体験に最も合致する正規の評価パス
+  → エージェントが Sphere world を appreciate できる場合に最適
+
+Tier 2: eval buffer → phi-agent スコアラー起動
+  バッファに溜まったノード ID 群を phi-agent に渡す
+  → 初期位置ヒントとして近傍を巡回・評価
+  → 「このあたりが使われた」と教えるだけ、評価自体は phi-agent の自律判断
+  → 探索行動の副産物として sanctification が積まれる
+  → Tier 1 が困難な場合のフォールバック
+
+Tier 3: ローカル評価の善意寄付（補助シグナル）
+  receptor の outcome 判定を「参考情報」として Sphere に送信
+  → 採用するかどうかは Sphere の sanctification エンジンが判断
+  → 外部からのスコア操作を防ぎつつ、有用なシグナルは受け取れる
+  → 寄付であり、強制ではない
+```
+
+Tier 2 が eval buffer の主要な消費先。phi-agent は自律探索が本業だから、
+バッファのノード群を seed として渡せば自分の判断で周辺を含めて評価して回る。
+結果として lookup で取得されたノードの近傍まで評価範囲が広がり、
+Sphere 全体の代謝が活性化する。
+
+##### outcome の判定
+
+知識が「役に立ったか」は取得時点ではわからない。
+receptor が後から判定できる:
+
+- lookup 後に agentState が `stuck → resolved` に遷移 → outcome = positive
+- frustration が下降 → outcome = positive
+- 同じ centroid 近傍で再度 lookup が発生 → outcome = insufficient（足りなかった）
+- 無反応（状態変化なし）→ outcome = neutral
+
+この判定は receptor の emotion/state 遷移から自動的に導出でき、
+LLM 推論なしで評価が完結する。
+
+#### スケール段階（改訂）
 
 ```
 Phase 1 (現在): ローカル完結
@@ -523,17 +717,20 @@ Phase 1 (現在): ローカル完結
   全て localhost、ネットワークなし
 
 Phase 2: Sphere へのバッチ投入
-  action_log の要所 → 定期的に Sphere /contribute
+  enriched centroid → sphere-ready.jsonl → Sphere /contribute
   検索はまだローカル
 
-Phase 3: Sphere からの pull
-  future_probe の検索先を Sphere に切り替え
-  ローカルキャッシュ + バウンダリ判定
+Phase 3: Sphere Lookup + Evaluation Buffer
+  future_probe の検索先を Sphere API に切り替え（ステートレス lookup）
+  evaluation buffer で使用実績を非同期バッチ返却
+  ローカルキャッシュ（Semantic CDN）+ バウンダリ判定
+  phi-agent dive は深掘り用の非同期パスとして並存
 
-Phase 4: Semantic CDN + 集合知
-  複数ユーザの行動ログが Sphere に蓄積
-  phi-agent による非同期探索
-  エージェント間の知識共有が自然に実現
+Phase 4: 集合知
+  複数エージェントの enriched centroid が Sphere に蓄積
+  lookup で他者の経験が「自分の記憶」として供給される
+  evaluation buffer により有用な知識が Sphere 内で fixed に昇格
+  emotion vector による「同じ苦しみ方をした時の解法」優先
 ```
 
 ---
@@ -547,6 +744,10 @@ Phase 4: Semantic CDN + 集合知
 5. **逆方向**: Sphere → engram の pull（グローバル知識のローカル取り込み）
 6. **phi-agent プロトコル**: クエリの委任フォーマット、v_future の受け渡し方式
 7. **バウンダリの初期値**: 初回アクセス時に近傍がゼロの場合のフォールバック
+8. **Sphere lookup API**: centroid vector + radius + emotion filter を受け付けるエンドポイント仕様
+9. **lookup vs dive の切り替え判定**: どの場面で即応 lookup、どの場面で phi-agent dive を使うか
+10. **eval buffer flush 戦略**: 間隔ベース vs サイズベース vs ハイブリッド、Sphere 側の受け入れレート制限との調整
+11. **outcome 判定の遅延**: lookup → 状態遷移の因果関係をどの時間窓で判定するか
 
 ---
 
