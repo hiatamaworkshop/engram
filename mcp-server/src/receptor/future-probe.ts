@@ -24,8 +24,11 @@ const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
 const ACTION_LOG_COLLECTION = "action_log";
 const ENGRAM_COLLECTION = "engram";
 
-/** Half-window size. Total fetch = 2 × WINDOW_N. */
-const WINDOW_N = 3;
+/** Base half-window size. Actual size adapts by emotion intensity. */
+const WINDOW_N_BASE = 3;
+
+/** Max half-window expansion (base + MAX_EXPAND at intensity=1). */
+const WINDOW_N_MAX_EXPAND = 3;
 
 /** Recency decay half-life in entries (not time). */
 const DECAY_HALF_LIFE = 3;
@@ -201,8 +204,14 @@ function weightedCentroid(points: ActionLogPoint[]): number[] | null {
  * Returns null if no position can be determined.
  */
 export async function buildQuery(ctx: ProbeContext): Promise<ProbeQuery | null> {
+  // Adaptive window: high intensity → wider window → stronger centroid
+  //   intensity = max(frustration, entropy/3), clamped to [0, 1]
+  //   windowN:  3 (calm) → 6 (max distress)
+  const intensity = Math.min(1, Math.max(ctx.emotion.frustration, ctx.entropy / 3));
+  const windowN = WINDOW_N_BASE + Math.round(intensity * WINDOW_N_MAX_EXPAND);
+
   // Fetch recent entries from action_log
-  const points = await scrollRecentVectors(WINDOW_N * 2, ctx.projectId);
+  const points = await scrollRecentVectors(windowN * 2, ctx.projectId);
 
   if (points.length < 2) {
     // Cold start: not enough history for centroid
@@ -211,7 +220,7 @@ export async function buildQuery(ctx: ProbeContext): Promise<ProbeQuery | null> 
   }
 
   // Split into windows (points are newest-first)
-  const splitAt = Math.min(WINDOW_N, Math.floor(points.length / 2));
+  const splitAt = Math.min(windowN, Math.floor(points.length / 2));
   const windowNew = points.slice(0, splitAt);
   const windowOld = points.slice(splitAt);
 
