@@ -146,11 +146,14 @@ _regExec("path_suggest", {
 _regExec("action_logger", {
   type: "internal",
   handler: async (_method, context) => {
+    const meta = getProjectMeta();
     const snap: ActionSnapshot = {
       topPaths: context.topPaths,
       emotion: context.emotion,
       agentState: context.agentState,
+      pattern: commander.shortSnapshot().pattern,
       entropy: heatmap.entropy(),
+      techStack: meta?.techStack,
       projectId: process.env.ENGRAM_PROJECT_ID || undefined,
     };
     await recordAction(snap);

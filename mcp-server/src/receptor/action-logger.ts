@@ -4,16 +4,19 @@
 // Records behavioral keypoints (state transitions, entropy spikes)
 // as embedded vectors in Qdrant `action_log` collection.
 //
-// Runs as a passive receptor method (receptor-rules.json: action_logger).
-// Uses gateway /embed endpoint for MiniLM embedding,
-// then writes directly to Qdrant REST API.
+// Embed target: semantic label string (no paths, no raw numbers).
+//   Format: "[techStack] [workType], [transition], [entropyLabel]"
+//   e.g. "typescript editing, stuck to exploring, switching"
 //
-// Data structure per point:
-//   vector: MiniLM(action text summary) [384d]
-//   payload: { text, emotion, state, entropy, ts, projectId }
+// Payload (separate from embed): emotion, state, entropy, paths, ts.
+// This separation ensures vectors are Sphere-compatible (no project-
+// specific data baked into embeddings) while retaining full detail
+// in payload for local post-filtering.
+//
+// Design: RECEPTOR_ARCHITECTURE.md §12
 
 import { randomUUID } from "node:crypto";
-import type { EmotionVector, AgentState } from "./types.js";
+import type { EmotionVector, AgentState, PatternKind } from "./types.js";
 
 // ---- Config ----
 
@@ -27,6 +30,36 @@ const VECTOR_DIM = 384;
 let _prevState: AgentState | null = null;
 let _prevEntropy = 0;
 let _initialized = false;
+
+// ---- Label maps (AgentState/PatternKind → natural language for MiniLM) ----
+
+const STATE_LABELS: Record<AgentState, string> = {
+  deep_work: "deep work",
+  exploring: "exploring",
+  stuck: "stuck",
+  idle: "idle",
+  delegating: "delegating",
+};
+
+const PATTERN_LABELS: Record<PatternKind, string> = {
+  implementation: "editing",
+  exploration: "reading",
+  trial_error: "debugging",
+  wandering: "searching",
+  delegation: "delegating",
+  stagnation: "idle",
+};
+
+function entropyLabel(entropy: number): string {
+  if (entropy < 1.0) return "focused";
+  if (entropy < 2.0) return "switching";
+  return "scattered";
+}
+
+function buildTransition(prev: AgentState | null, current: AgentState): string {
+  if (!prev || prev === current) return STATE_LABELS[current];
+  return `${STATE_LABELS[prev]} to ${STATE_LABELS[current]}`;
+}
 
 // ---- Collection init ----
 
@@ -92,7 +125,9 @@ export interface ActionSnapshot {
   topPaths: string[];
   emotion: EmotionVector;
   agentState: AgentState;
+  pattern: PatternKind;
   entropy: number;
+  techStack?: string[];
   projectId?: string;
 }
 
@@ -120,39 +155,63 @@ export function isKeypoint(snap: ActionSnapshot): boolean {
 
 /**
  * Record an action keypoint to Qdrant.
- * Called by the action_logger executor (registered in index.ts).
+ *
+ * Embed target (search key): semantic labels only — no paths, no numbers.
+ *   "[techStack] [workType], [transition], [entropyLabel]"
+ * Payload (record): full detail for post-filtering.
  */
 export async function recordAction(snap: ActionSnapshot): Promise<void> {
-  // Update tracking state
+  // Update tracking state (before early return)
+  const prev = _prevState;
   const wasKeypoint = isKeypoint(snap);
   _prevState = snap.agentState;
   _prevEntropy = snap.entropy;
 
   if (!wasKeypoint) return;
 
-  // Build action text summary for embedding
-  const pathParts = snap.topPaths.slice(0, 5).map(p => {
-    const segs = p.split("/");
-    return segs.slice(-2).join("/");
-  });
-  const text = `${snap.agentState} ${pathParts.join(", ")} entropy=${snap.entropy.toFixed(1)}`;
+  // Build semantic label for embedding (Sphere-compatible, no paths)
+  const parts: string[] = [];
+
+  // techStack first — highest vector discrimination
+  if (snap.techStack && snap.techStack.length > 0) {
+    parts.push(snap.techStack.join(" "));
+  }
+
+  // workType from pattern
+  parts.push(PATTERN_LABELS[snap.pattern]);
+
+  // State transition
+  const transition = buildTransition(prev, snap.agentState);
+  parts.push(transition);
+
+  // Entropy label
+  parts.push(entropyLabel(snap.entropy));
+
+  const embedText = parts.join(", ");
 
   // Ensure collection exists
   await ensureCollection();
 
   // Embed
-  const vector = await embed(text);
+  const vector = await embed(embedText);
   if (!vector) {
     console.error("[action-logger] embedding failed, skipping");
     return;
   }
 
-  // Upsert to Qdrant
+  // Payload: full detail for local post-filtering (paths, emotion, etc.)
+  const pathParts = snap.topPaths.slice(0, 5).map(p => {
+    const segs = p.split("/");
+    return segs.slice(-2).join("/");
+  });
+
   const id = randomUUID();
   const payload = {
-    text,
+    text: embedText,
+    paths: pathParts,
     emotion: snap.emotion,
     state: snap.agentState,
+    pattern: snap.pattern,
     entropy: snap.entropy,
     ts: Date.now(),
     projectId: snap.projectId || "unknown",
@@ -165,7 +224,7 @@ export async function recordAction(snap: ActionSnapshot): Promise<void> {
       body: JSON.stringify({ points: [{ id, vector, payload }] }),
     });
     if (res.ok) {
-      console.error(`[action-logger] recorded: ${snap.agentState} entropy=${snap.entropy.toFixed(2)}`);
+      console.error(`[action-logger] recorded: ${embedText}`);
     }
   } catch (err) {
     console.error(`[action-logger] upsert error:`, err);
