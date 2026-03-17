@@ -1140,6 +1140,29 @@ engram_watch stop 時:
 | `sphere-shaper.ts` | Persona を PersonaPayload に成型 + sphere-ready.jsonl への書き出し |
 | `index.ts` | captureSnapshot をシグナル発火時に呼び出し、watch stop で finalize → export |
 
+#### action_log のベクトル化作法 (2026-03-17)
+
+action_log に記録するベクトルは **検索キーと記録を分離** する設計:
+
+- **embed 対象（検索キー）**: セマンティックラベルのみ。パス名・数値なし
+- **payload（記録）**: paths, emotion 生値, entropy, state 等のフルデータ
+
+```
+embed: "typescript editing, stuck to exploring, switching"
+       [techStack] [workType], [stateTransition], [entropyLabel]
+```
+
+語順は弁別力順。MiniLM の attention は先頭に強いため:
+1. **techStack** — 語彙が広く最も分散する (`typescript` vs `docker` vs `python`)
+2. **workType** — pattern から変換 (`editing`, `reading`, `debugging`, ...)
+3. **stateTransition** — 遷移パターン (`stuck to exploring`, `deep work`, ...)
+4. **entropyLabel** — 3段階 (`focused` / `switching` / `scattered`)
+
+**設計判断**:
+- パス名を embed に含めない → Sphere 上の cross-project cosine 比較が汚染されない
+- emotion は embed に含めない → payload の生値で post-filter する（embed と二重に使うと感情が支配的になる）
+- 数値は入れない → MiniLM は数値の大小を理解しない
+
 #### sphere-shaper の責務範囲
 
 sphere-shaper は **engram → Sphere の唯一の出口**。受け付けるデータは2種類のみ:
