@@ -5,7 +5,7 @@ import { handleIngest } from "./handlers/ingest.js";
 import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
-import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats } from "./upper-layer/index.js";
+import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats, embedForExternal } from "./upper-layer/index.js";
 import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject } from "./digestor.js";
 import { handleMcpRequest } from "./mcp-endpoint.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
@@ -74,6 +74,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, result.status === "accepted" ? 202 : 422, result);
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // POST /embed — raw embedding for external callers (receptor action_logger)
+  if (method === "POST" && url === "/embed") {
+    try {
+      const body = (await readBody(req)) as { text: string };
+      if (!body.text) {
+        sendJson(res, 400, { error: "text is required" });
+        return;
+      }
+      const vector = await embedForExternal(body.text);
+      sendJson(res, 200, { vector });
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
     }
     return;
   }
@@ -189,6 +205,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       endpoints: {
         "POST /recall": "Search for relevant knowledge (query or entryId)",
         "POST /ingest": "Submit capsuleSeeds",
+        "POST /embed": "Raw text embedding (384d vector)",
         "POST /feedback": "Submit weight signal (outdated, incorrect, superseded, merged)",
         "POST /activate": "Add project to Digestor scope",
         "POST /deactivate": "Remove project from Digestor scope",

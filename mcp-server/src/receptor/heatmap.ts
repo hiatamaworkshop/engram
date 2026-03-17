@@ -76,6 +76,22 @@ export class PathHeatmap {
     return this._totalHits;
   }
 
+  /** Shannon entropy of file access distribution.
+   *  Low = focused (agent knows where to look).
+   *  High = dispersed (exploring or lost). */
+  entropy(topN = 20): number {
+    const leaves = this.topPaths(topN);
+    if (leaves.length === 0) return 0;
+    const total = leaves.reduce((s, l) => s + l.count, 0);
+    if (total === 0) return 0;
+    let h = 0;
+    for (const { count } of leaves) {
+      const p = count / total;
+      if (p > 0) h -= p * Math.log2(p);
+    }
+    return h;
+  }
+
   /** Reset (for testing). */
   clear(): void {
     this.root = { count: 0, children: new Map() };

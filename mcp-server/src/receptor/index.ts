@@ -71,6 +71,7 @@ export {
 import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
+import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -114,6 +115,23 @@ _regExec("path_suggest", {
       output: method.action.output as OutputConfig | undefined,
     });
     console.error(`[receptor] path_suggest: ${top.length} paths`);
+  },
+});
+
+// ---- Internal executor: action_logger ----
+// Records behavioral keypoints (state transitions, entropy spikes) to Qdrant action_log.
+
+_regExec("action_logger", {
+  type: "internal",
+  handler: async (method, context) => {
+    const snap: ActionSnapshot = {
+      topPaths: context.topPaths,
+      emotion: context.emotion,
+      agentState: context.agentState,
+      entropy: heatmap.entropy(),
+      projectId: process.env.ENGRAM_PROJECT_ID || undefined,
+    };
+    await recordAction(snap);
   },
 });
 
@@ -166,6 +184,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     accumulator.clear();
     resetHoldState();
     clearSubsystem();
+    clearActionLogger();
     _lastHeatmapFlush = 0;
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }

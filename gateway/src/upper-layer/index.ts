@@ -327,6 +327,12 @@ export async function applyFeedback(
   return { status: "applied", entryId, signal, newWeight, summary: point.payload.summary };
 }
 
+// ---- Embedding API (for external callers like receptor) ----
+
+export async function embedForExternal(text: string): Promise<number[]> {
+  return embedText(text);
+}
+
 // ---- Stats / Health ----
 
 export async function checkUpperLayerHealth(): Promise<boolean> {

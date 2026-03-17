@@ -125,6 +125,21 @@
       "action": {
         "message": "confidence high — good moment to engram_push current findings"
       }
+    },
+    {
+      "id": "action_logger",
+      "type": "observation",
+      "mode": "background",
+      "trigger": {
+        "signals": ["*"],
+        "states": ["stuck", "exploring", "deep_work", "idle"],
+        "sensitivity": 0.1,
+        "frequency": "high"
+      },
+      "action": {
+        "tool": "action_logger",
+        "output": { "targets": ["log"], "format": "json" }
+      }
     }
   ]
 }

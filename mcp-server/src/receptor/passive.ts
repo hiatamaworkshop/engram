@@ -216,6 +216,7 @@ function blendReceptor(methodId: string, signalEmotion: EmotionVector, now: numb
 // ---- Scoring ----
 
 function signalMatch(trigger: MethodTrigger, signalKind: string): number {
+  if (trigger.signals.includes("*")) return 1.0; // wildcard — match all signals
   return trigger.signals.includes(signalKind) ? 1.0 : 0.0;
 }
 

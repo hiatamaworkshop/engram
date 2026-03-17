@@ -486,58 +486,107 @@ receptor (sensor) → emotion vector (middleware) → consumer
 
 ---
 
-## 実装メモ (次回着手)
+## 実装設計 (確定)
 
-### hotload.ts の位置づけ
+### 設計転換: hotload.ts は不要
 
-passive.ts と並列する**もう一つの解釈レイヤ**。
-発火後の配信（hotmemo, file sink 等）は既存配線に任せる。
+当初は passive.ts と並列する別 listener を想定していたが、
+議論の結果 **passive receptor の既存配線にメソッドを追加するだけ** で全て実現できることが判明。
 
 ```
 FireSignal[] (B neuron 出力)
        │
-       ├── passive.ts (異常検知 → method scoring → dispatch)
-       └── hotload.ts (未来予測 → 近傍探索 → subsystem FIFO)
+       ▼
+  passive.ts (既存、変更なし)
+       │  receptor-rules.json のメソッドをスコアリング → dispatch
+       │
+       ├── engram_probe       (既存: 知識検索)
+       ├── mycelium_filter    (既存: サブシステム連携)
+       ├── frustration_alert  (既存: 通知)
+       ├── action_logger      ★新規: 行動ログを Qdrant に記録
+       └── future_probe       ★新規: Δv + α で近傍探索 → FIFO
 ```
+
+新しい listener も新しいモジュールも不要。receptor-rules.json にメソッド定義を追加し、
+executor を registry に登録するだけ。既存の passive.ts のスコアリング → dispatch がそのまま動く。
+
+### メソッド定義
+
+```json
+{
+  "id": "action_logger",
+  "type": "observation",
+  "mode": "background",
+  "trigger": {
+    "signals": ["*"],
+    "sensitivity": 0.1,
+    "frequency": "high"
+  },
+  "action": {
+    "tool": "action_logger",
+    "output": { "targets": ["file", "log"], "format": "json" }
+  }
+}
+```
+
+```json
+{
+  "id": "future_probe",
+  "type": "knowledge_search",
+  "mode": "background",
+  "trigger": {
+    "signals": ["frustration_spike", "uncertainty_sustained"],
+    "states": ["exploring", "stuck"],
+    "sensitivity": 0.5,
+    "frequency": "medium"
+  },
+  "action": {
+    "tool": "future_probe",
+    "output": { "targets": ["subsystem", "file", "log"], "format": "summary", "maxLength": 300 }
+  }
+}
+```
+
+- `action_logger`: 感度 0.1 / frequency high — 広く受容し淡々と記録
+- `future_probe`: stuck 系シグナルのみ反応 — 予測結果を FIFO に流す
 
 ### 実装タスク
 
 1. **heatmap.ts に `entropy()` メソッド追加**
    - topPaths の count 分布から Shannon entropy を算出
-   - 1 メソッド、数行
+   - 1 メソッド、数行、依存なし
 
-2. **action_log コレクション**
-   - engram の既存 Qdrant に新規コレクション作成
-   - 行動テキスト embedding [384d] + 感情 payload
-   - 要所（state 遷移点、entropy 急変）のみ記録
+2. **action_logger executor (index.ts に内部 executor 登録)**
+   - 行動テキスト要約を生成（commander snapshot + heatmap topPaths）
+   - 感情 payload を付与（emotion vector, state, entropy）
+   - Qdrant `action_log` コレクションに embedding + payload として保存
+   - 要所判定: state 遷移点、entropy 急変のみ記録（全イベントではない）
 
-3. **hotload.ts 本体**
-   - `_listeners.push(onHotloadCycle)` で receptor に接続
-   - 現在地 embedding の追跡（v_prev, v_now 保持）
+3. **future_probe executor (index.ts に内部 executor 登録)**
+   - action_log コレクションから v_prev, v_now を取得
    - Δv 計算 + α 調整（entropy, emotion）
-   - engram_pull を executor 経由で近傍探索
-   - 結果を subsystem FIFO に置く
+   - v_future で engram_pull / action_log 近傍探索
+   - 結果を output-router 経由で subsystem FIFO に流す
 
-4. **gate 制御**
-   - deep_work / flow → 抑制（A gate と同じ基準）
-   - stuck 接近 / exploring 長期化 → 供給
-   - 新しい判断基準は不要、receptor の既存ロジックを流用
+4. **receptor-rules.json にメソッド定義追加**
+   - action_logger + future_probe の 2 件
 
 ### 依存関係
 
 ```
-heatmap.ts (entropy 追加) → 依存なし、先にやる
-action_log コレクション   → gateway の Qdrant 初期化に追加
-hotload.ts               → heatmap, action_log, executor registry に依存
-index.ts                 → _listeners に hotload を追加（1行）
+heatmap.ts (entropy)       → 依存なし、先にやる
+action_logger executor     → heatmap (entropy), Qdrant (action_log コレクション)
+future_probe executor      → action_logger (保存済みログ), engram_pull
+receptor-rules.json        → メソッド定義追加のみ
 ```
 
 ### やらないこと（スコープ外）
 
-- 外部 DB へのフェッチ（Step 2 以降）
-- バウンダリ判定 / プリフェッチ（Semantic CDN 層、後回し）
+- 外部 DB へのフェッチ（Semantic CDN 層、後回し）
+- バウンダリ判定 / プリフェッチ（後回し）
 - mycelium 連携（クラスタ圧縮、後回し）
-- 発火後の配信経路変更（既存配線で十分）
+- passive.ts の変更（一切不要）
+- 新しい listener / 新しいモジュール（不要）
 
 ---
 
