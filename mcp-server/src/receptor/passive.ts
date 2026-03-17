@@ -250,15 +250,14 @@ function scoreMethod(method: MethodDef, signal: FireSignal): number {
  * Multiple methods can fire simultaneously (no argmax).
  */
 function evaluate(signals: FireSignal[]): ScoredMethod[] {
-  // A gate: flow_active → suppress all
-  if (signals.some(s => s.kind === "flow_active")) {
-    return [];
-  }
+  const flowActive = signals.some(s => s.kind === "flow_active");
 
   _evalEmotions.clear();
   const results: ScoredMethod[] = [];
 
   for (const method of methods) {
+    // A gate: flow_active → suppress all except observation methods
+    if (flowActive && method.type !== "observation") continue;
     // Best score across all signals for this method
     let bestScore = 0;
     let bestEmotion: EmotionVector | undefined;
