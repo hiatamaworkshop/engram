@@ -486,6 +486,61 @@ receptor (sensor) → emotion vector (middleware) → consumer
 
 ---
 
+## 実装メモ (次回着手)
+
+### hotload.ts の位置づけ
+
+passive.ts と並列する**もう一つの解釈レイヤ**。
+発火後の配信（hotmemo, file sink 等）は既存配線に任せる。
+
+```
+FireSignal[] (B neuron 出力)
+       │
+       ├── passive.ts (異常検知 → method scoring → dispatch)
+       └── hotload.ts (未来予測 → 近傍探索 → subsystem FIFO)
+```
+
+### 実装タスク
+
+1. **heatmap.ts に `entropy()` メソッド追加**
+   - topPaths の count 分布から Shannon entropy を算出
+   - 1 メソッド、数行
+
+2. **action_log コレクション**
+   - engram の既存 Qdrant に新規コレクション作成
+   - 行動テキスト embedding [384d] + 感情 payload
+   - 要所（state 遷移点、entropy 急変）のみ記録
+
+3. **hotload.ts 本体**
+   - `_listeners.push(onHotloadCycle)` で receptor に接続
+   - 現在地 embedding の追跡（v_prev, v_now 保持）
+   - Δv 計算 + α 調整（entropy, emotion）
+   - engram_pull を executor 経由で近傍探索
+   - 結果を subsystem FIFO に置く
+
+4. **gate 制御**
+   - deep_work / flow → 抑制（A gate と同じ基準）
+   - stuck 接近 / exploring 長期化 → 供給
+   - 新しい判断基準は不要、receptor の既存ロジックを流用
+
+### 依存関係
+
+```
+heatmap.ts (entropy 追加) → 依存なし、先にやる
+action_log コレクション   → gateway の Qdrant 初期化に追加
+hotload.ts               → heatmap, action_log, executor registry に依存
+index.ts                 → _listeners に hotload を追加（1行）
+```
+
+### やらないこと（スコープ外）
+
+- 外部 DB へのフェッチ（Step 2 以降）
+- バウンダリ判定 / プリフェッチ（Semantic CDN 層、後回し）
+- mycelium 連携（クラスタ圧縮、後回し）
+- 発火後の配信経路変更（既存配線で十分）
+
+---
+
 *パッシブレセプタが「異常を検知して反応する免疫系」なら、
 ホットロードは「必要な栄養を予測して供給する循環系」。
 Semantic CDN はその配送インフラ。
