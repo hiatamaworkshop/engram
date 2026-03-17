@@ -140,6 +140,21 @@
         "tool": "action_logger",
         "output": { "targets": ["log"], "format": "json" }
       }
+    },
+    {
+      "id": "future_probe",
+      "type": "knowledge_search",
+      "mode": "background",
+      "trigger": {
+        "signals": ["frustration_spike", "uncertainty_sustained", "hunger_spike"],
+        "states": ["exploring", "stuck"],
+        "sensitivity": 0.5,
+        "frequency": "medium"
+      },
+      "action": {
+        "tool": "future_probe",
+        "output": { "targets": ["subsystem", "file", "log"], "format": "summary", "maxLength": 300 }
+      }
     }
   ]
 }

@@ -72,6 +72,7 @@ import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
+import { buildQuery, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -123,7 +124,7 @@ _regExec("path_suggest", {
 
 _regExec("action_logger", {
   type: "internal",
-  handler: async (method, context) => {
+  handler: async (_method, context) => {
     const snap: ActionSnapshot = {
       topPaths: context.topPaths,
       emotion: context.emotion,
@@ -132,6 +133,38 @@ _regExec("action_logger", {
       projectId: process.env.ENGRAM_PROJECT_ID || undefined,
     };
     await recordAction(snap);
+  },
+});
+
+// ---- Internal executor: future_probe ----
+// Predictive knowledge supply — computes Δv, projects future position, searches.
+
+_regExec("future_probe", {
+  type: "internal",
+  handler: async (method, context) => {
+    const probeCtx: ProbeContext = {
+      topPaths: context.topPaths,
+      emotion: context.emotion,
+      agentState: context.agentState,
+      entropy: heatmap.entropy(),
+      projectId: process.env.ENGRAM_PROJECT_ID || undefined,
+    };
+
+    const query = await buildQuery(probeCtx);
+    if (!query) return; // insufficient history
+
+    const results = await executeSearch(query, probeCtx.projectId);
+    if (results.length === 0) return;
+
+    const raw = formatResults(results);
+    _routeOut({
+      methodId: method.id,
+      toolName: "future_probe",
+      agentState: context.agentState,
+      raw,
+      output: method.action.output as OutputConfig | undefined,
+    });
+    console.error(`[receptor] future_probe: ${results.length} predictions (α=${query.alpha.toFixed(2)})`);
   },
 });
 
@@ -185,6 +218,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     resetHoldState();
     clearSubsystem();
     clearActionLogger();
+    clearFutureProbe();
     _lastHeatmapFlush = 0;
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
