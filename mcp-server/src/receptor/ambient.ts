@@ -94,6 +94,21 @@ export class AmbientEstimator {
     this.silenced = true;
   }
 
+  /**
+   * Apply prior persona data to seed initial state.
+   * Called after clear() during watch start when a prior persona is available.
+   * Sets EMA baselines and field adjustments from the persona's adapted thresholds.
+   */
+  applyPrior(
+    emaSeeds: Partial<Record<EmotionAxis, number>>,
+    fieldSeeds: Partial<Record<EmotionAxis, number>>,
+  ): void {
+    for (const axis of AXES) {
+      if (emaSeeds[axis] !== undefined) this.ema[axis] = emaSeeds[axis];
+      if (fieldSeeds[axis] !== undefined) this.fieldAdjustment[axis] = fieldSeeds[axis];
+    }
+  }
+
   formatThresholds(): string {
     return AXES
       .map(a => `${a}: base=${this.ema[a].toFixed(2)} thr=${this.effectiveThreshold(a).toFixed(2)}`)

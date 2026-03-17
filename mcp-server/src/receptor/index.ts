@@ -30,6 +30,7 @@ let _eventCount = 0;
 let _lastEmotion: EmotionVector = { ...ZERO_EMOTION };
 let _lastSignals: FireSignal[] = [];
 let _lastEvent: NormalizedEvent | undefined;
+let _priorResult: PriorResult | null = null;
 
 const heatmap = new PathHeatmap();
 const commander = new Commander();
@@ -79,6 +80,7 @@ import {
   finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
 } from "./persona-snapshot.js";
+import { loadPrior, type PriorResult } from "./persona-prior.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -254,7 +256,14 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     clearFutureProbe();
     clearPersonaState();
     _lastHeatmapFlush = 0;
-    return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
+
+    // Load prior persona — seed ambient baselines from previous session
+    _priorResult = loadPrior(ambient);
+    const priorMsg = _priorResult.applied
+      ? ` Prior loaded: ${_priorResult.dominantAxis}/${_priorResult.dominantState}.`
+      : "";
+
+    return { watching: true, message: `Receptor watch started. Monitoring agent behavior.${priorMsg}` };
   }
   if (!enabled && _watching) {
     // Final heatmap flush before stop
@@ -549,6 +558,12 @@ export function formatState(): string {
     lines.push("");
     lines.push(`Heatmap (${heatmap.totalHits} hits):`);
     lines.push(tree);
+  }
+
+  // ---- Prior persona ----
+  if (_priorResult?.applied) {
+    lines.push("");
+    lines.push(`Prior: ${_priorResult.dominantAxis}/${_priorResult.dominantState} (${_priorResult.snapshotCount} snaps)`);
   }
 
   if (ambient.isSilenced) {

@@ -964,7 +964,7 @@ npx tsx src/receptor/calibrate.ts [--dry-run] [--merge | --fresh]
 
 ## 12. Behavioral Prior — セッション横断の行動記憶
 
-> 2026-03-17 設計。未実装。
+> 2026-03-17 設計。Prior Loader 実装済み (2026-03-17)。
 
 ### 課題
 
@@ -1015,6 +1015,40 @@ ambient の学習結果（閾値適応）、Meta の field emission 履歴、
 prior[axis] = α × sessionEnd[axis] + (1 - α) × prior[axis]
 α = 0.3  // 保守的。10セッションで prior が安定
 ```
+
+#### Prior Loader — 実装済み (2026-03-17)
+
+`persona-prior.ts` が `sphere-ready.jsonl` から最新の `PersonaPayload` を読み、
+`setWatch(true)` 内で ambient の初期状態にシードする。
+
+```
+setWatch(true)
+  ├── clear all subsystems
+  ├── loadPrior(ambient)
+  │   ├── sphere-ready.jsonl を末尾から走査
+  │   ├── 最新の type:"persona" を取得（7日以内）
+  │   ├── ambient.applyPrior(meanEmotion, fieldAdjustment)
+  │   │   ├── EMA ← persona.emotionProfile.meanEmotion
+  │   │   └── fieldAdjustment ← persona.adaptedThresholds.fieldAdjustment
+  │   └── stderr: [persona-prior] loaded: dominant=flow state=deep_work snaps=5 age=2h
+  └── watching = true
+```
+
+**設計原則**:
+- prior は初期シードであり命令ではない。新しいイベントが蓄積すると EMA が自然に上書きする
+- 7日以上経過した persona は適用しない（環境が変化している可能性）
+- sphere-ready.jsonl が空、または persona がない場合は何もしない（ゼロスタート）
+- watch status に `Prior: flow/deep_work (5 snaps)` と表示される
+
+| ファイル | 責務 |
+|---------|------|
+| `persona-prior.ts` | sphere-ready.jsonl 読み取り + ambient へのシード |
+| `ambient.ts` | `applyPrior()` メソッド — EMA と fieldAdjustment を外部から注入 |
+| `index.ts` | `setWatch(true)` 内で `loadPrior()` 呼び出し + status 表示 |
+
+**将来**: Sphere がクラウド上に存在する場合、ローカルの sphere-ready.jsonl ではなく
+Sphere API から nearest persona を pull する。loadPrior のデータソースを差し替えるだけで、
+ambient への注入ロジックは同一。
 
 #### Sphere 層 — Persona System（種族の行動記憶）
 
@@ -1221,7 +1255,7 @@ persona は種族の集合的経験（遺伝子に刻まれた本能的傾向）
 
 - **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
 - **shell / http executor**: Service Loader に型定義のみ、handler 未実装
-- **Behavioral Prior ローカル層**: receptor-prior.json の保存/ロード機構（Persona Snapshot は実装済み、Prior ロードは未実装）
+- **Behavioral Prior EMA ブレンド**: prior の累積更新（`prior[axis] = α × sessionEnd + (1-α) × prior`）。現在は最新 persona を丸ごと使用
 - **Sphere 接続**: sphere-ready.jsonl → Sphere `/contribute` の HTTP 配線（シャローコピー / 単発検索 / phi-agent の3案）
 - **SpherePayload の capsule 変換**: 現在の SpherePayload を ExperienceCapsule 形式 (`schemaVersion:4, normalNodes:[...]`) に変換するロジック
 
