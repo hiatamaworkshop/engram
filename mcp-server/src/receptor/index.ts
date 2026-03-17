@@ -73,10 +73,10 @@ import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js"
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
-import { exportEnrichedCentroid, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";
+import { exportEnrichedCentroid, exportPersona, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";
 import {
   trackEvent as personaTrackEvent, captureSnapshot as personaCaptureSnapshot,
-  finalizeSession as personaFinalizeSession, exportPersona,
+  finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
 } from "./persona-snapshot.js";
 import type { ProjectMeta } from "./types.js";

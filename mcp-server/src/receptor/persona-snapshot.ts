@@ -10,8 +10,6 @@
 
 import type { EmotionVector, EmotionAxis, FireSignal, PatternKind, AgentState, ProjectMeta } from "./types.js";
 import type { AmbientEstimator } from "./ambient.js";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 // ---- Constants ----
 
@@ -177,25 +175,6 @@ export function finalizeSession(
   }
 
   return _buildPersona(elapsedMs, learnedDelta, projectMeta, actionSignature);
-}
-
-/**
- * Write persona to sphere-ready.jsonl.
- */
-export function exportPersona(persona: Persona): void {
-  const outputDir = path.join(
-    process.env.ENGRAM_DATA_DIR ?? (import.meta.dirname ? path.join(import.meta.dirname, "..") : "."),
-    "receptor-output",
-  );
-  const outputPath = path.join(outputDir, "sphere-ready.jsonl");
-
-  try {
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.appendFileSync(outputPath, JSON.stringify(persona) + "\n");
-    console.error(`[persona] exported to sphere-ready.jsonl (${_snapshots.length} snapshots aggregated)`);
-  } catch (err) {
-    console.error("[persona] export error:", err);
-  }
 }
 
 /** Clear all state (called on watch start). */

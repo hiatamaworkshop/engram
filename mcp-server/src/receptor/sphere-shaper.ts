@@ -17,6 +17,7 @@
 // individual Sphere endpoints — they only know the Facade URL.
 
 import type { EnrichedCentroid, LinkedKnowledge } from "./future-probe.js";
+import type { Persona } from "./persona-snapshot.js";
 import type { EmotionVector, ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -172,5 +173,68 @@ export function exportEnrichedCentroid(enriched: EnrichedCentroid): SpherePayloa
   }
   const payload = shapeForSphere(enriched);
   writeSpherePayload(payload);
+  return payload;
+}
+
+// ============================================================
+// Persona export — statistical fingerprint → sphere-ready.jsonl
+// ============================================================
+// Accepted data types: EnrichedCentroid, Persona.
+// Anything else is rejected. Attachments must conform to these formats.
+
+/** Persona payload wrapper for sphere-ready.jsonl. */
+export interface PersonaPayload {
+  type: "persona";
+  persona: Persona;
+  ts: number;
+  version: number;
+  techStack?: string[];
+  domain?: string[];
+}
+
+/**
+ * Shape a Persona for Sphere export.
+ * Persona is already anonymized by design (no paths, no projectId, only metrics).
+ * Attaches techStack/domain from ProjectMeta for routing.
+ */
+function shapePersonaForSphere(persona: Persona): PersonaPayload {
+  const payload: PersonaPayload = {
+    type: "persona",
+    persona,
+    ts: persona.ts,
+    version: SCHEMA_VERSION,
+  };
+
+  if (_projectMeta) {
+    if (_projectMeta.techStack.length > 0) payload.techStack = _projectMeta.techStack;
+    if (_projectMeta.domain.length > 0) payload.domain = _projectMeta.domain;
+  }
+
+  return payload;
+}
+
+/**
+ * Full pipeline: validate → shape → write.
+ * Persona must have ≥2 snapshots to be worth exporting.
+ */
+export function exportPersona(persona: Persona): PersonaPayload | null {
+  if (persona.sessionMeta.snapshotCount < 2) {
+    console.error("[sphere-shaper] persona skip: insufficient snapshots");
+    return null;
+  }
+
+  const payload = shapePersonaForSphere(persona);
+
+  try {
+    fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
+    fs.appendFileSync(SPHERE_OUTPUT_PATH, JSON.stringify(payload) + "\n");
+    console.error(
+      `[sphere-shaper] wrote persona: dominant=${persona.emotionProfile.dominantAxis} ` +
+      `snaps=${persona.sessionMeta.snapshotCount} events=${persona.sessionMeta.eventCount}`,
+    );
+  } catch (err) {
+    console.error("[sphere-shaper] persona write error:", err);
+  }
+
   return payload;
 }

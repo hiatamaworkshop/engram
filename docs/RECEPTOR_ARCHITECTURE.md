@@ -1109,6 +1109,71 @@ engram_watch stop 時:
 - ポジティブトリガの帰結: confidence/flow が持続したセッション = 「うまくいった状態」の
   スナップショットだけが種族に共有される。苦戦中の persona は流れない
 
+### Persona Snapshot — 実装済み (2026-03-17)
+
+#### データフロー
+
+```
+セッション中:
+  毎イベント → personaTrackEvent()
+    └── session-wide 蓄積: flowActiveEvents, confidenceSum, firingCounts, patternCounts, stateCounts
+
+  confidence_sustained / flow_active 発火時 → personaCaptureSnapshot()
+    └── リングバッファ (max 10): emotion, thresholds, fieldAdjustment, entropy
+
+セッション終了:
+  engram_watch stop
+    └── personaFinalizeSession()
+          ├── push gate: flowRatio > 0.3 AND confidenceAvg > 0.4 AND snapshots ≥ 2
+          ├── 不合格 → skip (stderr にログ)
+          └── 合格 → Persona オブジェクト生成
+                └── exportPersona() [sphere-shaper.ts]
+                      ├── PersonaPayload でラップ (type: "persona")
+                      ├── techStack/domain 付与 (ProjectMeta)
+                      └── sphere-ready.jsonl に append
+```
+
+#### ファイル構成
+
+| ファイル | 責務 |
+|---------|------|
+| `persona-snapshot.ts` | スナップショット蓄積 + session-wide 統計 + Persona オブジェクト生成。ファイル I/O なし |
+| `sphere-shaper.ts` | Persona を PersonaPayload に成型 + sphere-ready.jsonl への書き出し |
+| `index.ts` | trackEvent/captureSnapshot をイベントループに統合、watch stop で finalize → export |
+
+#### sphere-shaper の責務範囲
+
+sphere-shaper は **engram → Sphere の唯一の出口**。受け付けるデータは2種類のみ:
+
+| データ種別 | 関数 | 入力 | 出力 |
+|-----------|------|------|------|
+| EnrichedCentroid | `exportEnrichedCentroid()` | future_probe の予測結果 | `SpherePayload` |
+| Persona | `exportPersona()` | セッション終了時の統計的指紋 | `PersonaPayload` |
+
+それ以外のデータ形式は reject する。engram attachment が出力する場合も、
+この2種類の形式に沿わなければ sphere-ready.jsonl には到達しない。
+
+sphere-ready.jsonl の各行は `type` フィールドで識別可能:
+- centroid: `SpherePayload` (type フィールドなし — v2 互換)
+- persona: `PersonaPayload` (`type: "persona"`)
+
+#### Persona の内容
+
+| フィールド | 内容 |
+|-----------|------|
+| `emotionProfile` | meanEmotion (スナップショット群平均), variance (品質指標), dominantAxis, suppressionRate |
+| `adaptedThresholds` | mean (ambient 学習結果平均), fieldAdjustment (Meta C フィールド平均) |
+| `firingStats` | シグナル種別ごとの発火回数 + 平均強度 |
+| `patternDistribution` | 行動パターン (implementation/exploration/...) の出現比率 |
+| `stateDistribution` | エージェント状態 (deep_work/exploring/stuck/...) の滞在比率 |
+| `methodTypeWeights` | メソッドタイプ (knowledge_search/context_persist/...) の使用比率 |
+| `learnedDelta` | キャリブレーション補正値 |
+| `workContext` | techStack, domain (ProjectMeta), entropyAvg (作業集中度) |
+| `sessionMeta` | eventCount, elapsedMs, snapshotCount |
+
+emotionVariance が品質フィルタとして機能する — スナップショット間で安定した値は信頼度が高く、
+大きく振れた値は個体差としての信頼度が低い。受け取り側がブレンド時に重み付けに使える。
+
 ### 設計原則
 
 - **ローカル層は確実**: 自分の過去だから常に適用できる。receptor-learned.json の拡張
@@ -1136,8 +1201,9 @@ persona は種族の集合的経験（遺伝子に刻まれた本能的傾向）
 
 - **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
 - **shell / http executor**: Service Loader に型定義のみ、handler 未実装
-- **Behavioral Prior ローカル層**: receptor-prior.json の保存/ロード機構
-- **Behavioral Prior Sphere 層**: prior ノードの匿名化 + sphere-ready.jsonl への出力
+- **Behavioral Prior ローカル層**: receptor-prior.json の保存/ロード機構（Persona Snapshot は実装済み、Prior ロードは未実装）
+- **Sphere 接続**: sphere-ready.jsonl → Sphere `/contribute` の HTTP 配線（シャローコピー / 単発検索 / phi-agent の3案）
+- **SpherePayload の capsule 変換**: 現在の SpherePayload を ExperienceCapsule 形式 (`schemaVersion:4, normalNodes:[...]`) に変換するロジック
 
 ---
 
