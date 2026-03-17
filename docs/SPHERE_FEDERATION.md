@@ -160,6 +160,384 @@ Sphere (グローバル知識基盤)
 
 ---
 
+## Sphere 連携による予測的知識供給（Hotload Integration）
+
+### 到達点
+
+ローカルの行動ログ → 世界規模の知見取得へスケールする動線。
+Sphere は優れた代謝機能・スコアリングシステム・自動エージェント（phi-agent）を
+既に備えており、地盤は出来上がっている。
+
+### データフロー全体像
+
+```
+ローカル (engram + receptor)
+  │
+  │  action_logger: 行動キーポイントを記録
+  │  ↓
+  │  action_log (Qdrant, ローカル)
+  │  ↓
+  │  バッチ投入 (定期 or fixed 昇格時)
+  │
+  ▼
+Sphere (グローバル)
+  │
+  │  自動 embedding + 配置（Sphere 側で完結）
+  │  代謝 + スコアリング（sanctification エンジン）
+  │  複数ユーザの recall で品質が自然に向上
+  │
+  ▼
+フェッチトリガ (receptor future_probe)
+  │
+  │  receptor が Δv + entropy でクエリを生成
+  │  → Sphere へアクセス、データ取得
+  │  → ローカルキャッシュに展開
+  │  → 近傍内は Sphere アクセスなし
+  │  → shift 検知で再フェッチ
+  │
+  ▼
+エージェントに予測的知識供給
+```
+
+### 結合箇所（現在の実装からの差し替え点）
+
+| 機能 | 現在（ローカル完結） | 将来（Sphere 経由） | 変更箇所 |
+|------|---------------------|---------------------|----------|
+| ログ保存 | Qdrant action_log に直接 upsert | 匿名化レイヤ → Sphere `/contribute` に POST | action-logger.ts の upsert 先 |
+| 知識検索 | Qdrant engram + action_log を検索 | Sphere `/recall` or dive で検索 | future-probe.ts の searchQdrant |
+| embedding | gateway `/embed` (ローカル MiniLM) | Sphere 側で自動 embedding（ローカル embedding 送信不要） | 不要になる（Sphere が担当） |
+| クエリ生成 | **変更なし** | **変更なし** | Δv + α + emotion は receptor のネイティブ機能として残る |
+
+### 匿名化レイヤ（ローカル → Sphere の境界）
+
+ローカルでは全情報を持ち精密な予測を行う。
+Sphere にはパターンの統計的価値だけが上がる。
+
+```
+ローカル action_log（全情報）:
+  text: "stuck src/receptor/index.ts, heatmap.ts entropy=2.3"
+  vector: [384d MiniLM embedding]
+  emotion: { frustration: 0.72, hunger: 0.41, ... }
+  state: "stuck"
+  entropy: 2.3
+  projectId: "engram"
+  outcome: "resolved"
+
+        │
+        ▼  匿名化レイヤ（ローカルで実行）
+        │
+        │  除去: ファイルパス、projectId、具体的なテキスト
+        │  除去: ローカル embedding（Sphere が自前で生成するため不要）
+        │  保持: 感情ベクトル、状態、エントロピ、outcome
+        │  抽象化: テキストを行動パターンに変換
+        │
+
+Sphere 投入データ:
+  text: "stuck, high entropy, file editing pattern, resolved"
+  emotion: { frustration: 0.72, hunger: 0.41, ... }
+  state: "stuck"
+  entropy: 2.3
+  outcome: "resolved"
+  source: "engram-federation"
+  // embedding は Sphere 側で text から生成
+  // projectId, パス情報, ローカル embedding なし
+```
+
+#### 設計原則
+
+- **ローカル = 全情報、高解像度** — 個人の精密な予測に使う
+- **グローバル = 抽象パターン、低解像度** — 集合知の統計的価値に使う
+- **匿名化はローカルで完結** — Sphere は出自を知る必要がない
+- **embedding は送信しない** — Sphere が自前で生成する（ローカル embedding からのテキスト逆変換リスクを排除）
+
+#### 実装場所
+
+action-logger.ts の upsert を Sphere 向けに切り替える時に、
+変換関数 `anonymizeForSphere(actionLog) → SpherePayload` を挟むだけ。
+現在の設計で結合箇所は変わらない。
+
+**クエリ生成は receptor の付加価値**。Sphere の API では Δv や直交方向探索を
+表現できない。receptor が「向かっている先」を計算し、それを Sphere への
+検索クエリに変換する。この変換層が engram の独自価値。
+
+### phi-agent による非同期データ取得
+
+#### phi-agent とは
+
+Sphere 内を自律探索する軽量 AI エージェント。
+ollama + phi3:mini（ローカル LLM、CPU 推論可）で動作し、
+WebSocket 経由で Sphere に dive してノードを評価・移動する。
+
+核心は **Loadout（種族）** — エージェントの全人格を定義するパラメータ束。
+同じ Sphere、同じ LLM、同じノードに対して、Loadout が違えば全く違う探索行動を取る。
+
+#### 種族とその特性
+
+| 種族 | 探索スタイル | 重視するもの | 移動 |
+|------|-------------|-------------|------|
+| balanced | 均等探索 | Authority, Temporal | stepScale=1.0 |
+| scholar | 深掘り | Authority, Dense, TemporalLong | stepScale=0.7（慎重） |
+| scout | 広域 | TemporalShort, Sparse, Fuzzy | stepScale=1.5（大股） |
+| archivist | 安定志向 | TemporalLong, Settled, 低heat | stepScale=0.6（じっくり） |
+| hunter | 高heat狙い | heat, Tensile, frustration駆動 | stepScale=1.0 |
+| sniper | 精密一致 | keyword 20倍、hitRate重視 | stepScale=1.0 |
+| moth | heat に飛びつく | heat 2.0倍、keyword無視 | stepScale=1.3 |
+
+#### 4D feelings — receptor emotion vector との対応
+
+phi-agent は独自の 4D feelings を持つ:
+
+```
+phi-agent feelings:                    receptor emotion vector:
+  satisfaction (満足)    ←→    confidence
+  frustration  (焦り)    ←→    frustration
+  stamina      (体力)    ←→    fatigue (反転)
+  staleness    (飽き)    ←→    entropy (heatmap から算出)
+```
+
+同じ構造が Sphere 側とローカル側に存在する。
+phi-agent の feelings は **探索行動（camp/leap/scout）** を制御し、
+receptor の emotion は **知識供給（gate 開閉、Δv 方向）** を制御する。
+
+#### 種族割り当てによる方向性の自動解決
+
+receptor が Δv を計算してセマンティック方向を指定しなくても、
+種族の 16bit flag バイアスとスコアリング重みが方向性を担う。
+
+```
+receptor 側:
+  agentState + emotion → 適切な種族を選択
+
+  stuck       → hunter / sniper（解決策を狙い撃ち）
+  exploring   → scout / balanced（広域探索）
+  deep_work   → scholar / archivist（深掘り・安定知識）
+  高 entropy  → scout（広域で焦点を探す）
+  高 frustration → hunter（高 heat を追う）
+
+phi-agent 側:
+  種族の Loadout が自動的に:
+  - 何に注目するか（flagBias）
+  - 良いものの基準（qualityVector）
+  - いつ帰るか（returnWeights）
+  - どう移動するか（modeWeights × feelings）
+  を決定する
+```
+
+Δv はローカル予測として残すが、Sphere 経由では**二重の最適化**が効く:
+- receptor のセマンティック方向（v_future をクエリ/初期位置として提供）
+- 種族のスコアリングバイアス（Loadout が探索行動を制御）
+
+#### 連携フロー
+
+```
+receptor (engram 側)
+  │
+  │  1. action text + agentState + emotion から:
+  │     - クエリキーワード生成
+  │     - 適切な種族を選択
+  │     - (optional) v_future を初期位置ヒントとして付与
+  │
+  ▼
+phi-agent (Sphere 側)
+  │
+  │  2. 指定された種族の Loadout で Sphere に dive
+  │     - sense → FastGate picks target (0ms, LLM不要)
+  │     - focus → phi3:mini evaluates content (~25s)
+  │     - move → feelings が方向を決定
+  │     - 満足 or エネルギー枯渇で帰還
+  │
+  ▼
+結果返却
+  │
+  │  3. encounters (評価済みノード) + narrative を返却
+  │     - summary, tags, h/w/d scores
+  │     - 匿名化レイヤ不要（Sphere 内データは既にグローバル）
+  │
+  ▼
+receptor (engram 側)
+  │
+  │  4. 結果を subsystem FIFO に投入
+  │     - hotmemo / file sink 経由でエージェントに供給
+  │     - ローカルキャッシュとして保持
+  │
+  ▼
+エージェントに予測的知識供給
+```
+
+#### 非同期実行
+
+phi-agent はセッションごとに数分かかる（CPU 推論で ~25s/cycle × 5 cycles）。
+receptor の future_probe はリアルタイムを要求するため、
+phi-agent は**非同期パス**として位置づける:
+
+```
+future_probe 発火時:
+  ├── 同期パス: ローカル Qdrant で即座に検索（ms 単位）
+  │     → 即座に hotmemo に供給
+  │
+  └── 非同期パス: phi-agent にクエリ + 種族を送信
+        → phi-agent が Sphere を探索（分単位）
+        → 結果をローカルキャッシュに投入
+        → エージェントが次に同じ領域に来た時に利用可能
+```
+
+同期パスで即応し、非同期パスで深い知識を後から補充する。
+phi-agent の結果は action_log に記録され、次回の future_probe で
+ローカル検索のヒット率が向上する — 学習ループが閉じる。
+
+#### 種族の学習 (WeightDelta)
+
+phi-agent には世代間学習の仕組みがある:
+
+```
+eval-log.jsonl (種族ごとの評価履歴)
+  → SpeciesMemoryBias (hotNodeIds, tags)
+  → WeightDelta (flagBias, returnWeights, qualityVector の微調整)
+  → 次のセッションの FastGate に適用
+```
+
+`effective = base × (1 + δ)` で種族の遺伝子（Loadout）に
+環境適応（δ, ±30% 上限）が加わる。
+これは engram の代謝（recall で weight 上昇）と同じ原理 —
+使われたパターンが強化され、使われないパターンが減衰する。
+
+### セントロイド + engram fixed 結合による Sphere 投入データ成型
+
+行動ログを個別に Sphere に投入するとノイジーになる。
+セントロイド方式でクラスタの代表点に圧縮し、
+engram fixed ノードと結合して enriched データを生成する。
+
+#### データフロー
+
+```
+action_log（大量、ノイジー）
+  │
+  ▼ ウィンドウ内でクラスタリング
+  │  （セントロイド方式で代表点を抽出）
+  │
+セントロイド embedding（少数、パターンの要約）
+  │
+  ▼ engram コレクションに対して近傍検索
+  │  （engram の全ノードは既に 384d で Qdrant にいる → 追加コストゼロ）
+  │
+  │  Qdrant query:
+  │    vector: セントロイド embedding
+  │    filter: status="fixed" (代謝を生き延びた知識のみ)
+  │    score_threshold: 0.5 (無関係な fixed を混ぜない足切り)
+  │    limit: 3
+  │
+  ▼ 感情ベクトルでフィルタリング
+  │  セントロイドの avg_emotion と fixed 参照時の emotion の距離
+  │  → 状況一致度でランキング
+  │
+  ▼
+enriched セントロイド
+  │
+  │  {
+  │    pattern: "stuck→resolved in auth implementation",
+  │    centroid_embedding: [384d],
+  │    emotion_avg: { frustration: 0.6, ... },
+  │    entropy_range: [1.2, 2.8],
+  │    outcome: "resolved",
+  │    linked_knowledge: [
+  │      { summary: "JWT middleware CORS gotcha", similarity: 0.78 },
+  │      { summary: "Docker depends_on condition", similarity: 0.65 }
+  │    ]
+  │  }
+  │
+  ▼ 匿名化レイヤ（パス除去、projectId 除去）
+  │
+  ▼
+Sphere 投入
+```
+
+#### 設計の利点
+
+- **ノイズ除去**: 個別ログではなくセントロイド（パターンの要約）を投入
+- **知識との結合**: 行動パターンに「この時に役立った知識」が紐づく
+- **追加コストゼロ**: engram の既存 embedding をそのまま検索するだけ
+- **足切り可能**: similarity threshold + emotion 距離で無関係な結合を排除
+- **コード共有**: 検索ロジックは future_probe の searchQdrant と同じ構造
+- **疎結合**: セントロイドと fixed の結合は cosine similarity のみ。fixed がなければセントロイド単体で投入
+
+#### Sphere 側から見た価値
+
+単なる知識ノードではなく「この行動パターンの時にこの知識が役立った」という
+メタ情報が入ってくる。phi-agent の evaluate でもスコアリングしやすく、
+他のエージェントが同じパターンに接近した時に知識ごと供給できる。
+
+#### 粒度の目安
+
+1 セッション（数時間）で 3-5 セントロイド × 1-3 linked fixed = 10-15 データ点。
+Sphere への投入量として適切。
+
+### Semantic CDN としての Sphere
+
+バウンダリ判定 + プリフェッチにより、Sphere は Semantic CDN として機能する。
+
+```
+エージェント起動 / shift 検知
+  → Sphere から現在地の近傍 + α をプル (50 ポイント ≈ 100KB)
+  → ローカルキャッシュに展開
+  → boundary = max(results.distance)
+
+作業中 (近傍内)
+  → ローカルキャッシュのみで未来予測
+  → Sphere アクセスゼロ
+
+drift > boundary × 0.7
+  → プリフェッチ（バックグラウンドで再プル）
+
+drift > boundary
+  → キャッシュ入れ替え
+```
+
+従来の CDN がユーザーの地理的位置でコンテンツを配信するように、
+Semantic CDN はエージェントの意味的位置で知識を配信する。
+
+### 集合知の形成
+
+```
+エージェント A: stuck → resolved（認証系）
+  │  行動ログ + 感情 + 解法が Sphere に蓄積
+  │
+  ▼
+エージェント B: 認証系の作業に接近
+  │  移動ベクトルが A の過去記録に近傍一致
+  │  感情ベクトル（frustration 上昇中）で A の stuck 記録が優先
+  │
+  ▼
+  A の解法が B にホットロードされる
+  B は自分では経験していない解決策を「思い出す」
+```
+
+他者の経験を自分の記憶として想起する。
+感情ベクトルが付いているから、ただの検索ではない —
+「同じような苦しみ方をした時の解法」が優先される。
+
+### スケール段階
+
+```
+Phase 1 (現在): ローカル完結
+  action_log + engram (Qdrant) → future_probe
+  全て localhost、ネットワークなし
+
+Phase 2: Sphere へのバッチ投入
+  action_log の要所 → 定期的に Sphere /contribute
+  検索はまだローカル
+
+Phase 3: Sphere からの pull
+  future_probe の検索先を Sphere に切り替え
+  ローカルキャッシュ + バウンダリ判定
+
+Phase 4: Semantic CDN + 集合知
+  複数ユーザの行動ログが Sphere に蓄積
+  phi-agent による非同期探索
+  エージェント間の知識共有が自然に実現
+```
+
+---
+
 ## 未解決の課題
 
 1. **Sphere API 仕様**: 現在の Sphere ingest エンドポイントとの互換性
@@ -167,8 +545,12 @@ Sphere (グローバル知識基盤)
 3. **重複制御**: 複数ユーザーが同じ知識を push した場合の Sphere 側 dedup
 4. **オフライン対応**: Sphere 到達不能時のローカルキューイング
 5. **逆方向**: Sphere → engram の pull（グローバル知識のローカル取り込み）
+6. **phi-agent プロトコル**: クエリの委任フォーマット、v_future の受け渡し方式
+7. **バウンダリの初期値**: 初回アクセス時に近傍がゼロの場合のフォールバック
 
 ---
 
-*engram で検証された知識が Sphere に還流し、全エージェントの共有財産になる。
-データ収集を設計するのではなく、使っていたら勝手に溜まる。*
+*ローカルの行動ログから始まり、代謝で濾過され、Sphere に還流し、
+全エージェントの共有知識となる。そしてその知識は、エージェントの
+意味的位置と感情状態に応じて、必要な時に必要な形で供給される。
+データ収集を設計するのではなく、使っていたら世界が賢くなる。*
