@@ -1,10 +1,10 @@
 // ============================================================
 // Receptor — Persona Snapshot (positive-trigger behavioral capture)
 // ============================================================
-// Captures receptor state snapshots during positive triggers
-// (confidence_sustained, flow_active). At session end, aggregates
-// snapshots into a Persona — a statistical fingerprint of successful
-// behavioral patterns — and conditionally exports to sphere-ready.jsonl.
+// Passive-only: captures receptor state snapshots when positive signals
+// (confidence_sustained, flow_active) fire. No constant monitoring.
+// At session end, aggregates snapshots into a Persona — a statistical
+// fingerprint of successful behavioral patterns.
 //
 // Design: RECEPTOR_ARCHITECTURE.md §12
 
@@ -16,8 +16,9 @@ import type { AmbientEstimator } from "./ambient.js";
 const MAX_SNAPSHOTS = 10;
 const POSITIVE_SIGNALS = new Set(["confidence_sustained", "flow_active"]);
 
-// Session-end push thresholds
-const FLOW_ACTIVE_RATIO_MIN = 0.3;
+// Minimum snapshots required for persona generation
+const MIN_SNAPSHOTS = 2;
+// Minimum average confidence across snapshots
 const CONFIDENCE_AVG_MIN = 0.4;
 
 // ---- Types ----
@@ -41,24 +42,20 @@ export interface Persona {
     meanEmotion: Record<EmotionAxis, number>;
     emotionVariance: Record<EmotionAxis, number>;
     dominantAxis: EmotionAxis;
-    suppressionRate: number; // ratio of flow_active events / total
   };
   adaptedThresholds: {
-    mean: Record<EmotionAxis, number>;  // mean effective threshold across snapshots
-    fieldAdjustment: Record<EmotionAxis, number>; // mean C-field adjustment
+    mean: Record<EmotionAxis, number>;
+    fieldAdjustment: Record<EmotionAxis, number>;
   };
-  firingStats: Record<string, { count: number; avgIntensity: number }>;
   patternDistribution: Record<PatternKind, number>;
   stateDistribution: Record<AgentState, number>;
-  methodTypeWeights: Record<string, number>;
   learnedDelta: Record<string, number>;
   workContext: {
-    techStack?: string[];   // from ProjectMeta (categorical, survives anonymization)
-    domain?: string[];      // from ProjectMeta
-    entropyAvg: number;     // mean heatmap entropy across snapshots (work focus)
+    techStack?: string[];
+    domain?: string[];
+    entropyAvg: number;
   };
   sessionMeta: {
-    eventCount: number;
     elapsedMs: number;
     snapshotCount: number;
   };
@@ -68,45 +65,9 @@ export interface Persona {
 
 const _snapshots: Snapshot[] = [];
 
-// Session-wide accumulators for push-gate check
-let _totalEvents = 0;
-let _flowActiveEvents = 0;
-let _confidenceSum = 0;
-
-// Firing stats across session
-const _firingCounts: Record<string, number> = {};
-const _firingIntensitySum: Record<string, number> = {};
-
-// Pattern + state counts across session
-const _patternCounts: Record<string, number> = {};
-const _stateCounts: Record<string, number> = {};
-
 const AXES: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue", "flow"];
 
 // ---- Public API ----
-
-/**
- * Called on every ingestEvent. Tracks session-wide stats for push-gate.
- */
-export function trackEvent(
-  emotion: EmotionVector,
-  signals: FireSignal[],
-  pattern: PatternKind,
-  agentState: AgentState,
-): void {
-  _totalEvents++;
-  _confidenceSum += emotion.confidence;
-  _patternCounts[pattern] = (_patternCounts[pattern] ?? 0) + 1;
-  _stateCounts[agentState] = (_stateCounts[agentState] ?? 0) + 1;
-
-  const hasFlow = signals.some(s => s.kind === "flow_active");
-  if (hasFlow) _flowActiveEvents++;
-
-  for (const sig of signals) {
-    _firingCounts[sig.kind] = (_firingCounts[sig.kind] ?? 0) + 1;
-    _firingIntensitySum[sig.kind] = (_firingIntensitySum[sig.kind] ?? 0) + sig.intensity;
-  }
-}
 
 /**
  * Called when positive signals fire. Captures receptor state snapshot.
@@ -146,8 +107,8 @@ export function captureSnapshot(
 }
 
 /**
- * Called at engram_watch stop. Evaluates push gate, computes persona if qualified.
- * Returns persona or null (session didn't meet quality thresholds).
+ * Called at engram_watch stop. Aggregates snapshots into Persona.
+ * Push gate: snapshots >= 2 && confidenceAvg >= 0.4.
  */
 export function finalizeSession(
   elapsedMs: number,
@@ -155,22 +116,17 @@ export function finalizeSession(
   projectMeta?: ProjectMeta,
   actionSignature?: number[],
 ): Persona | null {
-  if (_totalEvents === 0) return null;
-
-  // Push gate: session quality check
-  const flowRatio = _flowActiveEvents / _totalEvents;
-  const confidenceAvg = _confidenceSum / _totalEvents;
-
-  if (flowRatio < FLOW_ACTIVE_RATIO_MIN || confidenceAvg < CONFIDENCE_AVG_MIN) {
-    console.error(
-      `[persona] skip: flowRatio=${flowRatio.toFixed(2)} (min ${FLOW_ACTIVE_RATIO_MIN}), ` +
-      `confidenceAvg=${confidenceAvg.toFixed(2)} (min ${CONFIDENCE_AVG_MIN})`
-    );
+  if (_snapshots.length < MIN_SNAPSHOTS) {
+    console.error(`[persona] skip: ${_snapshots.length} snapshots (need >=${MIN_SNAPSHOTS})`);
     return null;
   }
 
-  if (_snapshots.length < 2) {
-    console.error(`[persona] skip: only ${_snapshots.length} snapshots (need ≥2)`);
+  // Push gate: confidence average across snapshots
+  const confidenceAvg = _snapshots.reduce((a, s) => a + s.emotion.confidence, 0) / _snapshots.length;
+  if (confidenceAvg < CONFIDENCE_AVG_MIN) {
+    console.error(
+      `[persona] skip: confidenceAvg=${confidenceAvg.toFixed(2)} (min ${CONFIDENCE_AVG_MIN})`
+    );
     return null;
   }
 
@@ -180,14 +136,6 @@ export function finalizeSession(
 /** Clear all state (called on watch start). */
 export function clearPersonaState(): void {
   _snapshots.length = 0;
-  _totalEvents = 0;
-  _flowActiveEvents = 0;
-  _confidenceSum = 0;
-
-  for (const key of Object.keys(_firingCounts)) delete _firingCounts[key];
-  for (const key of Object.keys(_firingIntensitySum)) delete _firingIntensitySum[key];
-  for (const key of Object.keys(_patternCounts)) delete _patternCounts[key];
-  for (const key of Object.keys(_stateCounts)) delete _stateCounts[key];
 }
 
 /** Get snapshot count (for status display). */
@@ -236,48 +184,24 @@ function _buildPersona(
     meanFieldAdj[axis] = _round3(_snapshots.reduce((a, s) => a + s.fieldAdjustment[axis], 0) / n);
   }
 
-  // ---- Firing stats ----
-  const firingStats: Record<string, { count: number; avgIntensity: number }> = {};
-  for (const [kind, count] of Object.entries(_firingCounts)) {
-    firingStats[kind] = {
-      count,
-      avgIntensity: _round3(_firingIntensitySum[kind] / count),
-    };
+  // ---- Pattern distribution (from snapshots, normalized) ----
+  const patternCounts: Record<string, number> = {};
+  for (const s of _snapshots) {
+    patternCounts[s.pattern] = (patternCounts[s.pattern] ?? 0) + 1;
   }
-
-  // ---- Pattern distribution (normalized) ----
   const patternDistribution = {} as Record<PatternKind, number>;
-  for (const [pat, count] of Object.entries(_patternCounts)) {
-    patternDistribution[pat as PatternKind] = _round3(count / _totalEvents);
+  for (const [pat, count] of Object.entries(patternCounts)) {
+    patternDistribution[pat as PatternKind] = _round3(count / n);
   }
 
-  // ---- State distribution (normalized) ----
+  // ---- State distribution (from snapshots, normalized) ----
+  const stateCounts: Record<string, number> = {};
+  for (const s of _snapshots) {
+    stateCounts[s.agentState] = (stateCounts[s.agentState] ?? 0) + 1;
+  }
   const stateDistribution = {} as Record<AgentState, number>;
-  for (const [state, count] of Object.entries(_stateCounts)) {
-    stateDistribution[state as AgentState] = _round3(count / _totalEvents);
-  }
-
-  // ---- Method type weights ----
-  const methodTypeMap: Record<string, string> = {
-    frustration_spike: "knowledge_search",
-    seeking_spike: "knowledge_search",
-    compound_frustration_seeking: "knowledge_search",
-    confidence_sustained: "context_persist",
-    fatigue_rising: "status_notify",
-    flow_active: "flow_suppress",
-  };
-  const methodTypeCounts: Record<string, number> = {};
-  let totalFirings = 0;
-  for (const [kind, count] of Object.entries(_firingCounts)) {
-    const mtype = methodTypeMap[kind] ?? "other";
-    methodTypeCounts[mtype] = (methodTypeCounts[mtype] ?? 0) + count;
-    totalFirings += count;
-  }
-  const methodTypeWeights: Record<string, number> = {};
-  if (totalFirings > 0) {
-    for (const [mtype, count] of Object.entries(methodTypeCounts)) {
-      methodTypeWeights[mtype] = _round3(count / totalFirings);
-    }
+  for (const [state, count] of Object.entries(stateCounts)) {
+    stateDistribution[state as AgentState] = _round3(count / n);
   }
 
   // ---- Entropy average (work focus indicator) ----
@@ -291,16 +215,13 @@ function _buildPersona(
       meanEmotion,
       emotionVariance,
       dominantAxis,
-      suppressionRate: _round3(_flowActiveEvents / _totalEvents),
     },
     adaptedThresholds: {
       mean: meanThresholds,
       fieldAdjustment: meanFieldAdj,
     },
-    firingStats,
     patternDistribution,
     stateDistribution,
-    methodTypeWeights,
     learnedDelta: { ...learnedDelta },
     workContext: {
       techStack: projectMeta?.techStack,
@@ -308,7 +229,6 @@ function _buildPersona(
       entropyAvg,
     },
     sessionMeta: {
-      eventCount: _totalEvents,
       elapsedMs,
       snapshotCount: n,
     },

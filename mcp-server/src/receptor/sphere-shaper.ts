@@ -230,7 +230,7 @@ export function exportPersona(persona: Persona): PersonaPayload | null {
     fs.appendFileSync(SPHERE_OUTPUT_PATH, JSON.stringify(payload) + "\n");
     console.error(
       `[sphere-shaper] wrote persona: dominant=${persona.emotionProfile.dominantAxis} ` +
-      `snaps=${persona.sessionMeta.snapshotCount} events=${persona.sessionMeta.eventCount}`,
+      `snaps=${persona.sessionMeta.snapshotCount}`,
     );
   } catch (err) {
     console.error("[sphere-shaper] persona write error:", err);

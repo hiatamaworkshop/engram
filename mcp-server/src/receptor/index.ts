@@ -75,7 +75,7 @@ import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-l
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
 import { exportEnrichedCentroid, exportPersona, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";
 import {
-  trackEvent as personaTrackEvent, captureSnapshot as personaCaptureSnapshot,
+  captureSnapshot as personaCaptureSnapshot,
   finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
 } from "./persona-snapshot.js";
@@ -335,8 +335,7 @@ export function ingestEvent(raw: RawHookEvent): void {
     _lastEmotion = accumulator.values;
   }
 
-  // Persona: track every event + capture snapshot on positive signals
-  personaTrackEvent(_lastEmotion, _lastSignals, shortSnap.pattern, metaNeuron.state);
+  // Persona: capture snapshot on positive signals only (passive)
   if (_lastSignals.length > 0) {
     personaCaptureSnapshot(_lastSignals, _lastEmotion, metaNeuron.state, shortSnap.pattern, ambient, heatmap.entropy());
   }

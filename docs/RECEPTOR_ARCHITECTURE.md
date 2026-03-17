@@ -1091,42 +1091,41 @@ future_probe 射影
 
 ### Persona Push タイミング — セッション終了時の判定
 
-persona push はリアルタイム発火ではなく、`engram_watch stop` 時にセッション全体を
-振り返って1回だけ判定する。良いセッションだったかはセッションが終わるまでわからない。
+persona push はリアルタイム発火ではなく、`engram_watch stop` 時にスナップショットを
+集計して1回だけ判定する。常時監視は行わない。
 
 ```
 engram_watch stop 時:
-  flowActiveRatio > 0.3  (セッションの 30% 以上が flow 状態)
-  かつ confidenceAvg > 0.4
-  → persona snapshot を 1 回生成
+  snapshots >= 2  (良好トリガが2回以上発火)
+  かつ confidenceAvg >= 0.4  (スナップショット群の confidence 平均)
+  → Persona オブジェクト生成
   → sphere-ready.jsonl に追記
-  → それ以外のセッションでは push しない
+  → 条件未達のセッションでは push しない
 ```
 
 **設計判断**:
-- receptor-rules.json のメソッド発火ではなく、watch stop ロジックに組み込む
+- **パッシブのみ**: 常時カウントする trackEvent は廃止。スナップショットは良好シグナル
+  (confidence_sustained / flow_active) 発火時のみキャプチャされる
 - セッション単位で最大1回。Sphere に過剰な persona が流れない
-- ポジティブトリガの帰結: confidence/flow が持続したセッション = 「うまくいった状態」の
-  スナップショットだけが種族に共有される。苦戦中の persona は流れない
+- スナップショット自体が良好状態の証拠なので、flowRatio の常時計測は不要
 
-### Persona Snapshot — 実装済み (2026-03-17)
+### Persona Snapshot — 実装済み (2026-03-17, パッシブ化 2026-03-17)
 
 #### データフロー
 
 ```
 セッション中:
-  毎イベント → personaTrackEvent()
-    └── session-wide 蓄積: flowActiveEvents, confidenceSum, firingCounts, patternCounts, stateCounts
+  confidence_sustained / flow_active 発火時 → captureSnapshot()
+    └── リングバッファ (max 10): emotion, agentState, pattern, thresholds, fieldAdjustment, entropy
 
-  confidence_sustained / flow_active 発火時 → personaCaptureSnapshot()
-    └── リングバッファ (max 10): emotion, thresholds, fieldAdjustment, entropy
+  ※ 常時トラッキングなし。シグナル発火時のみスナップショット取得。
 
 セッション終了:
   engram_watch stop
-    └── personaFinalizeSession()
-          ├── push gate: flowRatio > 0.3 AND confidenceAvg > 0.4 AND snapshots ≥ 2
+    └── finalizeSession()
+          ├── push gate: snapshots >= 2 AND confidenceAvg >= 0.4
           ├── 不合格 → skip (stderr にログ)
-          └── 合格 → Persona オブジェクト生成
+          └── 合格 → スナップショット群から集計 → Persona オブジェクト生成
                 └── exportPersona() [sphere-shaper.ts]
                       ├── PersonaPayload でラップ (type: "persona")
                       ├── techStack/domain 付与 (ProjectMeta)
@@ -1137,9 +1136,9 @@ engram_watch stop 時:
 
 | ファイル | 責務 |
 |---------|------|
-| `persona-snapshot.ts` | スナップショット蓄積 + session-wide 統計 + Persona オブジェクト生成。ファイル I/O なし |
+| `persona-snapshot.ts` | 発火時スナップショット蓄積 + 終了時集計 + Persona 生成。常時監視なし、ファイル I/O なし |
 | `sphere-shaper.ts` | Persona を PersonaPayload に成型 + sphere-ready.jsonl への書き出し |
-| `index.ts` | trackEvent/captureSnapshot をイベントループに統合、watch stop で finalize → export |
+| `index.ts` | captureSnapshot をシグナル発火時に呼び出し、watch stop で finalize → export |
 
 #### sphere-shaper の責務範囲
 
@@ -1161,15 +1160,13 @@ sphere-ready.jsonl の各行は `type` フィールドで識別可能:
 
 | フィールド | 内容 |
 |-----------|------|
-| `emotionProfile` | meanEmotion (スナップショット群平均), variance (品質指標), dominantAxis, suppressionRate |
+| `emotionProfile` | meanEmotion (スナップショット群平均), variance (品質指標), dominantAxis |
 | `adaptedThresholds` | mean (ambient 学習結果平均), fieldAdjustment (Meta C フィールド平均) |
-| `firingStats` | シグナル種別ごとの発火回数 + 平均強度 |
-| `patternDistribution` | 行動パターン (implementation/exploration/...) の出現比率 |
-| `stateDistribution` | エージェント状態 (deep_work/exploring/stuck/...) の滞在比率 |
-| `methodTypeWeights` | メソッドタイプ (knowledge_search/context_persist/...) の使用比率 |
+| `patternDistribution` | 行動パターン (implementation/exploration/...) の出現比率（スナップショット群から） |
+| `stateDistribution` | エージェント状態 (deep_work/exploring/stuck/...) の滞在比率（スナップショット群から） |
 | `learnedDelta` | キャリブレーション補正値 |
 | `workContext` | techStack, domain (ProjectMeta), entropyAvg (作業集中度) |
-| `sessionMeta` | eventCount, elapsedMs, snapshotCount |
+| `sessionMeta` | elapsedMs, snapshotCount |
 
 emotionVariance が品質フィルタとして機能する — スナップショット間で安定した値は信頼度が高く、
 大きく振れた値は個体差としての信頼度が低い。受け取り側がブレンド時に重み付けに使える。
