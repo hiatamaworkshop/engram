@@ -73,7 +73,12 @@ import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js"
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
-import { exportEnrichedCentroid, setProjectMeta } from "./sphere-shaper.js";
+import { exportEnrichedCentroid, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";
+import {
+  trackEvent as personaTrackEvent, captureSnapshot as personaCaptureSnapshot,
+  finalizeSession as personaFinalizeSession, exportPersona,
+  clearPersonaState, snapshotCount as personaSnapshotCount,
+} from "./persona-snapshot.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -244,6 +249,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     clearSubsystem();
     clearActionLogger();
     clearFutureProbe();
+    clearPersonaState();
     _lastHeatmapFlush = 0;
     return { watching: true, message: "Receptor watch started. Monitoring agent behavior." };
   }
@@ -251,7 +257,22 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
-    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.`;
+
+    // Persona snapshot: finalize session and conditionally export
+    let personaMsg = "";
+    try {
+      const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
+      const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
+      const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined);
+      if (persona) {
+        exportPersona(persona);
+        personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
+      }
+    } catch (err) {
+      console.error("[receptor] persona finalize error:", err);
+    }
+
+    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}`;
     _watching = false;
     _startedAt = null;
     return { watching: false, message: msg };
@@ -312,6 +333,12 @@ export function ingestEvent(raw: RawHookEvent): void {
   }
   if (disruptions.length > 0) {
     _lastEmotion = accumulator.values;
+  }
+
+  // Persona: track every event + capture snapshot on positive signals
+  personaTrackEvent(_lastEmotion, _lastSignals, shortSnap.pattern, metaNeuron.state);
+  if (_lastSignals.length > 0) {
+    personaCaptureSnapshot(_lastSignals, _lastEmotion, metaNeuron.state, shortSnap.pattern, ambient, heatmap.entropy());
   }
 
   // Notify listeners (connection targets)
@@ -488,7 +515,9 @@ export function formatState(): string {
 
   // ---- C: Meta neuron ----
   lines.push("");
-  lines.push(`[C] ${metaNeuron.format()}`);
+  const pSnaps = personaSnapshotCount();
+  const personaStr = pSnaps > 0 ? `  persona:${pSnaps}/${10}` : "";
+  lines.push(`[C] ${metaNeuron.format()}${personaStr}`);
 
   // Field adjustments from C (show only non-zero)
   const fieldParts: string[] = [];
