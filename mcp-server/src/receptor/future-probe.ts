@@ -1,14 +1,18 @@
 // ============================================================
 // Receptor — Future Probe (predictive knowledge supply)
 // ============================================================
-// Computes movement vector (Δv) from recent action_log entries,
+// Computes movement vector (Δv) from action_log centroid windows,
 // projects future position, and searches for relevant knowledge.
+//
+// Position is defined as the weighted centroid of recent action_log
+// entries, not a single snapshot. Weights: exponential recency decay
+// × entropy magnitude (high-entropy keypoints = turning points).
 //
 // Query generation is the core value — search target is swappable
 // (local Qdrant now, Sphere later).
 //
 // Two phases:
-//   1. buildQuery(): entropy + Δv + emotion → query vector + filters
+//   1. buildQuery(): centroid Δv + entropy + emotion → query vector
 //   2. execute():    query → search → format → output-router
 
 import type { EmotionVector, AgentState } from "./types.js";
@@ -20,6 +24,12 @@ const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
 const ACTION_LOG_COLLECTION = "action_log";
 const ENGRAM_COLLECTION = "engram";
 
+/** Half-window size. Total fetch = 2 × WINDOW_N. */
+const WINDOW_N = 3;
+
+/** Recency decay half-life in entries (not time). */
+const DECAY_HALF_LIFE = 3;
+
 // ---- Types ----
 
 export interface ProbeContext {
@@ -30,11 +40,13 @@ export interface ProbeContext {
   projectId?: string;
 }
 
-interface ProbeQuery {
+export interface ProbeQuery {
   vector: number[];       // predicted future position
+  centroidNow: number[];  // current position centroid (for diagnostics)
   emotion: EmotionVector; // for post-filter ranking
   agentState: AgentState;
   alpha: number;          // prediction confidence
+  windowSize: number;     // actual entries used per window
 }
 
 interface ProbeResult {
@@ -45,12 +57,13 @@ interface ProbeResult {
   source: "action_log" | "engram";
 }
 
-// ---- Embedding cache (v_prev, v_now) ----
+interface ActionLogPoint {
+  vector: number[];
+  entropy: number;
+  ts: number;
+}
 
-let _vPrev: number[] | null = null;
-let _vNow: number[] | null = null;
-
-// ---- Embedding via gateway ----
+// ---- Embedding via gateway (fallback for cold start) ----
 
 async function embed(text: string): Promise<number[] | null> {
   try {
@@ -65,6 +78,49 @@ async function embed(text: string): Promise<number[] | null> {
     return data.vector;
   } catch {
     return null;
+  }
+}
+
+// ---- Fetch recent vectors from action_log ----
+
+/**
+ * Scroll the most recent 2N entries from action_log, ordered by ts desc.
+ * Returns vectors + entropy + ts for centroid computation.
+ */
+async function scrollRecentVectors(
+  n: number,
+  projectId?: string,
+): Promise<ActionLogPoint[]> {
+  try {
+    const filter = projectId
+      ? { must: [{ key: "projectId", match: { value: projectId } }] }
+      : undefined;
+
+    const res = await fetch(`${QDRANT_URL}/collections/${ACTION_LOG_COLLECTION}/points/scroll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        limit: n,
+        with_payload: true,
+        with_vector: true,
+        filter,
+        order_by: { key: "ts", direction: "desc" },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      result: { points: Array<{ vector: number[]; payload: Record<string, any> }> };
+    };
+
+    return (data.result?.points ?? []).map(p => ({
+      vector: p.vector,
+      entropy: p.payload.entropy ?? 0,
+      ts: p.payload.ts ?? 0,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -86,55 +142,103 @@ function vecNorm(v: number[]): number[] {
   return len > 0 ? v.map(x => x / len) : v;
 }
 
+/** Zero vector of given dimension. */
+function vecZero(dim: number): number[] {
+  return new Array(dim).fill(0);
+}
+
+// ---- Weighted centroid ----
+
+/**
+ * Compute weighted centroid of vectors.
+ *
+ * Weight per entry = recencyDecay(index) × entropyWeight(entropy)
+ *
+ * - recencyDecay: exponential, newest = 1.0, halves every DECAY_HALF_LIFE entries
+ * - entropyWeight: 1 + entropy (high-entropy keypoints are turning points,
+ *   they should anchor the position more strongly)
+ *
+ * Input must be ordered newest-first (index 0 = most recent).
+ */
+function weightedCentroid(points: ActionLogPoint[]): number[] | null {
+  if (points.length === 0) return null;
+
+  const dim = points[0].vector.length;
+  const result = vecZero(dim);
+  let totalWeight = 0;
+
+  for (let i = 0; i < points.length; i++) {
+    const recency = Math.pow(0.5, i / DECAY_HALF_LIFE);
+    const entropyW = 1 + points[i].entropy;
+    const w = recency * entropyW;
+
+    for (let d = 0; d < dim; d++) {
+      result[d] += points[i].vector[d] * w;
+    }
+    totalWeight += w;
+  }
+
+  if (totalWeight === 0) return null;
+  for (let d = 0; d < dim; d++) {
+    result[d] /= totalWeight;
+  }
+  return result;
+}
+
 // ---- Query generation (core value) ----
 
 /**
- * Build a predictive query from current context.
+ * Build a predictive query from action_log centroids.
  *
- * - Embeds current action state as v_now
- * - Computes Δv = v_now - v_prev (movement direction)
- * - Projects v_future = v_now + α × Δv
- * - α is adjusted by entropy and emotion
+ * - Fetches recent 2N entries from action_log (Qdrant scroll)
+ * - Splits into new window (0..N-1) and old window (N..2N-1)
+ * - Computes weighted centroids for each window
+ * - Δv = centroid_new - centroid_old (macro movement direction)
+ * - v_future = centroid_new + α × Δv
+ * - α adjusted by current entropy
  *
- * Returns null if insufficient history (need at least 2 snapshots).
+ * Falls back to single-embed if action_log has < 2 entries.
+ * Returns null if no position can be determined.
  */
 export async function buildQuery(ctx: ProbeContext): Promise<ProbeQuery | null> {
-  // Build current action text
-  const pathParts = ctx.topPaths.slice(0, 5).map(p => {
-    const segs = p.split("/");
-    return segs.slice(-2).join("/");
-  });
-  const text = `${ctx.agentState} ${pathParts.join(", ")}`;
+  // Fetch recent entries from action_log
+  const points = await scrollRecentVectors(WINDOW_N * 2, ctx.projectId);
 
-  // Embed current state
-  const v = await embed(text);
-  if (!v) return null;
+  if (points.length < 2) {
+    // Cold start: not enough history for centroid
+    console.error(`[future-probe] insufficient action_log entries (${points.length}), skipping`);
+    return null;
+  }
 
-  // Shift history
-  _vPrev = _vNow;
-  _vNow = v;
+  // Split into windows (points are newest-first)
+  const splitAt = Math.min(WINDOW_N, Math.floor(points.length / 2));
+  const windowNew = points.slice(0, splitAt);
+  const windowOld = points.slice(splitAt);
 
-  // Need at least 2 snapshots for Δv
-  if (!_vPrev) return null;
+  const centroidNew = weightedCentroid(windowNew);
+  const centroidOld = weightedCentroid(windowOld);
 
-  // Compute Δv (movement direction)
-  const delta = vecSub(_vNow, _vPrev);
+  if (!centroidNew || !centroidOld) return null;
 
-  // Compute α (prediction confidence)
-  //   entropy low  → α large (direction is confident, look further)
-  //   entropy high → α small (direction unclear, stay close)
-  //   frustration rising → also explore lateral/reverse (handled by caller)
-  const entropyFactor = Math.max(0.1, 1 - ctx.entropy / 4); // entropy 0→1.0, entropy 4→0.1
-  const alpha = entropyFactor * 0.5; // base scale 0.5, dampened by entropy
+  // Δv: macro movement direction between windows
+  const delta = vecSub(centroidNew, centroidOld);
+
+  // α: prediction confidence adjusted by current entropy
+  //   entropy low  → α large (confident direction, look further)
+  //   entropy high → α small (unclear, stay close)
+  const entropyFactor = Math.max(0.1, 1 - ctx.entropy / 4);
+  const alpha = entropyFactor * 0.5;
 
   // Project future position
-  const vFuture = vecNorm(vecAdd(_vNow, delta, alpha));
+  const vFuture = vecNorm(vecAdd(centroidNew, delta, alpha));
 
   return {
     vector: vFuture,
+    centroidNow: centroidNew,
     emotion: ctx.emotion,
     agentState: ctx.agentState,
     alpha,
+    windowSize: splitAt,
   };
 }
 
@@ -255,8 +359,8 @@ export function formatResults(results: ProbeResult[]): string {
   return lines.join("\n");
 }
 
-/** Reset state (for testing). */
+/** Reset state (for testing). Centroid mode is stateless — nothing to clear. */
 export function clearFutureProbe(): void {
-  _vPrev = null;
-  _vNow = null;
+  // No-op: centroid is computed from action_log on each call.
+  // Kept for API compatibility with index.ts setWatch(false).
 }
