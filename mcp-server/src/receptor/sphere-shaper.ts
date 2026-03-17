@@ -9,9 +9,15 @@
 //
 // Sphere upload itself is NOT wired here — just the data pipeline
 // that produces clean, shaped output ready for future federation.
+//
+// Two Facade interaction patterns (both use techStack/domain for routing):
+//   - push: sphere-ready.jsonl → POST /push { payload, techStack, domain } (batch upload)
+//   - lookup: future_probe → POST /lookup { vector, techStack, domain } (stateless search)
+// Facade resolves domain → Sphere internally (DNS-like). Agents never see
+// individual Sphere endpoints — they only know the Facade URL.
 
 import type { EnrichedCentroid, LinkedKnowledge } from "./future-probe.js";
-import type { EmotionVector } from "./types.js";
+import type { EmotionVector, ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -28,9 +34,12 @@ export interface SpherePayload {
   alpha: number;
   ts: number;
   version: number;            // schema version for forward compat
+  // Facade routing metadata — categorical, not identifying
+  techStack?: string[];       // from ProjectMeta
+  domain?: string[];          // from ProjectMeta
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // ---- Anonymization ----
 
@@ -83,13 +92,31 @@ function scrubPattern(pattern: string): string {
   return scrubText(pattern);
 }
 
+// ---- Project metadata (optional, for Facade routing) ----
+
+let _projectMeta: ProjectMeta | null = null;
+
+/**
+ * Set project metadata for Sphere routing.
+ * Called once at startup from index.ts or config.
+ * techStack/domain are categorical — they survive anonymization.
+ */
+export function setProjectMeta(meta: ProjectMeta): void {
+  _projectMeta = meta;
+}
+
+export function getProjectMeta(): ProjectMeta | null {
+  return _projectMeta;
+}
+
 // ---- Shaping: EnrichedCentroid → SpherePayload ----
 
 /**
  * Transform an enriched centroid into an anonymized Sphere payload.
+ * Attaches techStack/domain from ProjectMeta if available (for Facade routing).
  */
 export function shapeForSphere(enriched: EnrichedCentroid): SpherePayload {
-  return {
+  const payload: SpherePayload = {
     centroid_embedding: enriched.centroid_embedding,
     emotion_avg: enriched.emotion_avg,
     entropy_range: enriched.entropy_range,
@@ -101,6 +128,13 @@ export function shapeForSphere(enriched: EnrichedCentroid): SpherePayload {
     ts: enriched.ts,
     version: SCHEMA_VERSION,
   };
+
+  if (_projectMeta) {
+    if (_projectMeta.techStack.length > 0) payload.techStack = _projectMeta.techStack;
+    if (_projectMeta.domain.length > 0) payload.domain = _projectMeta.domain;
+  }
+
+  return payload;
 }
 
 // ---- File export ----

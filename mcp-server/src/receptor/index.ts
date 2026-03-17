@@ -73,9 +73,24 @@ import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js"
 import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
-import { exportEnrichedCentroid } from "./sphere-shaper.js";
+import { exportEnrichedCentroid, setProjectMeta } from "./sphere-shaper.js";
+import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+// ---- Load project metadata for Sphere Facade routing ----
+
+try {
+  const metaPath = path.join(import.meta.dirname!, "project-meta.json");
+  const raw = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as ProjectMeta & { $schema?: string };
+  setProjectMeta({
+    techStack: raw.techStack ?? [],
+    domain: raw.domain ?? [],
+    facadeUrl: raw.facadeUrl,
+  });
+} catch {
+  // No project-meta.json — Sphere payloads will omit routing metadata
+}
 
 // ---- Heatmap sink (periodic file snapshot) ----
 // Writes topPaths to receptor-output/heatmap.json every HEATMAP_FLUSH_INTERVAL events.

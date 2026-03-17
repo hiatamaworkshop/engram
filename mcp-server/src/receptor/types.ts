@@ -110,3 +110,16 @@ export interface TimeWindow {
   events: NormalizedEvent[];
   windowMs: number;
 }
+
+// ---- Project metadata (Sphere routing) ----
+// Used by sphere-shaper to attach domain context to centroid payloads.
+// projectId is NOT included — anonymization strips it.
+// techStack + domain survive anonymization because they are categorical,
+// not identifying. Facade resolves domain → Sphere internally (DNS-like).
+// Agents never see individual Sphere endpoints — only Facade URL.
+
+export interface ProjectMeta {
+  techStack: string[];   // e.g. ["typescript", "qdrant", "docker"]
+  domain: string[];      // e.g. ["ai-agent", "memory-system"]
+  facadeUrl?: string;    // single entry point — Facade handles Sphere resolution
+}
