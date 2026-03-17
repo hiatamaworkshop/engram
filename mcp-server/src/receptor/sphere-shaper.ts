@@ -129,8 +129,13 @@ export function writeSpherePayload(payload: SpherePayload): void {
 
 /**
  * Full pipeline: enrich → anonymize → write.
+ * Skips write if linked_knowledge is empty — no fixed-node grounding = no export.
  */
-export function exportEnrichedCentroid(enriched: EnrichedCentroid): SpherePayload {
+export function exportEnrichedCentroid(enriched: EnrichedCentroid): SpherePayload | null {
+  if (enriched.linked_knowledge.length === 0) {
+    console.error("[sphere-shaper] skip: no linked_knowledge (0 fixed-node hits)");
+    return null;
+  }
   const payload = shapeForSphere(enriched);
   writeSpherePayload(payload);
   return payload;

@@ -365,19 +365,18 @@ export async function buildEnrichedCentroid(ctx: ProbeContext): Promise<Enriched
 
 /**
  * Search engram collection for fixed nodes near the centroid.
- * score_threshold=0.5 to avoid irrelevant matches.
+ * Cross-project (no projectId filter) — fixed nodes are universal knowledge.
+ * score_threshold=0.35 accounts for centroid averaging diluting cosine scores
+ * (~0.5 centroid ≈ ~0.7 individual embedding similarity).
  */
 async function searchFixedNearCentroid(
   centroid: number[],
-  projectId?: string,
+  _projectId?: string,
 ): Promise<LinkedKnowledge[]> {
   try {
     const filter: Record<string, any> = {
       must: [{ key: "status", match: { value: "fixed" } }],
     };
-    if (projectId) {
-      filter.must.push({ key: "projectId", match: { value: projectId } });
-    }
 
     const res = await fetch(`${QDRANT_URL}/collections/${ENGRAM_COLLECTION}/points/search`, {
       method: "POST",
@@ -385,7 +384,7 @@ async function searchFixedNearCentroid(
       body: JSON.stringify({
         vector: centroid,
         limit: 3,
-        score_threshold: 0.5,
+        score_threshold: 0.35,
         with_payload: true,
         filter,
       }),
