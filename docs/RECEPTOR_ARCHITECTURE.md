@@ -962,10 +962,182 @@ npx tsx src/receptor/calibrate.ts [--dry-run] [--merge | --fresh]
 - ネガティブトリガ（frustration, hunger, uncertainty, fatigue）→ 検索・警告系
 - ポジティブトリガ（confidence）→ 保存・記録系
 
-## 12. 未実装（スコープ外）
+## 12. Behavioral Prior — セッション横断の行動記憶
+
+> 2026-03-17 設計。未実装。
+
+### 課題
+
+engram は情報レベルの継続性を提供する — 何を知っているか。
+しかしセッション開始時、receptor は常にゼロスタートする。
+ambient の学習結果（閾値適応）、Meta の field emission 履歴、
+パターン分布の傾向 — これらは全てセッション終了で消える。
+
+**情報の記憶はあるが、体の記憶がない。**
+
+### 2層構成
+
+#### ローカル層 — 自己の行動記憶
+
+セッション終了時（`engram_watch stop`）に receptor の到達状態を保存し、
+次回起動時にロードする。自分の過去の延長だから安全に適用できる。
+
+```json
+{
+  "$schema": "Behavioral prior — receptor session state snapshot",
+  "ts": 1773664800000,
+  "sessionCount": 12,
+  "ambient": {
+    "baselineEmotion": { "frustration": 0.05, "seeking": -0.12, "confidence": 0.08, "fatigue": 0.02, "flow": 0.04 },
+    "adaptedThresholds": { "frustration": 0.45, "seeking": 0.35, "confidence": 0.50, "fatigue": 0.65, "flow": 0.30 }
+  },
+  "patternDistribution": {
+    "implementation": 0.55, "exploration": 0.25, "trial_error": 0.10,
+    "wandering": 0.05, "delegation": 0.03, "stagnation": 0.02
+  },
+  "actionSignature": [0.12, -0.03, 0.08, ...]
+}
+```
+
+| フィールド | 用途 |
+|-----------|------|
+| `baselineEmotion` | EmotionAccumulator の初期値。ゼロではなく「この個体の平常時」から開始 |
+| `adaptedThresholds` | AmbientEstimator の初期閾値。セッション中の学習結果を引き継ぎ |
+| `patternDistribution` | Commander のパターン出現率。「このエージェントは implementation 寄り」等の傾向 |
+| `actionSignature` | 行動ログ centroid の embedding。Sphere 層でのマッチングに使用 |
+
+**保存トリガ**: `engram_watch stop` 時に自動保存。
+**ロードトリガ**: `engram_watch start` 時に `receptor-prior.json` が存在すれば読み込み。
+**更新**: EMA 的にブレンド — 新しいセッションの結果を既存 prior に混合。
+急な変化は抑制され、持続的な傾向のみが prior に定着する。
+
+```
+prior[axis] = α × sessionEnd[axis] + (1 - α) × prior[axis]
+α = 0.3  // 保守的。10セッションで prior が安定
+```
+
+#### Sphere 層 — Persona System（種族の行動記憶）
+
+Sphere に push するのは設定ファイルのコピーではなく、**統計的な指紋** — Persona。
+セッション群を通じて蓄積された行動の統計サマリーであり、
+受け取った側はこの数値を参考に自分の profile を微調整するだけ。
+
+```json
+{
+  "$schema": "receptor-persona-v1",
+  "actionSignature": [0.12, -0.03, ...],
+  "emotionProfile": {
+    "halfLifeRatio": { "frustration": 1.0, "seeking": 1.17, "confidence": 0.67 },
+    "dominantAxis": "seeking",
+    "suppressionRate": 0.35
+  },
+  "firingStats": {
+    "frustration_spike": { "count": 12, "avgIntensity": 0.58 },
+    "seeking_spike": { "count": 24, "avgIntensity": 0.71 },
+    "flow_active": { "count": 8, "avgIntensity": 0.55 },
+    "confidence_sustained": { "count": 15, "avgIntensity": 0.42 }
+  },
+  "patternDistribution": {
+    "implementation": 0.55, "exploration": 0.25, "trial_error": 0.10
+  },
+  "methodTypeWeights": {
+    "knowledge_search": 0.6,
+    "context_assist": 0.2,
+    "status_notify": 0.15,
+    "context_persist": 0.05
+  },
+  "learnedDelta": { "frustration": -0.01, "seeking": 0.05, "confidence": 0.00 }
+}
+```
+
+| フィールド | 内容 | 用途 |
+|-----------|------|------|
+| `actionSignature` | 行動ログ centroid embedding | マッチングの顔。中身を開く前に類似度判定 |
+| `emotionProfile` | halfLife 比率、支配軸、抑制率 | 感度の傾向。絶対値ではなく比率で表現 |
+| `firingStats` | シグナル種別ごとの発火回数と平均強度 | どの神経がどれだけ活発か |
+| `patternDistribution` | パターン出現率 | implementation 寄りか exploration 寄りか |
+| `methodTypeWeights` | メソッドタイプ別の使用比率 | 知識検索重視か、コンテキスト保存重視か |
+| `learnedDelta` | キャリブレーション済み δ | 個体差の補正値 |
+
+**設計方針**:
+
+- **設計図のコピーではなくメトリクス**: 生の JSON 設定をそのまま流さない。
+  統計サマリーだから環境依存が入らない。rules の method 定義や
+  MCP server パスは含まれない
+- **参考値であり命令ではない**: 受け取った側が自分の prior に薄くブレンドする。
+  そのまま適用する「テンプレート」ではなく「ヒント」
+- **centroid 計算可能**: 数値の集合だから、Sphere 上で複数の persona が混ざって
+  「種族平均の行動傾向」が自然に生まれる
+- **Sphere の代謝に乗る**: よく拾われる persona は weight が上がり、
+  使われない persona は沈む
+
+**遭遇は確率的。** future_probe の射影先にたまたま persona ノードが
+存在すれば、`actionSignature` の cosine similarity で類似度を評価し、
+高ければブレンドする。意図的な配置ではなく偶然の遭遇 — パワーアップアイテム。
+
+```
+future_probe 射影
+       |
+       v
+  Sphere 検索結果に persona ノードが含まれる
+       |
+       v
+  cosine similarity (自分の actionSignature vs 発見した persona)
+       |
+       ├── similarity > 0.8 → 高信頼。強くブレンド (β=0.5)
+       ├── similarity 0.5-0.8 → 中信頼。薄く混ぜる (β=0.2)
+       └── similarity < 0.5 → 行動パターンが異なる。無視 (β=0)
+```
+
+### Persona Push タイミング — セッション終了時の判定
+
+persona push はリアルタイム発火ではなく、`engram_watch stop` 時にセッション全体を
+振り返って1回だけ判定する。良いセッションだったかはセッションが終わるまでわからない。
+
+```
+engram_watch stop 時:
+  flowActiveRatio > 0.3  (セッションの 30% 以上が flow 状態)
+  かつ confidenceAvg > 0.4
+  → persona snapshot を 1 回生成
+  → sphere-ready.jsonl に追記
+  → それ以外のセッションでは push しない
+```
+
+**設計判断**:
+- receptor-rules.json のメソッド発火ではなく、watch stop ロジックに組み込む
+- セッション単位で最大1回。Sphere に過剰な persona が流れない
+- ポジティブトリガの帰結: confidence/flow が持続したセッション = 「うまくいった状態」の
+  スナップショットだけが種族に共有される。苦戦中の persona は流れない
+
+### 設計原則
+
+- **ローカル層は確実**: 自分の過去だから常に適用できる。receptor-learned.json の拡張
+- **Sphere 層は確率的**: 遭遇するかは運次第。見つからなくても動作に影響しない
+- **漸進的**: 1セッションの異常値で prior が壊れない（EMA ブレンド）
+- **匿名**: Sphere に流す時点で projectId、パス情報は除去済み。残るのは数値構造のみ
+- **着脱可能**: prior ファイルを削除すればゼロスタートに戻る
+
+### engram との役割分担
+
+| | engram | behavioral prior | persona (Sphere) |
+|--|--------|-----------------|-------------------|
+| **対象** | 知識・事実・決定 | 行動傾向・感度・閾値 | 行動の統計的指紋 |
+| **形式** | テキスト + embedding | 数値ベクトル + 分布 | メトリクスセット |
+| **参照** | 意味検索 (semantic pull) | 起動時ロード | 偶然の遭遇 (future_probe) |
+| **スコープ** | 個体の知識 | 個体の行動記憶 | 種族の行動傾向 |
+| **比喩** | 何を知っているか | どう動く傾向があるか | 種族がどう動いてきたか |
+
+engram が脳の宣言的記憶（海馬）なら、behavioral prior は手続き的記憶（小脳・基底核）、
+persona は種族の集合的経験（遺伝子に刻まれた本能的傾向）。
+
+---
+
+## 13. 未実装（スコープ外）
 
 - **background mode handler**: passive.ts の dispatch で background → output-router 直接ルーティング
 - **shell / http executor**: Service Loader に型定義のみ、handler 未実装
+- **Behavioral Prior ローカル層**: receptor-prior.json の保存/ロード機構
+- **Behavioral Prior Sphere 層**: prior ノードの匿名化 + sphere-ready.jsonl への出力
 
 ---
 
