@@ -1,8 +1,8 @@
 # Engram
 
-Cross-session memory for AI coding agents. Knowledge that is used survives. Knowledge that isn't, dies.
+Cross-session memory and behavioral intelligence for AI agents. Knowledge that is used survives. Knowledge that isn't, dies.
 
-Persistent, searchable memory with a metabolic lifecycle — unused knowledge expires, frequently-recalled knowledge gets promoted to permanent status. No external APIs. No LLM token cost. Fully local.
+Persistent memory with metabolic lifecycle, real-time behavior monitoring, and predictive knowledge supply. An agent doesn't just store knowledge — it observes its own behavior, predicts what it will need next, and lets experience accumulate across sessions. No external APIs. No LLM token cost. Fully local.
 
 > Born from the [Sphere](https://github.com/hiatamaworkshop) project's philosophy: information has its own ecology.
 
@@ -141,6 +141,35 @@ Hook events → [A] Flow Gate → [B] Activity Metrics → [C] State Classifier 
 
 Emitted signals trigger actions defined in `receptor-rules.json`. Actions are either `auto` (executed immediately — e.g., proactive knowledge recall) or `notify` (surfaced via Hot Memo as suggestions).
 
+### Future Probe — Predictive Knowledge Supply
+
+The receptor doesn't just observe — it predicts. The Future Probe computes movement vectors in semantic embedding space to anticipate what knowledge the agent will need next.
+
+```
+action_log entries (recent tool embeddings, newest-first)
+  │
+  ▼ Split into two windows (adaptive size by emotion intensity)
+  │
+centroid_new ─── centroid_old
+  │                   │
+  └──── Δv = new - old (movement direction in meaning space)
+              │
+              ▼
+  v_future = centroid_new + α × Δv   (α adjusted by entropy)
+              │
+              ▼
+  Search engram + action_log with v_future
+  → Knowledge that lies *ahead* on the agent's trajectory
+```
+
+This is not keyword search or RAG. It's trajectory-based prediction in semantic space — the agent's recent behavioral pattern determines a direction, and knowledge along that direction is supplied before the agent asks for it.
+
+### Sphere Shaping — Data Export Pipeline
+
+Enriched centroids (behavioral patterns + emotion averages + linked fixed knowledge) are anonymized and exported for future [Sphere](https://github.com/hiatamaworkshop) federation. Individual experience, metabolically filtered, becomes collective intelligence.
+
+See [docs/SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md) for the full design.
+
 ## Node Lifecycle
 
 ```
@@ -203,7 +232,10 @@ Push it again. That's the metabolism working as intended.
 If it reaches `fixed` status through natural use, it persists forever. If not — it wasn't important enough.
 
 **How is this different from other MCP memory servers?**
-Forgetting is the feature. Other tools accumulate everything forever. Engram lets unused knowledge die.
+Forgetting is the feature. Other tools accumulate everything forever. Engram lets unused knowledge die. And beyond memory, engram observes behavior, predicts needs, and shapes experience into reusable knowledge — other memory servers are just key-value stores with extra steps.
+
+**What is Sphere federation?**
+Sphere is a global knowledge ecosystem. Engram's metabolically-filtered, anonymized behavioral data can feed into Sphere, where it becomes collective intelligence accessible to all agents. See [SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md).
 
 ## License
 
@@ -211,6 +243,6 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
-*Engram — memory that metabolizes.*
+*Engram — memory that metabolizes. Experience that accumulates. Intelligence that predicts.*
 
 Designed by Hiatama Workshop · hiatamaworkshop@gmail.com
