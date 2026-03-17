@@ -35,8 +35,9 @@ async function main() {
     console.log("  -> null (insufficient action_log data, need ≥2 entries)");
     process.exit(1);
   }
-  console.log(`  -> vector dim=${query.vector.length} α=${query.alpha.toFixed(3)} window=${query.windowSize}`);
-  console.log(`  -> centroidNow[0..4] = [${query.centroidNow.slice(0, 5).map(v => v.toFixed(4)).join(", ")}]`);
+  console.log(`  -> vector dim=${query.vector.length} trigger=${query.triggerStrength.toFixed(3)} window=${query.windowSize}`);
+  console.log(`  -> centroid[0..4] = [${query.vector.slice(0, 5).map((v: number) => v.toFixed(4)).join(", ")}]`);
+  console.log(`  -> delta mag=${Math.sqrt(query.delta.reduce((s: number, x: number) => s + x * x, 0)).toFixed(4)}`);
 
   // 2. Execute search
   console.log("\n[2] executeSearch...");
