@@ -1,5 +1,6 @@
 {
   "$schema": "Project metadata for Sphere Facade routing. techStack/domain are categorical and survive anonymization.",
   "techStack": ["typescript", "qdrant", "docker", "mcp"],
-  "domain": ["ai-agent", "memory-system", "knowledge-graph"]
+  "domain": ["ai-agent", "memory-system", "knowledge-graph"],
+  "facadeUrl": "http://localhost:3200"
 }

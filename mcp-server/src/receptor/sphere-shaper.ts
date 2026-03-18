@@ -3,22 +3,26 @@
 // ============================================================
 // Transforms enriched centroid data into Sphere-ready payloads.
 //
-// Two stages:
+// Three stages:
 //   1. anonymize(): strip identifying info (paths, projectId, local text)
-//   2. export to sphere-ready.jsonl (structured JSON, one per line)
-//
-// Sphere upload itself is NOT wired here — just the data pipeline
-// that produces clean, shaped output ready for future federation.
+//   2. shape → ExperienceCapsule (Sphere submission format)
+//   3. push to Facade /push (HTTP) with JSONL fallback
 //
 // Two Facade interaction patterns (both use techStack/domain for routing):
-//   - push: sphere-ready.jsonl → POST /push { payload, techStack, domain } (batch upload)
-//   - lookup: future_probe → POST /lookup { vector, techStack, domain } (stateless search)
+//   - push: SpherePayload → ExperienceCapsule → POST /push (this file)
+//   - lookup: future_probe → POST /lookup (handled in future-probe.ts)
 // Facade resolves domain → Sphere internally (DNS-like). Agents never see
 // individual Sphere endpoints — they only know the Facade URL.
 
 import type { EnrichedCentroid, LinkedKnowledge } from "./future-probe.js";
 import type { Persona } from "./persona-snapshot.js";
 import type { EmotionVector, ProjectMeta } from "./types.js";
+import {
+  CAPSULE_SCHEMA_VERSION,
+  createEmptyCapsule,
+  type ExperienceCapsule,
+  type NodeSeed,
+} from "./sphere-capsule.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -138,7 +142,130 @@ export function shapeForSphere(enriched: EnrichedCentroid): SpherePayload {
   return payload;
 }
 
-// ---- File export ----
+// ---- SpherePayload → ExperienceCapsule conversion ----
+
+/**
+ * Derive initialHeat from emotion intensity.
+ * High emotion = high heat (more likely to survive in Sphere).
+ * Range: 20 (calm) – 80 (intense).
+ */
+function deriveHeat(emotionAvg: Partial<EmotionVector>): number {
+  const vals = [
+    emotionAvg.frustration ?? 0,
+    emotionAvg.seeking ?? 0,
+    emotionAvg.confidence ?? 0,
+    emotionAvg.fatigue ?? 0,
+    emotionAvg.flow ?? 0,
+  ];
+  const mag = Math.sqrt(vals.reduce((s, v) => s + v * v, 0));
+  return Math.round(20 + Math.min(1, mag) * 60);
+}
+
+/**
+ * Convert SpherePayload → ExperienceCapsule for Sphere /sphere/contribute.
+ *
+ * Mapping:
+ *   - topTier[0]: centroid summary (pattern + outcome + emotion digest)
+ *   - normalNodes: linked_knowledge items (each becomes a NodeSeed)
+ *   - ghostNodes: empty
+ *   - evaluations: empty (centroid is contribution, not evaluation)
+ */
+export function toCapsule(payload: SpherePayload): ExperienceCapsule {
+  const capsule = createEmptyCapsule();
+  capsule.timestamp = payload.ts;
+
+  // Centroid itself as top-tier node
+  const emotionDigest = Object.entries(payload.emotion_avg)
+    .filter(([, v]) => v !== undefined && Math.abs(v) > 0.1)
+    .map(([k, v]) => `${k}:${v!.toFixed(1)}`)
+    .join(" ");
+
+  const centroidSeed: NodeSeed = {
+    tags: [...(payload.techStack ?? []), ...(payload.domain ?? [])],
+    summary: `${payload.pattern} → ${payload.outcome} [${emotionDigest}]`,
+    content: JSON.stringify({
+      entropy_range: payload.entropy_range,
+      window_size: payload.window_size,
+      alpha: payload.alpha,
+      version: payload.version,
+    }),
+    flags: 0,
+  };
+  capsule.topTier.push(centroidSeed);
+
+  // Linked knowledge as normal nodes
+  for (const lk of payload.linked_knowledge) {
+    const seed: NodeSeed = {
+      tags: lk.tags,
+      summary: lk.summary,
+      flags: 0,
+    };
+    capsule.normalNodes.push(seed);
+  }
+
+  return capsule;
+}
+
+/**
+ * Convert PersonaPayload → ExperienceCapsule.
+ * Persona is a behavioral fingerprint — single normal node.
+ */
+export function personaToCapsule(payload: PersonaPayload): ExperienceCapsule {
+  const capsule = createEmptyCapsule();
+  capsule.timestamp = payload.ts;
+
+  const p = payload.persona;
+  const seed: NodeSeed = {
+    tags: [
+      "persona",
+      ...(payload.techStack ?? []),
+      ...(payload.domain ?? []),
+    ],
+    summary: `persona: ${p.emotionProfile.dominantAxis} dominant, confidence=${p.emotionProfile.meanEmotion.confidence.toFixed(2)}`,
+    content: JSON.stringify(p),
+    flags: 0,
+  };
+  capsule.normalNodes.push(seed);
+
+  return capsule;
+}
+
+// ---- Facade HTTP push ----
+
+/**
+ * Push a capsule to Facade /push.
+ * Returns true if accepted, false on failure (caller falls back to JSONL).
+ */
+async function pushToFacade(capsule: ExperienceCapsule): Promise<boolean> {
+  const facadeUrl = _projectMeta?.facadeUrl;
+  if (!facadeUrl) return false;
+
+  try {
+    const res = await fetch(`${facadeUrl}/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        capsule,
+        source: "engram-receptor",
+        techStack: _projectMeta?.techStack ?? [],
+        domain: _projectMeta?.domain ?? [],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { accepted?: number };
+      console.error(`[sphere-shaper] facade push ok: accepted=${data.accepted ?? "?"}`);
+      return true;
+    }
+    console.error(`[sphere-shaper] facade push rejected: ${res.status}`);
+    return false;
+  } catch (err) {
+    console.error("[sphere-shaper] facade push error:", err);
+    return false;
+  }
+}
+
+// ---- File export (JSONL fallback) ----
 
 const SPHERE_OUTPUT_DIR = path.join(
   process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
@@ -148,7 +275,7 @@ const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
 
 /**
  * Append a shaped payload to sphere-ready.jsonl.
- * One JSON object per line — ready for batch upload when Sphere is wired.
+ * Used as fallback when Facade is unreachable.
  */
 export function writeSpherePayload(payload: SpherePayload): void {
   try {
@@ -163,16 +290,21 @@ export function writeSpherePayload(payload: SpherePayload): void {
 }
 
 /**
- * Full pipeline: enrich → anonymize → write.
- * Skips write if linked_knowledge is empty — no fixed-node grounding = no export.
+ * Full pipeline: enrich → anonymize → capsule → push (HTTP with JSONL fallback).
+ * Skips export if linked_knowledge is empty — no fixed-node grounding = no export.
  */
-export function exportEnrichedCentroid(enriched: EnrichedCentroid): SpherePayload | null {
+export async function exportEnrichedCentroid(enriched: EnrichedCentroid): Promise<SpherePayload | null> {
   if (enriched.linked_knowledge.length === 0) {
     console.error("[sphere-shaper] skip: no linked_knowledge (0 fixed-node hits)");
     return null;
   }
   const payload = shapeForSphere(enriched);
-  writeSpherePayload(payload);
+  const capsule = toCapsule(payload);
+
+  const pushed = await pushToFacade(capsule);
+  if (!pushed) {
+    writeSpherePayload(payload);
+  }
   return payload;
 }
 
@@ -214,26 +346,30 @@ function shapePersonaForSphere(persona: Persona): PersonaPayload {
 }
 
 /**
- * Full pipeline: validate → shape → write.
+ * Full pipeline: validate → shape → capsule → push (HTTP with JSONL fallback).
  * Persona must have ≥2 snapshots to be worth exporting.
  */
-export function exportPersona(persona: Persona): PersonaPayload | null {
+export async function exportPersona(persona: Persona): Promise<PersonaPayload | null> {
   if (persona.sessionMeta.snapshotCount < 2) {
     console.error("[sphere-shaper] persona skip: insufficient snapshots");
     return null;
   }
 
   const payload = shapePersonaForSphere(persona);
+  const capsule = personaToCapsule(payload);
 
-  try {
-    fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
-    fs.appendFileSync(SPHERE_OUTPUT_PATH, JSON.stringify(payload) + "\n");
-    console.error(
-      `[sphere-shaper] wrote persona: dominant=${persona.emotionProfile.dominantAxis} ` +
-      `snaps=${persona.sessionMeta.snapshotCount}`,
-    );
-  } catch (err) {
-    console.error("[sphere-shaper] persona write error:", err);
+  const pushed = await pushToFacade(capsule);
+  if (!pushed) {
+    try {
+      fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
+      fs.appendFileSync(SPHERE_OUTPUT_PATH, JSON.stringify(payload) + "\n");
+      console.error(
+        `[sphere-shaper] wrote persona: dominant=${persona.emotionProfile.dominantAxis} ` +
+        `snaps=${persona.sessionMeta.snapshotCount}`,
+      );
+    } catch (err) {
+      console.error("[sphere-shaper] persona write error:", err);
+    }
   }
 
   return payload;

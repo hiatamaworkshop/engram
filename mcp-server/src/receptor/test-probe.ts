@@ -74,9 +74,9 @@ async function main() {
   }
   console.log(`  -> version: ${payload.version}`);
 
-  // 5. Export (write to sphere-ready.jsonl)
-  console.log("\n[5] exportEnrichedCentroid -> sphere-ready.jsonl...");
-  exportEnrichedCentroid(enriched);
+  // 5. Export (facade push with JSONL fallback)
+  console.log("\n[5] exportEnrichedCentroid -> facade push (JSONL fallback)...");
+  await exportEnrichedCentroid(enriched);
   console.log("  -> done");
 
   // 6. Show final payload

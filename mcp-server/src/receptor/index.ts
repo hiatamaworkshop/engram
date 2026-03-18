@@ -277,7 +277,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
       const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
       const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined);
       if (persona) {
-        exportPersona(persona);
+        exportPersona(persona).catch(e => console.error("[receptor] persona export error:", e));
         personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
       }
     } catch (err) {
