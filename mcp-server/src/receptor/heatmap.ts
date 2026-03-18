@@ -202,6 +202,45 @@ export class PathHeatmap {
     return this._filenameIndex;
   }
 
+  /** Shadow Index status snapshot for display. */
+  shadowIndexStatus(): string {
+    // Count leaf nodes and collect multi-index stats
+    const leaves: Array<{ path: string; node: HeatNode }> = [];
+    this._collectLeavesWithNodes(this.root, [], leaves);
+
+    if (leaves.length === 0) return "Shadow Index: empty";
+
+    const withMtime = leaves.filter((l) => l.node.lastModified > 0);
+    const totalFilenames = this._filenameIndex.size;
+
+    const lines: string[] = [
+      `Shadow Index: ${leaves.length} nodes, ${withMtime.length} with mtime, ${totalFilenames} unique basenames`,
+    ];
+
+    // Show top 5 most-opened leaves
+    const byOpened = [...leaves].sort((a, b) => b.node.totalOpened - a.node.totalOpened).slice(0, 5);
+    if (byOpened.length > 0 && byOpened[0].node.totalOpened > 0) {
+      lines.push("  most opened:");
+      for (const { path, node } of byOpened) {
+        if (node.totalOpened === 0) break;
+        const short = path.split("/").slice(-3).join("/");
+        lines.push(`    ${short}  opened:${node.totalOpened} modified:${node.totalModified} state:${node.lastTouchedState}`);
+      }
+    }
+
+    // Show filenames with multiple paths (collision candidates)
+    const collisions: Array<{ name: string; count: number }> = [];
+    for (const [name, paths] of this._filenameIndex) {
+      if (paths.size >= 2) collisions.push({ name, count: paths.size });
+    }
+    if (collisions.length > 0) {
+      collisions.sort((a, b) => b.count - a.count);
+      lines.push(`  filename collisions: ${collisions.slice(0, 5).map((c) => `${c.name}(${c.count})`).join(" ")}`);
+    }
+
+    return lines.join("\n");
+  }
+
   /** Reset (for testing). */
   clear(): void {
     this.root = createNode();
@@ -233,6 +272,20 @@ export class PathHeatmap {
     }
     for (const [seg, child] of node.children) {
       this._collectLeaves(child, [...segments, seg], out, now);
+    }
+  }
+
+  private _collectLeavesWithNodes(
+    node: HeatNode,
+    segments: string[],
+    out: Array<{ path: string; node: HeatNode }>,
+  ): void {
+    if (node.children.size === 0 && segments.length > 0) {
+      out.push({ path: segments.join("/"), node });
+      return;
+    }
+    for (const [seg, child] of node.children) {
+      this._collectLeavesWithNodes(child, [...segments, seg], out);
     }
   }
 }

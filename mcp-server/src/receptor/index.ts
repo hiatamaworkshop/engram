@@ -22,6 +22,7 @@ import {
   type ScoredMethod,
 } from "./passive.js";
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
+import { formatPreNeuronStatus } from "../pre-neuron/index.js";
 
 // ---- Singleton state ----
 
@@ -572,6 +573,18 @@ export function formatState(): string {
   if (_priorResult?.applied) {
     lines.push("");
     lines.push(`Prior: ${_priorResult.dominantAxis}/${_priorResult.dominantState} (${_priorResult.snapshotCount} snaps)`);
+  }
+
+  // ---- Shadow Index / Pre-neuron ----
+  const shadowStatus = heatmap.shadowIndexStatus();
+  if (shadowStatus) {
+    lines.push("");
+    lines.push(shadowStatus);
+  }
+  const preNeuronStatus = formatPreNeuronStatus();
+  if (preNeuronStatus) {
+    lines.push("");
+    lines.push(preNeuronStatus);
   }
 
   if (ambient.isSilenced) {

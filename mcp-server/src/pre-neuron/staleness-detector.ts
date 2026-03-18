@@ -87,7 +87,15 @@ function checkSiblings(
   const siblings = heatmap.siblings(openedPath);
   if (!siblings || siblings.size < cfg.minSiblingCount) return null;
 
-  return analyzeGroup(openedPath, node, siblings, stage);
+  // siblings() returns Map<basename, HeatNode>. Convert to full-path keys.
+  const segments = openedPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  const parentPath = segments.slice(0, -1).join("/");
+  const fullPathSiblings = new Map<string, HeatNode>();
+  for (const [name, n] of siblings) {
+    fullPathSiblings.set(parentPath ? `${parentPath}/${name}` : name, n);
+  }
+
+  return analyzeGroup(openedPath, node, fullPathSiblings, stage);
 }
 
 // ---- Stage 2: Ancestor descendants ----

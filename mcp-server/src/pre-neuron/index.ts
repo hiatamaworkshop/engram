@@ -48,3 +48,23 @@ export function formatPreNeuronAlerts(limit = 3): string {
 export function getPendingAlertCount(): number {
   return Math.max(0, alerts.length - shownUpTo);
 }
+
+/** Total alerts emitted since process start. */
+export function getTotalAlertCount(): number {
+  return alerts.length;
+}
+
+/** Full snapshot for status display (does NOT consume alerts). */
+export function formatPreNeuronStatus(): string {
+  if (alerts.length === 0) return "";
+  const pending = getPendingAlertCount();
+  const recent = alerts.slice(-3).map((a) => {
+    const tag = a.severity === "critical" ? "!!" : a.severity === "warn" ? "!" : "·";
+    const ago = Math.round((Date.now() - a.timestamp) / 1000);
+    return `  ${tag} ${a.source}: ${a.message} (${ago}s ago)`;
+  });
+  return [
+    `Pre-neuron: ${alerts.length} alerts total, ${pending} pending`,
+    ...recent,
+  ].join("\n");
+}
