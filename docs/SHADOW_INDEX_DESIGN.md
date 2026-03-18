@@ -583,10 +583,20 @@ filenameIndex: Map<string, Set<string>>
 // "settings.json" → ["/app/settings.json", "/lib/core/settings.json"]
 ```
 
-- ファイル名完全一致で引く
-- 完全一致がなければ編集距離（Levenshtein）で近いものをグルーピング
+- **basename 同士の完全一致**で引く（パス全体は見ない。パスの類似性は Stage 2 の責務）
+- 完全一致がなければ **basename 同士の編集距離**（Levenshtein）で近いものをグルーピング
   - `.old`, `.bak`, `.backup`, `.v1` 等のサフィックスパターンも考慮
+  - 閾値は config 化（`levenshteinThreshold`、デフォルト: 3）
 - record() 時にマップを更新するだけ。検索時にツリー走査は不要
+
+**ライフサイクル**: filenameIndex は Active HeatNode だけでなく **Index Vector のパスも保持する**。
+Stage 3 の目的は「どこかに似たファイルがいる」という**存在の検知**であり、多次元スコアは不要。
+Index Vector が生きている限り逆引きマップに残す。Index Vector が TTL/LRU で削除された時に初めてマップからも除外する。
+
+```
+Active HeatNode 削除 → Index Vector に圧縮 → filenameIndex はそのまま保持
+Index Vector 削除（TTL/LRU）             → filenameIndex からも削除
+```
 
 **用途**: `/services/api/config/db.js` を開いた時に `/services/worker/config/db.js` の存在を検知。
 兄弟でも祖先走査でも出会わない距離にいる同種ファイルを捕捉する。

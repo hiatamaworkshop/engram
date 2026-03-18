@@ -5,6 +5,7 @@
 // If none speak, the memo is silent. Zero noise.
 
 import { formatRecommendations, drainRecommendations, formatSubsystemForHotmemo } from "./receptor/index.js";
+import { formatPreNeuronAlerts } from "./pre-neuron/index.js";
 
 const LAYER1_TAGS = new Set(["howto", "where", "why", "gotcha"]);
 const MAX_HISTORY = 10;
@@ -98,6 +99,12 @@ export function memoFormat(context: ToolContext): string {
   const subsystemLine = formatSubsystemForHotmemo();
   if (subsystemLine) {
     layers.push(subsystemLine);
+  }
+
+  // Layer 7: Pre-neuron monitors — immune system alerts (staleness, blind spots)
+  const preNeuronLine = formatPreNeuronAlerts();
+  if (preNeuronLine) {
+    layers.push(preNeuronLine);
   }
 
   if (layers.length === 0) return "";
