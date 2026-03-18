@@ -21,6 +21,7 @@ import {
   onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
   type ScoredMethod,
 } from "./passive.js";
+import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 
 // ---- Singleton state ----
 
@@ -306,8 +307,15 @@ export function ingestEvent(raw: RawHookEvent): void {
   _lastEvent = event;
 
   // Feed to subsystems
+  heatmap.agentState = metaNeuron.state;
   heatmap.record(event);
   commander.record(event);
+
+  // Pre-neuron monitor: staleness check (fire-and-forget, after record)
+  if (event.path && (event.action === "file_read" || event.action === "file_edit")) {
+    const normalizedPath = event.path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
+    detectStaleness(normalizedPath, heatmap);
+  }
 
   // Compute impulse from this event (B neuron input)
   const shortSnap = commander.shortSnapshot();

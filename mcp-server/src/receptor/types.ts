@@ -91,10 +91,22 @@ export interface ReceptorState {
   signals: FireSignal[];
 }
 
-// ---- Path heatmap node ----
+// ---- Path heatmap node (multi-index) ----
 
 export interface HeatNode {
+  // 軸1: アクセス頻度（既存）— ディレクトリ通過含む
   count: number;
+  // 軸2: 累計オープン回数 — file_read のみ、リーフのみ
+  totalOpened: number;
+  // 軸3: 累計編集回数 — file_edit のみ、リーフのみ
+  totalModified: number;
+  // 軸4: ファイルシステム鮮度 — fs.stat 由来
+  lastModified: number;
+  // 軸5: 最終アクセス時刻 — 時間減衰の基準
+  lastAccess: number;
+  // 軸6: 最終アクセス時のエージェント状態
+  lastTouchedState: AgentState;
+  // 構造
   children: Map<string, HeatNode>;
 }
 
