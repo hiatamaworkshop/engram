@@ -20,6 +20,7 @@
 //   3. format():     output-router
 
 import type { EmotionVector, AgentState } from "./types.js";
+import { getProjectMeta } from "./sphere-shaper.js";
 
 // ---- Config ----
 
@@ -62,7 +63,7 @@ interface ProbeResult {
   score: number;
   summary: string;
   tags?: string[];
-  source: "action_log" | "engram";
+  source: "action_log" | "engram" | "sphere";
 }
 
 interface ActionLogPoint {
@@ -430,11 +431,14 @@ async function searchFixedNearCentroid(
 // ---- Search execution (swappable target) ----
 
 /**
- * Execute search against local Qdrant collections.
+ * Execute search against local Qdrant + Facade (Sphere federation).
  *
- * 1. Trigger strength → dynamic score_threshold (calm=0.5, max=0.3)
- * 2. Fetch candidates from action_log + engram at centroidNow
- * 3. Post-filter: delta alignment + emotion proximity + tag heuristics
+ * 1. Local: action_log + engram (Qdrant) with threshold search + post-filter
+ * 2. Remote: Facade /lookup → Sphere /sphere/explore (if facadeUrl configured)
+ * 3. Merge all results, sort by weighted score, return top 5
+ *
+ * Facade results get tag heuristic post-filter only (no delta/emotion —
+ * Sphere nodes don't carry per-entry emotion vectors or embedding offsets).
  */
 export async function executeSearch(query: ProbeQuery, projectId?: string): Promise<ProbeResult[]> {
   // Dynamic threshold: stronger trigger → lower threshold → wider search
@@ -443,7 +447,7 @@ export async function executeSearch(query: ProbeQuery, projectId?: string): Prom
 
   const results: ProbeResult[] = [];
 
-  // Search action_log for past behavioral patterns
+  // --- Local: action_log ---
   const actionResults = await searchQdrantWithThreshold(
     ACTION_LOG_COLLECTION, query.vector, 10, threshold, projectId,
   );
@@ -456,7 +460,7 @@ export async function executeSearch(query: ProbeQuery, projectId?: string): Prom
     });
   }
 
-  // Search engram for relevant knowledge
+  // --- Local: engram ---
   const engramResults = await searchQdrantWithThreshold(
     ENGRAM_COLLECTION, query.vector, 10, threshold, projectId,
   );
@@ -470,9 +474,88 @@ export async function executeSearch(query: ProbeQuery, projectId?: string): Prom
     });
   }
 
+  // --- Remote: Facade /lookup (Sphere federation) ---
+  const facadeResults = await searchFacade(query);
+  for (const r of facadeResults) {
+    results.push(r);
+  }
+
   // Sort by weighted score, descending
   results.sort((a, b) => b.score - a.score);
   return results.slice(0, 5);
+}
+
+// ---- Facade search (Sphere federation) ----
+
+/**
+ * Search via Facade /lookup → Sphere /sphere/explore.
+ * Returns empty if facadeUrl is not configured or Facade is unreachable.
+ *
+ * Facade returns: { results: [{ id, score, summary, tags?, kind?, heat?, sphereId }] }
+ * Post-filter: tag heuristics only (Sphere nodes lack emotion/vector for delta alignment).
+ * Facade limit: 3 per Sphere, max 5 Spheres (configured on facade side).
+ */
+async function searchFacade(query: ProbeQuery): Promise<ProbeResult[]> {
+  const meta = getProjectMeta();
+  if (!meta?.facadeUrl) return [];
+
+  // Build text query from probe state for Sphere explore (text-based, not vector)
+  const emotionParts = Object.entries(query.emotion)
+    .filter(([, v]) => Math.abs(v) > 0.2)
+    .map(([k, v]) => `${k}:${v > 0 ? "high" : "low"}`);
+  const queryText = `${query.agentState} ${emotionParts.join(" ")}`;
+
+  try {
+    const res = await fetch(`${meta.facadeUrl}/lookup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: queryText,
+        techStack: meta.techStack ?? [],
+        domain: meta.domain ?? [],
+        limit: 3,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      console.error(`[future-probe] facade lookup failed: ${res.status}`);
+      return [];
+    }
+
+    const data = (await res.json()) as {
+      results: Array<{
+        id: string;
+        score: number;
+        summary: string;
+        tags?: string[];
+        kind?: string;
+        heat?: number;
+        sphereId: string;
+      }>;
+    };
+
+    const results: ProbeResult[] = [];
+    for (const r of data.results ?? []) {
+      // Tag heuristic post-filter (Layer 3 only — no delta/emotion from Sphere)
+      const payload = { tags: r.tags ?? [], state: "", outcome: "" };
+      const filtered = applyPostFilter(r.score, payload, query);
+      results.push({
+        id: r.id,
+        score: filtered,
+        summary: r.summary,
+        tags: r.tags,
+        source: "sphere",
+      });
+    }
+
+    if (results.length > 0) {
+      console.error(`[future-probe] facade lookup: ${results.length} results from sphere`);
+    }
+    return results;
+  } catch (err) {
+    console.error("[future-probe] facade lookup error:", err);
+    return [];
+  }
 }
 
 // ---- Qdrant search (threshold-aware) ----
@@ -588,10 +671,11 @@ function applyPostFilter(
  */
 export function formatResults(results: ProbeResult[]): string {
   if (results.length === 0) return "";
+  const srcLabel = (s: ProbeResult["source"]) =>
+    s === "action_log" ? "past" : s === "sphere" ? "sphere" : "knowledge";
   const lines = results.map(r => {
-    const src = r.source === "action_log" ? "past" : "knowledge";
     const tags = r.tags ? ` [${r.tags.join(",")}]` : "";
-    return `${src}: ${r.summary}${tags} (${r.score.toFixed(2)})`;
+    return `${srcLabel(r.source)}: ${r.summary}${tags} (${r.score.toFixed(2)})`;
   });
   return lines.join("\n");
 }
