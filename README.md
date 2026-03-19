@@ -168,15 +168,17 @@ centroid_new ─── centroid_old
 
 No linear extrapolation in embedding space — non-linearity makes projected positions unreliable. Instead, search at the current centroid and let delta direction + emotion state filter the results. All computation is pure math: cosine similarity, L2 norms, EMA thresholds. Zero LLM inference.
 
-### Behavioral Prior & Persona System (planned)
+### Shadow Index — Blind Spot Detection
 
-Engram provides information continuity (what you know). The planned Behavioral Prior will add behavioral continuity (how you move) — saving receptor state across sessions so agents don't start from zero. The Persona System extends this to species-level: successful sessions export a statistical fingerprint (firing stats, pattern distributions, learned deltas) to the Sphere pipeline. Other agents may encounter these personas by chance via Future Probe, blending them into their own priors. See [docs/RECEPTOR_ARCHITECTURE.md](docs/RECEPTOR_ARCHITECTURE.md) §12 for the full design.
+Pre-neuron monitor that tracks which knowledge areas the agent hasn't revisited. Multi-index HeatNodes with staleness detection surface "you haven't looked at X in a while" alerts via Hot Memo. See [SHADOW_INDEX_DESIGN.md](docs/SHADOW_INDEX_DESIGN.md).
+
+### Persona System — Perceptual Lens Distillation
+
+Successful sessions export a Persona: a statistical fingerprint of emotion baselines, field adjustments, and pattern distributions. On next session start, the receptor loads the prior persona to calibrate from — no cold start. Personas are model-aware (`origin.model`) and profile-versioned (`origin.profileHash`). See [PERSONA_DESIGN.md](docs/PERSONA_DESIGN.md).
 
 ### Sphere Shaping — Data Export Pipeline
 
-Enriched centroids (behavioral patterns + emotion averages + linked fixed knowledge) are anonymized and exported for future [Sphere](https://github.com/hiatamaworkshop) federation. Individual experience, metabolically filtered, becomes collective intelligence.
-
-See [docs/SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md) for the full design.
+Experience capsules (behavioral patterns + emotion averages + linked knowledge) are exported to the [Sphere](https://github.com/hiatamaworkshop) federation pipeline. Individual experience, metabolically filtered, becomes collective intelligence. See [SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md).
 
 ## Node Lifecycle
 
@@ -190,14 +192,31 @@ engram_push → [recent, weight:0, TTL:6h]
         ▼           ▼           ▼
    [promoted]    [expired]   [demoted]
    → fixed       deleted     → recent
-   (permanent)
+   weight held   (sink notify)
+        │
+   no recall for ~100 days
+        │
+        ▼
+   [soft demotion]
+   → recent (TTL restart)
 ```
 
-- **Promotion**: weight >= 3 AND hitCount >= 5 → `fixed` (permanent)
+- **Promotion**: weight >= 3 AND hitCount >= 5 → `fixed`
 - **Expiry**: TTL <= 0 AND weight <= 0 → deleted
-- **Demotion**: `fixed` + negative flag → back to `recent`
+- **Soft demotion**: fixed nodes decay with a 60-day half-life. Below threshold → back to `recent` with fresh TTL. Recall resets the clock.
+- **Flag**: Immediate demotion (urgent removal)
 
-The Digestor runs every 10 minutes: decay weights, tick TTL, promote, expire. Fixed nodes are untouched. Inactive projects hibernate (TTL frozen).
+### Density-Based Dynamic Metabolism
+
+The Digestor adapts to project activity. Node density (nodes/hour) derived from existing `ingestedAt` timestamps drives decay rate — no extra files or queries.
+
+| Density | Decay | Behavior |
+|---------|-------|----------|
+| < 1 node/h | 0.5× base | Protect sparse knowledge |
+| ~3 nodes/h | 1.0× base | Baseline |
+| > 10 nodes/h | 2.0–3.0× base | Cull information flood |
+
+Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a sink for visibility. See [METABOLISM_EVOLUTION.md](docs/METABOLISM_EVOLUTION.md).
 
 ## Configuration
 
@@ -215,9 +234,12 @@ The Digestor runs every 10 minutes: decay weights, tick TTL, promote, expire. Fi
 |--------|------|---------|
 | POST | `/recall` | Semantic search |
 | POST | `/ingest` | Submit capsuleSeeds |
+| POST | `/embed` | Raw text → 384d vector |
 | POST | `/feedback` | Weight signal |
+| POST | `/activate` | Add project to Digestor scope |
+| POST | `/deactivate` | Remove project from Digestor scope |
 | POST | `/mcp` | Streamable HTTP MCP endpoint |
-| GET | `/scan/:projectId` | List nodes |
+| GET | `/scan/:projectId` | List nodes (?tag, ?status, ?sort) |
 | GET | `/status` | Store statistics |
 | GET | `/health` | Health check |
 
@@ -237,7 +259,7 @@ cd mcp-server && npm install && npm run build
 Push it again. That's the metabolism working as intended.
 
 **What about important but rarely used knowledge?**
-If it reaches `fixed` status through natural use, it persists forever. If not — it wasn't important enough.
+If it reaches `fixed` status through natural use, it persists — but even fixed nodes slowly decay if never recalled again (60-day half-life). Knowledge that stays relevant survives; knowledge that doesn't, eventually fades.
 
 **How is this different from other MCP memory servers?**
 Forgetting is the feature. Other tools accumulate everything forever. Engram lets unused knowledge die. And beyond memory, engram observes behavior, predicts needs, and shapes experience into reusable knowledge — other memory servers are just key-value stores with extra steps.
