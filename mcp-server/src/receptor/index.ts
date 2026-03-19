@@ -82,7 +82,7 @@ import {
   finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
 } from "./persona-snapshot.js";
-import { loadPrior, type PriorResult } from "./persona-prior.js";
+import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type SwapResult, type CompatResult } from "./persona-prior.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -266,6 +266,48 @@ function executeAutoQueue(): void {
 export function recordTurn(type: "user" | "agent"): void {
   commander.recordTurn(type);
 }
+
+// ---- Lens swap API ----
+
+/** Validate a persona's compatibility without applying it. */
+export function validateLens(persona: import("./persona-snapshot.js").Persona): CompatResult {
+  return validatePersonaCompat(persona);
+}
+
+/**
+ * Swap the current lens mid-session. Clean swap — resets emotion state,
+ * re-seeds from new persona. No blending.
+ * Returns SwapResult with applied status and any warnings.
+ */
+export function swapLens(persona: import("./persona-snapshot.js").Persona): SwapResult {
+  if (!_watching) {
+    return { applied: false, reason: "Receptor not watching" };
+  }
+
+  // Clean swap: reset emotion state
+  accumulator.clear();
+  ambient.clear();
+  _lastEmotion = { ...ZERO_EMOTION };
+  _lastSignals = [];
+  resetHoldState();
+
+  // Apply new lens
+  const result = applyLens(persona, ambient);
+
+  if (result.applied) {
+    _priorResult = {
+      applied: true,
+      source: "lens-swap",
+      dominantAxis: result.dominantAxis,
+      dominantState: result.dominantState,
+    };
+  }
+
+  return result;
+}
+
+// Re-export types for external callers
+export type { SwapResult, CompatResult };
 
 // ---- Public API ----
 

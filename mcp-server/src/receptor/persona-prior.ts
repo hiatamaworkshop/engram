@@ -1,5 +1,5 @@
 // ============================================================
-// Receptor — Persona Prior Loader
+// Receptor — Persona Prior Loader + Lens Swap
 // ============================================================
 // Reads the most recent PersonaPayload from sphere-ready.jsonl
 // and applies it to the receptor's initial state.
@@ -9,12 +9,14 @@
 // ambient baselines and field adjustments so the receptor starts
 // calibrated for similar work rather than from zero.
 //
-// Design: the prior is a suggestion, not a command. The receptor
-// overwrites it naturally as new events accumulate. The prior
-// only affects the initial calibration window (~first 20 events).
+// Lens swap: mid-session persona replacement. Clean swap — resets
+// emotion state and re-seeds from new persona. No blending.
+//
+// Design: docs/PERSONA_DESIGN.md
 
 import type { PersonaPayload } from "./sphere-shaper.js";
 import type { Persona } from "./persona-snapshot.js";
+import { getProfileHash } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
 import type { AgentState } from "./types.js";
 import * as fs from "node:fs";
@@ -30,6 +32,13 @@ export interface PriorResult {
   snapshotCount?: number;
 }
 
+export interface CompatResult {
+  compatible: boolean;
+  reason?: string;
+  modelMatch: boolean;
+  profileMatch: boolean;
+}
+
 // ---- Constants ----
 
 const SPHERE_OUTPUT_DIR = path.join(
@@ -41,7 +50,49 @@ const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
 // Maximum age of a persona to consider (7 days)
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// ---- Public API ----
+// ---- 3. Validation: origin compatibility check ----
+
+/**
+ * Check if a persona is compatible with the current receptor.
+ * model mismatch = warning (applicable with risk).
+ * profileHash mismatch = incompatible (delta semantics differ).
+ */
+export function validatePersonaCompat(persona: Persona): CompatResult {
+  const origin = (persona as any).origin;
+
+  // v1 personas have no origin — compatible by default (legacy)
+  if (!origin) {
+    return { compatible: true, modelMatch: true, profileMatch: true };
+  }
+
+  const currentModel = process.env.ENGRAM_MODEL || "unknown";
+  const currentHash = getProfileHash();
+
+  const modelMatch = origin.model === currentModel || origin.model === "unknown" || currentModel === "unknown";
+  const profileMatch = origin.profileHash === currentHash || origin.profileHash === "unknown" || currentHash === "unknown";
+
+  if (!profileMatch) {
+    return {
+      compatible: false,
+      reason: `profileHash mismatch: persona=${origin.profileHash} current=${currentHash}. Delta semantics differ — adapter required.`,
+      modelMatch,
+      profileMatch,
+    };
+  }
+
+  if (!modelMatch) {
+    return {
+      compatible: true, // applicable but with warning
+      reason: `model mismatch: persona=${origin.model} current=${currentModel}. Lens may behave differently.`,
+      modelMatch,
+      profileMatch,
+    };
+  }
+
+  return { compatible: true, modelMatch, profileMatch };
+}
+
+// ---- 4. Load + Apply (session start) ----
 
 /**
  * Load the most recent persona from sphere-ready.jsonl and apply
@@ -64,25 +115,21 @@ export function loadPrior(ambient: AmbientEstimator): PriorResult {
     return { applied: false, source: "expired" };
   }
 
-  // Apply to ambient: seed EMA baselines from persona's emotion profile
-  // and field adjustments. v2: top-level fieldAdjustment. v1 compat: adaptedThresholds.
-  const fieldAdj = (persona as any).fieldAdjustment
-    ?? (persona as any).adaptedThresholds?.fieldAdjustment;
-  if (fieldAdj) {
-    ambient.applyPrior(persona.emotionProfile.meanEmotion, fieldAdj);
-  } else {
-    ambient.applyPrior(persona.emotionProfile.meanEmotion, {} as any);
+  // Validate compatibility
+  const compat = validatePersonaCompat(persona);
+  if (!compat.compatible) {
+    console.error(`[persona-prior] skip: ${compat.reason}`);
+    return { applied: false, source: "incompatible" };
+  }
+  if (compat.reason) {
+    console.error(`[persona-prior] warn: ${compat.reason}`);
   }
 
+  // Apply
+  applyPersona(persona, ambient);
+
   // Derive dominant state from stateDistribution
-  let dominantState: AgentState = "exploring";
-  let maxRatio = 0;
-  for (const [state, ratio] of Object.entries(persona.stateDistribution)) {
-    if (ratio > maxRatio) {
-      maxRatio = ratio;
-      dominantState = state as AgentState;
-    }
-  }
+  const dominantState = deriveDominantState(persona);
 
   console.error(
     `[persona-prior] loaded: dominant=${persona.emotionProfile.dominantAxis} ` +
@@ -99,12 +146,82 @@ export function loadPrior(ambient: AmbientEstimator): PriorResult {
   };
 }
 
-// ---- Internal ----
+// ---- 5. Lens Swap (mid-session) ----
+
+export interface SwapResult {
+  applied: boolean;
+  reason?: string;
+  dominantAxis?: string;
+  dominantState?: AgentState;
+}
 
 /**
- * Read sphere-ready.jsonl and return the most recent PersonaPayload's persona.
- * Scans from the end of the file for efficiency.
+ * Swap the current lens mid-session. Clean swap — no blending.
+ *
+ * Caller must:
+ * 1. Reset accumulator (accumulator.clear())
+ * 2. Reset ambient (ambient.clear())
+ * 3. Call this function with the new persona
+ *
+ * This function handles: validation + ambient.applyPrior().
+ * Caller handles reset because accumulator/ambient are not accessible here.
  */
+export function applyLens(persona: Persona, ambient: AmbientEstimator): SwapResult {
+  // Validate
+  const compat = validatePersonaCompat(persona);
+  if (!compat.compatible) {
+    console.error(`[persona-lens] reject: ${compat.reason}`);
+    return { applied: false, reason: compat.reason };
+  }
+  if (compat.reason) {
+    console.error(`[persona-lens] warn: ${compat.reason}`);
+  }
+
+  // Apply to ambient (caller already cleared it)
+  applyPersona(persona, ambient);
+
+  const dominantState = deriveDominantState(persona);
+
+  console.error(
+    `[persona-lens] swapped: dominant=${persona.emotionProfile.dominantAxis} ` +
+    `state=${dominantState} model=${(persona as any).origin?.model ?? "v1"}`
+  );
+
+  return {
+    applied: true,
+    reason: compat.reason,
+    dominantAxis: persona.emotionProfile.dominantAxis,
+    dominantState,
+  };
+}
+
+// ---- Shared internals ----
+
+/** Apply persona's core lens to ambient. v1/v2 compatible. */
+function applyPersona(persona: Persona, ambient: AmbientEstimator): void {
+  const fieldAdj = (persona as any).fieldAdjustment
+    ?? (persona as any).adaptedThresholds?.fieldAdjustment;
+  if (fieldAdj) {
+    ambient.applyPrior(persona.emotionProfile.meanEmotion, fieldAdj);
+  } else {
+    ambient.applyPrior(persona.emotionProfile.meanEmotion, {} as any);
+  }
+}
+
+/** Derive dominant state from stateDistribution. */
+function deriveDominantState(persona: Persona): AgentState {
+  let dominantState: AgentState = "exploring";
+  let maxRatio = 0;
+  for (const [state, ratio] of Object.entries(persona.stateDistribution)) {
+    if (ratio > maxRatio) {
+      maxRatio = ratio;
+      dominantState = state as AgentState;
+    }
+  }
+  return dominantState;
+}
+
+/** Read sphere-ready.jsonl and return the most recent persona. */
 function readLatestPersona(): Persona | null {
   try {
     if (!fs.existsSync(SPHERE_OUTPUT_PATH)) return null;
