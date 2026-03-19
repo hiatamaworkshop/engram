@@ -14,6 +14,8 @@
     "promotionHitCount": 5,
     "decayPerBatch": 0.1,
     "ttlSeconds": 21600,
-    "idleThresholdMs": 1800000
+    "idleThresholdMs": 1800000,
+    "fixedHalfLifeDays": 60,
+    "fixedDemotionThreshold": 1.0
   }
 }

@@ -6,7 +6,8 @@ import { handleStatus } from "./handlers/status.js";
 import { handleScan } from "./handlers/scan.js";
 import { handleFeedback } from "./handlers/feedback.js";
 import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats, embedForExternal } from "./upper-layer/index.js";
-import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject } from "./digestor.js";
+import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject, setExpireHandler } from "./digestor.js";
+import type { ExpiredNodeInfo } from "./digestor.js";
 import { handleMcpRequest } from "./mcp-endpoint.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 
@@ -244,6 +245,15 @@ server.listen(PORT, () => {
   const qdrantUrl = cfg.upperLayer?.qdrantUrl ?? "http://localhost:6333";
   const collection = cfg.upperLayer?.collection ?? "engram";
   startDigestor({ ...cfg.digestor, qdrantUrl, collection });
+
+  // Sink: log expired/demoted nodes for visibility
+  setExpireHandler((nodes: ExpiredNodeInfo[]) => {
+    for (const n of nodes) {
+      console.log(
+        `[digestor:sink] ${n.reason}: "${n.summary}" [${n.tags.join(",")}] project=${n.projectId} weight=${n.weight}`,
+      );
+    }
+  });
 });
 
 // ---- Graceful shutdown ----

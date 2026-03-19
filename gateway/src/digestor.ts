@@ -2,10 +2,22 @@
 // Engram — Digestor (project-scoped batch metabolism)
 // ============================================================
 //
-// Processes ONLY the active project's recent nodes:
+// Two-pass metabolism per project batch:
+//
+// Pass 1 — Recent nodes:
 //   - weight >= promotionThreshold → promote to "fixed"
-//   - ttl <= 0 && weight < promotionThreshold*0.5 → delete (expired)
-//   - otherwise → decrement ttl by intervalMs/1000 and leave for next batch
+//   - ttl <= 0 && weight < threshold → delete (expired)
+//   - otherwise → decrement ttl (dynamic decay from density) and leave for next batch
+//
+// Pass 2 — Fixed nodes (soft demotion):
+//   - Apply half-life exponential decay (default 60 days)
+//   - recall hit resets decay timer (weight untouched)
+//   - weight < fixedDemotionThreshold → demote to "recent" (re-enters TTL cycle)
+//
+// Density-based dynamic metabolism:
+//   - density = nodeCount / span(ingestedAt) per project
+//   - high density → faster decay (information flood)
+//   - low density → slower decay (preserve scarce knowledge)
 //
 // Inactive projects are never touched → natural hibernation.
 // Idle projects (no API activity for idleThresholdMs) are skipped → soft hibernation.
@@ -27,9 +39,11 @@ export interface DigestorConfig {
   intervalMs: number;          // batch interval (default: 10min)
   promotionThreshold: number;  // weight needed to promote to fixed (default: 3)
   promotionHitCount: number;   // hitCount needed to promote to fixed (default: 5)
-  decayPerBatch: number;       // weight decay per batch tick for recent nodes (default: 0.1)
+  decayPerBatch: number;       // BASE weight decay per batch tick for recent nodes (default: 0.1)
   ttlSeconds: number;          // initial TTL countdown for new nodes (default: 6h = 21600s)
   idleThresholdMs: number;     // skip batch if no activity for this long (default: 30min)
+  fixedHalfLifeDays: number;   // half-life for fixed node decay in days (default: 60)
+  fixedDemotionThreshold: number; // weight below this → fixed demoted to recent (default: 1.0)
   qdrantUrl: string;
   collection: string;
 }
@@ -41,9 +55,30 @@ export const DEFAULT_DIGESTOR_CONFIG: DigestorConfig = {
   decayPerBatch: 0.1,
   ttlSeconds: 21_600,          // 6 hours
   idleThresholdMs: 1_800_000,  // 30 minutes
+  fixedHalfLifeDays: 60,       // ~100 days to demotion from weight=3
+  fixedDemotionThreshold: 1.0,
   qdrantUrl: "http://localhost:6333",
   collection: "engram",
 };
+
+// ---- Expired node notification (sink integration) ----
+
+export interface ExpiredNodeInfo {
+  pointId: string;
+  summary: string;
+  tags: string[];
+  projectId: string;
+  weight: number;
+  reason: "ttl_expired" | "soft_demotion";
+}
+
+type ExpireHandler = (nodes: ExpiredNodeInfo[]) => void;
+let _onExpire: ExpireHandler | null = null;
+
+/** Register a handler to receive notifications when nodes are deleted. */
+export function setExpireHandler(handler: ExpireHandler): void {
+  _onExpire = handler;
+}
 
 // ---- State ----
 
@@ -182,45 +217,118 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// ---- Density computation (from existing batch scan) ----
+
+interface ProjectDensity {
+  nodeCount: number;
+  spanMs: number;       // newest - oldest ingestedAt
+  density: number;      // nodes per hour
+  decayMultiplier: number; // applied to config.decayPerBatch
+}
+
+/**
+ * Compute density from ingestedAt timestamps of scanned nodes.
+ * No additional queries — piggybacks on the existing scroll.
+ */
+function computeDensity(points: Array<{ payload: UpperLayerPointPayload }>): ProjectDensity {
+  let oldest = Infinity;
+  let newest = 0;
+  for (const p of points) {
+    const t = (p.payload as UpperLayerPointPayload).ingestedAt ?? 0;
+    if (t < oldest) oldest = t;
+    if (t > newest) newest = t;
+  }
+
+  const spanMs = Math.max(newest - oldest, 3_600_000); // min 1h to avoid division spikes
+  const nodeCount = points.length;
+  const density = nodeCount / (spanMs / 3_600_000); // nodes per hour
+
+  // Decay multiplier: density-driven
+  //   < 1 node/h  → 0.5× (gentle — scarce knowledge)
+  //   ~3 nodes/h  → 1.0× (baseline)
+  //   > 10 nodes/h → 2.0× (aggressive — information flood)
+  let decayMultiplier: number;
+  if (density < 1) {
+    decayMultiplier = 0.5 + density * 0.5; // 0.5-1.0
+  } else if (density <= 10) {
+    decayMultiplier = 1.0 + (density - 1) / 9; // 1.0-2.0
+  } else {
+    decayMultiplier = Math.min(3.0, 2.0 + (density - 10) / 20); // 2.0-3.0 cap
+  }
+
+  return { nodeCount, spanMs, density: round2(density), decayMultiplier: round2(decayMultiplier) };
+}
+
+// ---- Fixed node half-life decay ----
+
+/**
+ * Compute weight decay for a fixed node using half-life formula.
+ * weight(t) = weight × 2^(-batchInterval / halfLife)
+ * Returns the decayed weight after one batch interval.
+ */
+function fixedDecayFactor(): number {
+  const halfLifeMs = config.fixedHalfLifeDays * 86_400_000;
+  return Math.pow(2, -config.intervalMs / halfLifeMs);
+}
+
+// ---- Project batch: two-pass (recent + fixed) ----
+
 async function runProjectBatch(projectId: string): Promise<void> {
-  const points = await scrollPoints(
+  // Scroll ALL project nodes (recent + fixed) in one query
+  const allPoints = await scrollPoints(
     config.qdrantUrl,
     config.collection,
     {
       must: [
         { key: "projectId", match: { value: projectId } },
-        { key: "status", match: { value: "recent" } },
       ],
     },
     500,
   );
 
-  if (points.length === 0) return;
+  if (allPoints.length === 0) return;
 
-  const decrement = Math.floor(config.intervalMs / 1000); // seconds per batch tick
+  // Split by status
+  const recentPoints = allPoints.filter(p => (p.payload as UpperLayerPointPayload).status === "recent");
+  const fixedPoints = allPoints.filter(p => (p.payload as UpperLayerPointPayload).status === "fixed");
+
+  // Compute project density from all nodes
+  const density = computeDensity(allPoints);
+  const effectiveDecay = round2(config.decayPerBatch * density.decayMultiplier);
+
+  // Collect expired node info for sink notification
+  const expiredNodes: ExpiredNodeInfo[] = [];
+
+  // ---- Pass 1: Recent nodes ----
+
+  const decrement = Math.floor(config.intervalMs / 1000);
   const toPromote: string[] = [];
   const toExpire: string[] = [];
-  // Surviving nodes: grouped by (newTtl, newWeight) to batch setPayload calls
-  const toUpdate: Map<string, string[]> = new Map(); // "ttl:weight" → pointIds
+  const toUpdate: Map<string, string[]> = new Map();
 
-  for (const point of points) {
+  for (const point of recentPoints) {
     const p = point.payload as UpperLayerPointPayload;
     const weight = p.weight ?? 0;
     const hitCount = p.hitCount ?? 0;
-    const currentTtl = p.ttl ?? config.ttlSeconds; // init if missing (legacy nodes)
+    const currentTtl = p.ttl ?? config.ttlSeconds;
 
-    // Dual promotion: both weight AND hitCount must meet thresholds
     if (weight >= config.promotionThreshold && hitCount >= config.promotionHitCount) {
       toPromote.push(point.id);
     } else {
       const newTtl = currentTtl - decrement;
-      const newWeight = round2(weight - config.decayPerBatch);
-      // TTL expired: only survive if weight is high enough to justify extension
+      const newWeight = round2(weight - effectiveDecay);
       const ttlExpiredThreshold = config.promotionThreshold * 0.5;
       if (newTtl <= 0 && newWeight < ttlExpiredThreshold) {
         toExpire.push(point.id);
+        expiredNodes.push({
+          pointId: point.id,
+          summary: p.summary ?? "",
+          tags: p.tags ?? [],
+          projectId,
+          weight: p.weight ?? 0,
+          reason: "ttl_expired",
+        });
       } else {
-        // Decrement ttl + apply weight decay for surviving nodes
         const key = `${newTtl}:${newWeight}`;
         const group = toUpdate.get(key) ?? [];
         group.push(point.id);
@@ -239,12 +347,12 @@ async function runProjectBatch(projectId: string): Promise<void> {
     );
   }
 
-  // Expire
+  // Expire recent
   if (toExpire.length > 0) {
     await deletePoints(config.qdrantUrl, config.collection, toExpire);
   }
 
-  // Tick down TTL + apply weight decay (grouped to minimize API calls)
+  // Update surviving recent
   for (const [key, ids] of toUpdate) {
     const [ttlStr, weightStr] = key.split(":");
     await setPayload(
@@ -255,21 +363,80 @@ async function runProjectBatch(projectId: string): Promise<void> {
     );
   }
 
-  const updated = [...toUpdate.values()].reduce((n, ids) => n + ids.length, 0);
+  // ---- Pass 2: Fixed nodes (soft demotion) ----
+
+  const factor = fixedDecayFactor();
+  const toDemote: string[] = [];
+  const fixedUpdate: Map<string, string[]> = new Map(); // "weight" → pointIds
+
+  for (const point of fixedPoints) {
+    const p = point.payload as UpperLayerPointPayload;
+    const weight = p.weight ?? config.promotionThreshold;
+    const newWeight = round2(weight * factor);
+
+    if (newWeight < config.fixedDemotionThreshold) {
+      toDemote.push(point.id);
+      expiredNodes.push({
+        pointId: point.id,
+        summary: p.summary ?? "",
+        tags: p.tags ?? [],
+        projectId,
+        weight,
+        reason: "soft_demotion",
+      });
+    } else {
+      const key = `${newWeight}`;
+      const group = fixedUpdate.get(key) ?? [];
+      group.push(point.id);
+      fixedUpdate.set(key, group);
+    }
+  }
+
+  // Demote fixed → recent (re-enters TTL cycle)
+  if (toDemote.length > 0) {
+    await setPayload(
+      config.qdrantUrl,
+      config.collection,
+      toDemote,
+      { status: "recent" as NodeStatus, ttl: config.ttlSeconds } as Partial<UpperLayerPointPayload>,
+    );
+  }
+
+  // Update fixed weights
+  for (const [weightStr, ids] of fixedUpdate) {
+    await setPayload(
+      config.qdrantUrl,
+      config.collection,
+      ids,
+      { weight: Number(weightStr) } as Partial<UpperLayerPointPayload>,
+    );
+  }
+
+  // ---- Sink notification ----
+
+  if (expiredNodes.length > 0 && _onExpire) {
+    try { _onExpire(expiredNodes); } catch { /* non-fatal */ }
+  }
+
+  // ---- Logging ----
+
+  const recentUpdated = [...toUpdate.values()].reduce((n, ids) => n + ids.length, 0);
+  const fixedUpdated = [...fixedUpdate.values()].reduce((n, ids) => n + ids.length, 0);
   console.log(
-    `[digestor] batch: project=${projectId} scanned=${points.length} promoted=${toPromote.length} expired=${toExpire.length} updated=${updated}`,
+    `[digestor] batch: project=${projectId} total=${allPoints.length} ` +
+    `density=${density.density}n/h×${density.decayMultiplier} ` +
+    `promoted=${toPromote.length} expired=${toExpire.length} demoted=${toDemote.length} ` +
+    `updated=${recentUpdated}+${fixedUpdated}`,
   );
 
   // Refresh per-project counts cache after batch
   try {
-    const projectFilter = [{ key: "projectId", match: { value: projectId } }];
-    const [total, fixed] = await Promise.all([
-      countPoints(config.qdrantUrl, config.collection, { must: projectFilter }),
-      countPoints(config.qdrantUrl, config.collection, {
-        must: [...projectFilter, { key: "status", match: { value: "fixed" } }],
-      }),
-    ]);
-    countsCache.set(projectId, { total, recent: total - fixed, fixed, updatedAt: Date.now() });
+    countsCache.set(projectId, {
+      total: allPoints.length - toExpire.length,
+      recent: recentPoints.length - toExpire.length - toPromote.length + toDemote.length,
+      fixed: fixedPoints.length + toPromote.length - toDemote.length,
+      updatedAt: Date.now(),
+    });
   } catch { /* non-fatal */ }
 }
 
