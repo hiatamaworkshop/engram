@@ -116,6 +116,15 @@ export interface HeatmapSnapshot {
   topPaths: Array<{ path: string; count: number }>;
 }
 
+// ---- Index Vector (compressed expired HeatNode) ----
+
+export interface IndexVector {
+  path: string;
+  vector: number[];     // 正規化済み 6次元（各軸 0.0-1.0, 兄弟内パーセンタイル）
+  lastSeen: number;     // 最後にアクティブだった時刻
+  trapCount: number;    // repeated-trap 発火回数（engram push 判定用）
+}
+
 // ---- Commander time window ----
 
 export interface TimeWindow {

@@ -121,7 +121,37 @@ function flushHeatmap(): void {
   } catch (err) {
     console.error("[receptor] heatmap sink error:", err);
   }
+
+  // Run metabolism: expire old HeatNodes → Index Vectors
+  try {
+    const expired = heatmap.runMetabolism();
+    if (expired > 0) {
+      console.error(`[receptor] metabolism: ${expired} nodes expired → index vectors`);
+    }
+  } catch (err) {
+    console.error("[receptor] metabolism error:", err);
+  }
 }
+
+// ---- Index Vector expire handler (sink integration) ----
+// Writes expired Index Vectors to receptor-output/index-vectors.jsonl for sink pickup.
+// Vectors with trapCount > 0 are candidates for engram push (cross-session memory).
+
+const _indexVectorSinkPath = path.join(_heatmapSinkDir, "index-vectors.jsonl");
+
+heatmap.setExpireHandler((vectors) => {
+  try {
+    fs.mkdirSync(_heatmapSinkDir, { recursive: true });
+    const lines = vectors.map((v) => JSON.stringify(v)).join("\n") + "\n";
+    fs.appendFileSync(_indexVectorSinkPath, lines);
+    const trapped = vectors.filter((v) => v.trapCount > 0);
+    if (trapped.length > 0) {
+      console.error(`[receptor] ${trapped.length} trap vectors written to sink (engram push candidates)`);
+    }
+  } catch (err) {
+    console.error("[receptor] index vector sink error:", err);
+  }
+});
 
 // ---- Internal executor: path_suggest ----
 // Reads heatmap directly (no external dependency). Output via routeOutput.
@@ -277,7 +307,8 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     try {
       const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
       const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
-      const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined);
+      const model = process.env.ENGRAM_MODEL || undefined;
+      const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
       if (persona) {
         exportPersona(persona).catch(e => console.error("[receptor] persona export error:", e));
         personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;

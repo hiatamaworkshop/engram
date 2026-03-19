@@ -22,7 +22,8 @@ export interface ShadowIndexConfig {
   stateMultipliers: Record<AgentState, number>;
 
   // --- ライフサイクル ---
-  activeWindow: number;           // Active HeatNode の生存期間。デフォルト: 172800000 (48時間)
+  activeWindow: number;           // Active HeatNode の生存期間(累積作業時間)。デフォルト: 172800000 (48時間)
+  idleThresholdMs: number;        // idle 判定閾値。デフォルト: 1800000 (30分) — Digestor と同じ
   indexVectorTTL: number;         // Index Vector の生存期間。デフォルト: 1209600000 (2週間)
   indexVectorMaxCount: number;    // Index Vector の上限件数。デフォルト: 500
 
@@ -44,7 +45,8 @@ export const shadowIndexConfig: ShadowIndexConfig = {
     stuck: 0.4,
     deep_work: 0.1,
   },
-  activeWindow: 48 * 60 * 60 * 1000,         // 48時間
+  activeWindow: 48 * 60 * 60 * 1000,         // 48時間（累積作業時間）
+  idleThresholdMs: 30 * 60 * 1000,           // 30分 — Digestor と同じ
   indexVectorTTL: 14 * 24 * 60 * 60 * 1000,  // 2週間
   indexVectorMaxCount: 500,
   uncertaintyCoefficient: 0.15,

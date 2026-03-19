@@ -68,7 +68,7 @@ export function detectStaleness(
   for (let depth = 2; depth <= cfg.ancestorDepth + 1; depth++) {
     const ancestorInfo = heatmap.ancestor(openedPath, depth);
     if (!ancestorInfo) break;
-    const stage2 = checkDescendants(openedPath, node, ancestorInfo.node, 2);
+    const stage2 = checkDescendants(openedPath, node, ancestorInfo.node, heatmap, 2);
     if (stage2) return stage2;
   }
 
@@ -95,7 +95,7 @@ function checkSiblings(
     fullPathSiblings.set(parentPath ? `${parentPath}/${name}` : name, n);
   }
 
-  return analyzeGroup(openedPath, node, fullPathSiblings, stage);
+  return analyzeGroup(openedPath, node, fullPathSiblings, heatmap, stage);
 }
 
 // ---- Stage 2: Ancestor descendants ----
@@ -104,6 +104,7 @@ function checkDescendants(
   openedPath: string,
   node: HeatNode,
   ancestorNode: HeatNode,
+  heatmap: PathHeatmap,
   stage: 1 | 2,
 ): StalenessSignal | null {
   // Collect all leaves under this ancestor
@@ -112,7 +113,7 @@ function checkDescendants(
 
   if (leaves.size < cfg.minSiblingCount) return null;
 
-  return analyzeGroup(openedPath, node, leaves, stage);
+  return analyzeGroup(openedPath, node, leaves, heatmap, stage);
 }
 
 function collectLeaves(
@@ -151,7 +152,7 @@ function checkFilenameIndex(
       if (n) group.set(p, n);
     }
     if (group.size >= 2) {
-      const result = analyzeGroup(openedPath, node, group, 3);
+      const result = analyzeGroup(openedPath, node, group, heatmap, 3);
       if (result) return result;
     }
   }
@@ -174,7 +175,7 @@ function checkFilenameIndex(
   candidates.set(openedPath, node);
   if (candidates.size < 2) return null;
 
-  return analyzeGroup(openedPath, node, candidates, 3);
+  return analyzeGroup(openedPath, node, candidates, heatmap, 3);
 }
 
 // ---- Shared analysis: multi-dimensional cross check ----
@@ -183,6 +184,7 @@ function analyzeGroup(
   openedPath: string,
   node: HeatNode,
   group: Map<string, HeatNode>,
+  heatmap: PathHeatmap,
   stage: 1 | 2 | 3,
 ): StalenessSignal | null {
   // Filter: only nodes with lastModified set
@@ -240,6 +242,11 @@ function analyzeGroup(
       ? `${newerShort} (modified ${deltaH}h newer) not in view`
       : `${shortPath} opened ${node.totalOpened}x but never edited — ${newerShort} is ${deltaH}h newer`,
   });
+
+  // Increment trap count on Index Vector (for engram push prioritization)
+  if (pattern === "repeated-trap") {
+    heatmap.incrementTrapCount(openedPath);
+  }
 
   return signal;
 }

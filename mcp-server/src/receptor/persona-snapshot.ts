@@ -10,11 +10,32 @@
 
 import type { EmotionVector, EmotionAxis, FireSignal, PatternKind, AgentState, ProjectMeta } from "./types.js";
 import type { AmbientEstimator } from "./ambient.js";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// ---- Profile hash (computed once at module load) ----
+// SHA-256 of emotion-profile.json — defines the semantic context of all delta values.
+
+let _profileHash = "unknown";
+try {
+  const profilePath = join(import.meta.dirname!, "emotion-profile.json");
+  const raw = readFileSync(profilePath, "utf-8");
+  _profileHash = createHash("sha256").update(raw).digest("hex").slice(0, 16); // short hash
+} catch { /* fallback to "unknown" */ }
+
+export function getProfileHash(): string { return _profileHash; }
 
 // ---- Constants ----
 
 const MAX_SNAPSHOTS = 10;
 const POSITIVE_SIGNALS = new Set(["confidence_sustained", "flow_active"]);
+
+// workContext sanitization limits (same rules apply at Facade)
+const MAX_TECH_STACK = 5;
+const MAX_DOMAIN = 3;
+const MAX_TAG_LENGTH = 30;
+const TAG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 // Minimum snapshots required for persona generation
 const MIN_SNAPSHOTS = 2;
@@ -33,31 +54,52 @@ interface Snapshot {
   entropy: number;
 }
 
-/** Persona — statistical fingerprint for Sphere. */
+/** Persona — statistical fingerprint for Sphere.
+ *
+ * Design: docs/PERSONA_DESIGN.md
+ *
+ * A persona is a "lens" — a set of perceptual calibrations distilled from
+ * one or more sessions. It records HOW to perceive, not WHAT was done.
+ * Lightweight, reversible, swappable. Not blended — swapped.
+ */
 export interface Persona {
-  $schema: string;
+  $schema: "receptor-persona-v2";
   ts: number;
-  actionSignature?: number[]; // from action_log centroid, injected externally
+
+  // ---- Origin: distillation conditions ----
+  // Required for Sphere showcase compatibility.
+  // Same learnedDelta means different things under different models/profiles.
+  origin: {
+    model: string;            // e.g. "claude-opus-4-6", "claude-sonnet-4-6"
+    profileHash: string;      // SHA-256 hex of emotion-profile.json (defines impulse/decay semantics)
+    cumulativeSessions: number; // how many sessions contributed to this lens (1 = single session)
+  };
+
+  // ---- Core lens: what gets applied ----
   emotionProfile: {
-    meanEmotion: Record<EmotionAxis, number>;
-    emotionVariance: Record<EmotionAxis, number>;
-    dominantAxis: EmotionAxis;
+    meanEmotion: Record<EmotionAxis, number>;   // EMA baseline seed
+    dominantAxis: EmotionAxis;                   // highest absolute mean — showcase label
   };
-  adaptedThresholds: {
-    mean: Record<EmotionAxis, number>;
-    fieldAdjustment: Record<EmotionAxis, number>;
-  };
-  patternDistribution: Record<PatternKind, number>;
-  stateDistribution: Record<AgentState, number>;
-  learnedDelta: Record<string, number>;
+  fieldAdjustment: Record<EmotionAxis, number>;  // MetaNeuron C field seed
+  learnedDelta: Record<string, number>;          // domain-specific sensitivity adjustments
+
+  // ---- Behavioral signature: what the lens was distilled from ----
+  patternDistribution: Record<PatternKind, number>;  // normalized histogram
+  stateDistribution: Record<AgentState, number>;     // normalized histogram
+
+  // ---- Context: showcase filtering ----
   workContext: {
     techStack?: string[];
     domain?: string[];
-    entropyAvg: number;
   };
+
+  // ---- Quality metadata ----
   sessionMeta: {
     elapsedMs: number;
     snapshotCount: number;
+    confidenceAvg: number;     // gate value — quality indicator
+    emotionVariance: Record<EmotionAxis, number>;  // stability indicator
+    entropyAvg: number;        // work focus indicator
   };
 }
 
@@ -114,7 +156,7 @@ export function finalizeSession(
   elapsedMs: number,
   learnedDelta: Record<string, number>,
   projectMeta?: ProjectMeta,
-  actionSignature?: number[],
+  model?: string,
 ): Persona | null {
   if (_snapshots.length < MIN_SNAPSHOTS) {
     console.error(`[persona] skip: ${_snapshots.length} snapshots (need >=${MIN_SNAPSHOTS})`);
@@ -130,7 +172,7 @@ export function finalizeSession(
     return null;
   }
 
-  return _buildPersona(elapsedMs, learnedDelta, projectMeta, actionSignature);
+  return _buildPersona(elapsedMs, learnedDelta, confidenceAvg, projectMeta, model);
 }
 
 /** Clear all state (called on watch start). */
@@ -148,15 +190,25 @@ export function snapshotCount(): number {
 function _round3(v: number): number { return Math.round(v * 1000) / 1000; }
 function _round4(v: number): number { return Math.round(v * 10000) / 10000; }
 
+/** Sanitize workContext tags: lowercase, alphanumeric+hyphen, length limit, count limit. */
+function _sanitizeTags(tags: string[] | undefined, maxCount: number): string[] | undefined {
+  if (!tags || tags.length === 0) return undefined;
+  return tags
+    .map(t => t.toLowerCase().trim().slice(0, MAX_TAG_LENGTH))
+    .filter(t => TAG_PATTERN.test(t))
+    .slice(0, maxCount);
+}
+
 function _buildPersona(
   elapsedMs: number,
   learnedDelta: Record<string, number>,
+  confidenceAvg: number,
   projectMeta?: ProjectMeta,
-  actionSignature?: number[],
+  model?: string,
 ): Persona {
   const n = _snapshots.length;
 
-  // ---- Emotion: mean + variance across positive-trigger snapshots ----
+  // ---- Core lens: emotion mean (EMA seed) ----
   const meanEmotion = {} as Record<EmotionAxis, number>;
   const emotionVariance = {} as Record<EmotionAxis, number>;
 
@@ -176,15 +228,13 @@ function _buildPersona(
     if (abs > maxAbsMean) { maxAbsMean = abs; dominantAxis = axis; }
   }
 
-  // ---- Adapted thresholds: mean across snapshots ----
-  const meanThresholds = {} as Record<EmotionAxis, number>;
+  // ---- Core lens: field adjustment (MetaNeuron C seed) ----
   const meanFieldAdj = {} as Record<EmotionAxis, number>;
   for (const axis of AXES) {
-    meanThresholds[axis] = _round3(_snapshots.reduce((a, s) => a + s.thresholds[axis], 0) / n);
     meanFieldAdj[axis] = _round3(_snapshots.reduce((a, s) => a + s.fieldAdjustment[axis], 0) / n);
   }
 
-  // ---- Pattern distribution (from snapshots, normalized) ----
+  // ---- Behavioral signature: pattern + state distributions ----
   const patternCounts: Record<string, number> = {};
   for (const s of _snapshots) {
     patternCounts[s.pattern] = (patternCounts[s.pattern] ?? 0) + 1;
@@ -194,7 +244,6 @@ function _buildPersona(
     patternDistribution[pat as PatternKind] = _round3(count / n);
   }
 
-  // ---- State distribution (from snapshots, normalized) ----
   const stateCounts: Record<string, number> = {};
   for (const s of _snapshots) {
     stateCounts[s.agentState] = (stateCounts[s.agentState] ?? 0) + 1;
@@ -204,39 +253,36 @@ function _buildPersona(
     stateDistribution[state as AgentState] = _round3(count / n);
   }
 
-  // ---- Entropy average (work focus indicator) ----
+  // ---- Quality metadata ----
   const entropyAvg = _round3(_snapshots.reduce((a, s) => a + s.entropy, 0) / n);
 
-  // ---- Assemble persona ----
-  const persona: Persona = {
-    $schema: "receptor-persona-v1",
+  // ---- Assemble persona v2 ----
+  return {
+    $schema: "receptor-persona-v2",
     ts: Date.now(),
+    origin: {
+      model: model || process.env.ENGRAM_MODEL || "unknown",
+      profileHash: _profileHash,
+      cumulativeSessions: 1,
+    },
     emotionProfile: {
       meanEmotion,
-      emotionVariance,
       dominantAxis,
     },
-    adaptedThresholds: {
-      mean: meanThresholds,
-      fieldAdjustment: meanFieldAdj,
-    },
+    fieldAdjustment: meanFieldAdj,
+    learnedDelta: { ...learnedDelta },
     patternDistribution,
     stateDistribution,
-    learnedDelta: { ...learnedDelta },
     workContext: {
-      techStack: projectMeta?.techStack,
-      domain: projectMeta?.domain,
-      entropyAvg,
+      techStack: _sanitizeTags(projectMeta?.techStack, MAX_TECH_STACK),
+      domain: _sanitizeTags(projectMeta?.domain, MAX_DOMAIN),
     },
     sessionMeta: {
       elapsedMs,
       snapshotCount: n,
+      confidenceAvg: _round3(confidenceAvg),
+      emotionVariance,
+      entropyAvg,
     },
   };
-
-  if (actionSignature) {
-    persona.actionSignature = actionSignature;
-  }
-
-  return persona;
 }

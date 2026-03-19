@@ -65,11 +65,14 @@ export function loadPrior(ambient: AmbientEstimator): PriorResult {
   }
 
   // Apply to ambient: seed EMA baselines from persona's emotion profile
-  // and field adjustments from adapted thresholds
-  ambient.applyPrior(
-    persona.emotionProfile.meanEmotion,
-    persona.adaptedThresholds.fieldAdjustment,
-  );
+  // and field adjustments. v2: top-level fieldAdjustment. v1 compat: adaptedThresholds.
+  const fieldAdj = (persona as any).fieldAdjustment
+    ?? (persona as any).adaptedThresholds?.fieldAdjustment;
+  if (fieldAdj) {
+    ambient.applyPrior(persona.emotionProfile.meanEmotion, fieldAdj);
+  } else {
+    ambient.applyPrior(persona.emotionProfile.meanEmotion, {} as any);
+  }
 
   // Derive dominant state from stateDistribution
   let dominantState: AgentState = "exploring";
