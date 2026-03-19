@@ -282,3 +282,41 @@ mcp-server/src/receptor/
 - v1: `persona.adaptedThresholds.fieldAdjustment` にフォールバック
 
 `$schema` が `"receptor-persona-v1"` の既存 persona も問題なく読み込める。
+
+---
+
+## learnedDelta と Persona の境界 — なぜランタイム自動調整しないか
+
+### 二つの適応レイヤー
+
+| レイヤー | 変えるもの | 変わるタイミング | 方向性の根拠 |
+|---------|-----------|----------------|------------|
+| **ambient** (EMA, fieldAdjustment) | 閾値の動的調整 | セッション中リアルタイム | **恒常性維持** — 方向が自明 |
+| **learnedDelta** (receptor-learned.json) | passive scoring の感度係数 | キャリブレーション時のみ（手動） | **正解シナリオ** — 方向が定義済み |
+
+### ambient が自動適応できる理由
+
+ambient は恒常性維持（homeostasis）。frustration が上がりすぎたら閾値を上げて鈍感にする。
+**フィードバックの方向が自明**だから自動化できる。
+
+### learnedDelta が自動適応できない理由
+
+learnedDelta は「この感情軸の感度をどの程度にすべきか」という問い。
+confidence が高かったセッションで frustration 感度が低かったとして、それは
+「鈍感で良かった」のか「たまたま frustration が不要だっただけ」なのか区別できない。
+
+**何を最適化しているかが不明確** — ランタイムには「正解」がない。
+
+唯一ありうるフィードバック源はユーザーの明示的シグナル（「この検知は的を射ていた」
+「これは邪魔だった」）だが、それは receptor の設計思想（passive、ユーザーに問わない）
+と矛盾する。
+
+### 結論: 分離を維持する
+
+```
+persona が動かすもの:  ambient（一時的適応、セッション内で自動調整）
+人間が動かすもの:      learnedDelta（恒久的感度、キャリブレーションで意図的に調整）
+```
+
+この分離は意図的な設計判断であり、将来も維持すべき。
+learnedDelta のランタイム自動調整は、フィードバックの質の定義が解決するまで導入しない。
