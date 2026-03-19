@@ -79,26 +79,29 @@ Add to `~/.claude/settings.json`:
 
 ### 3. Add hooks (recommended)
 
-Hooks automate memory management. Add to `~/.claude/settings.json`:
+Hooks forward agent events to the Receptor for real-time behavior monitoring. Copy the hook scripts and register them in `~/.claude/settings.json`:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp hooks/engram-receptor-hook.sh hooks/engram-turn-hook.sh ~/.claude/hooks/
+```
 
 ```jsonc
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{
-          "type": "command",
-          "command": "curl -s -X POST http://localhost:3121/receptor -H 'Content-Type: application/json' -d \"$(echo '{\"tool_name\":\"'$CLAUDE_TOOL_NAME'\"}')\"",
-          "timeout": 5
-        }]
-      }
-    ]
+    "UserPromptSubmit": [{
+      "matcher": "",
+      "hooks": [{ "type": "command", "command": "ENGRAM_TURN_TYPE=user bash ~/.claude/hooks/engram-turn-hook.sh", "timeout": 2 }]
+    }],
+    "PostToolUse": [{
+      "matcher": ".*",
+      "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/engram-receptor-hook.sh", "timeout": 2 }]
+    }]
   }
 }
 ```
 
-This feeds tool usage events to the Receptor, which monitors agent behavior patterns and provides proactive knowledge recall.
+Each MCP server instance writes a discovery file (`~/.engram/receptor.<pid>.port`). Hook scripts fan out to all active instances in parallel. Stale discovery files are auto-cleaned on failed delivery.
 
 ### 4. Add CLAUDE.md snippet
 
@@ -252,6 +255,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 # MCP server from source
 cd mcp-server && npm install && npm run build
 ```
+
+## Known Constraints
+
+**Multi-instance receptor**: Each MCP server instance spawns its own receptor on a separate port. Hook scripts use discovery files for fan-out, but there is no centralized event bus. A mapper/relay layer is a known future improvement — not yet implemented because the optimal placement (gateway, MCP server, or standalone) is unresolved. Current workaround: parallel fan-out in hook scripts + stale file cleanup.
+
+**Gateway in Docker, receptor on host**: Gateway runs in Docker (embedding model isolation), but receptor must be on the host (stdio MCP constraint). Cross-boundary event routing (e.g., sink notifications → receptor hot-memo) requires HTTP through Docker's host network. This split is intentional but adds deployment complexity.
 
 ## FAQ
 
