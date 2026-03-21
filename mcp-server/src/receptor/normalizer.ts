@@ -39,7 +39,7 @@ let _nextEventId = 1;
 
 // ---- Dialogue tracking state ----
 
-const PROMPT_MIN_LENGTH = 10; // cutoff: ignore short low-info prompts
+const PROMPT_MIN_LENGTH = 40; // cutoff: ignore short directives and acknowledgments
 let _lastPromptTs = 0;
 
 // ---- Normalize ----

@@ -139,7 +139,7 @@ impulse 効果:
 ```
 UserPromptSubmit hook
   → prompt normalizer (文字数 + 時間間隔を計測)
-  → 足切り判定 (length < 10 → 破棄)
+  → 足切り判定 (length < 40 → 破棄)
   → impulse 生成 (既存 receptor 状態と照合、ツール比 0.3〜0.5 倍)
   → 既存ニューロンに注入
   → emotion 更新 (ツール入力と対話入力が混合)
@@ -172,7 +172,7 @@ UserPromptSubmit hook
 | ファイル | 変更内容 |
 |---|---|
 | `receptor/types.ts` | `NormalizedAction` に `"user_prompt"` 追加。`NormalizedEvent` に `promptLength`, `turnInterval` フィールド追加 |
-| `receptor/normalizer.ts` | `RawHookEvent` に `prompt_content` 追加。UserPromptSubmit 正規化（足切り length < 10、turnInterval 計測） |
+| `receptor/normalizer.ts` | `RawHookEvent` に `prompt_content` 追加。UserPromptSubmit 正規化（足切り length < 40、turnInterval 計測） |
 | `receptor/emotion-profile.json` | `user_prompt`: fatigue -0.02。`user_prompt.long` (>100文字): seeking +0.02, confidence +0.01 |
 | `receptor/emotion.ts` | `user_prompt.long` 条件分岐（promptLength > 100） |
 | `receptor/commander.ts` | counts レコードに `user_prompt: 0` 追加 |
