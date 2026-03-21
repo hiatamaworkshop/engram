@@ -7,7 +7,7 @@
 //
 // Design: docs/DATA_COST_PROTOCOL.md §ペルソナローディングシステム
 
-import type { FireSignal, FireSignalKind, SessionPoint } from "./types.js";
+import type { FireSignal, FireSignalKind, SessionPoint, EngramWeightEntry } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -27,6 +27,7 @@ const OUTPUT_DIR = path.join(
   "receptor-output",
 );
 const SESSION_POINTS_PATH = path.join(OUTPUT_DIR, "session-points.jsonl");
+const WEIGHT_SNAPSHOT_PATH = path.join(OUTPUT_DIR, "engram-weights.jsonl");
 
 // ---- Valence mapping ----
 
@@ -54,6 +55,9 @@ const _recentFires: Array<{ kind: FireSignalKind; ts: number }> = [];
 let _lastPushNodeId: string | null = null;
 let _lastPushTs = 0;
 const LINK_WINDOW_MS = 30_000; // link is valid for 30s after push
+
+// Engram weight tracking: referenced nodes + weights during session
+const _weightEntries: Map<string, EngramWeightEntry> = new Map(); // keyed by nodeId, latest wins
 
 // ---- Public API ----
 
@@ -135,6 +139,54 @@ export function setLastPushNodeId(id: string): void {
 }
 
 /**
+ * Record engram node weights from pull/auto_pull results.
+ * Called when engram_pull returns results — captures the weight distribution
+ * of knowledge referenced during this session.
+ * Later entries for the same nodeId overwrite earlier ones (weight may change mid-session).
+ */
+export function recordEngramWeights(
+  results: Array<{ id: string; weight: number; summary: string }>,
+  source: "pull" | "auto_pull",
+): void {
+  if (!_sessionActive || results.length === 0) return;
+
+  const now = Date.now();
+  for (const r of results) {
+    _weightEntries.set(r.id, {
+      nodeId: r.id,
+      weight: r.weight,
+      summary: r.summary,
+      ts: now,
+      source,
+    });
+  }
+}
+
+/**
+ * Flush engram weight snapshot to JSONL. Called on session stop.
+ */
+export function flushWeightSnapshot(): void {
+  if (_weightEntries.size === 0) return;
+
+  try {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const lines = [..._weightEntries.values()]
+      .map(e => JSON.stringify(e))
+      .join("\n") + "\n";
+    fs.writeFileSync(WEIGHT_SNAPSHOT_PATH, lines);
+  } catch (err) {
+    console.error("[session-point] weight snapshot write error:", err);
+  }
+}
+
+/**
+ * Get engram weight entry count (for status display).
+ */
+export function weightEntryCount(): number {
+  return _weightEntries.size;
+}
+
+/**
  * Clear all state + truncate JSONL. Called on watch start.
  */
 export function clearSessionPoints(): void {
@@ -143,12 +195,14 @@ export function clearSessionPoints(): void {
   _recentFires.length = 0;
   _lastPushNodeId = null;
   _lastPushTs = 0;
+  _weightEntries.clear();
   _sessionActive = true;
 
   // Truncate (not delete) — keeps the file for the loader
   try {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     fs.writeFileSync(SESSION_POINTS_PATH, "");
+    fs.writeFileSync(WEIGHT_SNAPSHOT_PATH, "");
   } catch (err) {
     console.error("[session-point] clear error:", err);
   }
@@ -158,6 +212,7 @@ export function clearSessionPoints(): void {
  * Mark session as inactive. Called on watch stop.
  */
 export function stopSessionPoints(): void {
+  flushWeightSnapshot();
   _sessionActive = false;
 }
 

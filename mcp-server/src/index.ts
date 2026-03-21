@@ -31,7 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId } from "./receptor/index.js";
+import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
 import { startReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
@@ -126,6 +126,9 @@ server.tool(
           .filter(Boolean)
           .join("\n");
       });
+
+      // Record engram weights for persona loading weight distribution snapshot
+      recordEngramWeights(response.results, "pull");
 
       const scope = projectId ? ` (project: ${projectId})` : " (cross-project)";
       const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
@@ -506,6 +509,9 @@ async function main() {
       const response = await recallNodes(ctx, query, projectId, 3);
 
       if (response.results.length > 0) {
+        // Record weights from auto pull for persona loading weight snapshot
+        recordEngramWeights(response.results, "auto_pull");
+
         const lines = response.results.map((r, i) =>
           `  ${i + 1}. ${r.summary} (w=${r.weight}, hits=${r.hitCount})`
         );

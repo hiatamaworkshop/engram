@@ -86,6 +86,7 @@ import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type Swa
 import {
   updateWorkTime, recordSessionPoints, clearSessionPoints, stopSessionPoints,
   sessionPointCount, setLastPushNodeId, getWorkTimeMs,
+  recordEngramWeights, weightEntryCount,
 } from "./session-point.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
@@ -313,8 +314,8 @@ export function swapLens(persona: import("./persona-snapshot.js").Persona): Swap
 // Re-export types for external callers
 export type { SwapResult, CompatResult };
 
-// Re-export session point API for engram push link tracking
-export { setLastPushNodeId, getWorkTimeMs };
+// Re-export session point API for engram push link tracking + weight recording
+export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights };
 
 // ---- Public API ----
 
@@ -633,9 +634,11 @@ export function formatState(): string {
   lines.push("");
   const pSnaps = personaSnapshotCount();
   const spCount = sessionPointCount();
+  const wCount = weightEntryCount();
   const personaStr = pSnaps > 0 ? `  persona:${pSnaps}/${10}` : "";
   const spStr = spCount > 0 ? `  sp:${spCount}` : "";
-  lines.push(`[C] ${metaNeuron.format()}${personaStr}${spStr}`);
+  const wStr = wCount > 0 ? `  ew:${wCount}` : "";
+  lines.push(`[C] ${metaNeuron.format()}${personaStr}${spStr}${wStr}`);
 
   // Field adjustments from C (show only non-zero)
   const fieldParts: string[] = [];

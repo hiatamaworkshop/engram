@@ -18,7 +18,7 @@ import type { PersonaPayload } from "./sphere-shaper.js";
 import type { Persona } from "./persona-snapshot.js";
 import { getProfileHash } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
-import type { AgentState, SessionPoint } from "./types.js";
+import type { AgentState, SessionPoint, EngramWeightEntry } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -253,6 +253,7 @@ function readLatestPersona(): Persona | null {
 // ---- Session Point Loader (Phase 1: full view) ----
 
 const SESSION_POINTS_PATH = path.join(SPHERE_OUTPUT_DIR, "session-points.jsonl");
+const WEIGHT_SNAPSHOT_PATH = path.join(SPHERE_OUTPUT_DIR, "engram-weights.jsonl");
 
 export interface SessionPointWithGap {
   point: SessionPoint;
@@ -300,6 +301,39 @@ export function loadSessionPoints(): SessionPointWithGap[] | null {
     return result;
   } catch (err) {
     console.error("[persona-prior] session points read error:", err);
+    return null;
+  }
+}
+
+// ---- Engram Weight Snapshot Loader ----
+
+/**
+ * Load engram weight snapshot from the most recent session.
+ * Returns the weight distribution of knowledge referenced during the session.
+ * For persona showcase: this is "what the craftsman knew, and how much it mattered."
+ */
+export function loadWeightSnapshot(): EngramWeightEntry[] | null {
+  try {
+    if (!fs.existsSync(WEIGHT_SNAPSHOT_PATH)) return null;
+
+    const content = fs.readFileSync(WEIGHT_SNAPSHOT_PATH, "utf-8").trim();
+    if (!content) return null;
+
+    const entries: EngramWeightEntry[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const parsed = JSON.parse(line) as EngramWeightEntry;
+        if (typeof parsed.nodeId === "string" && typeof parsed.weight === "number") {
+          entries.push(parsed);
+        }
+      } catch {
+        // Malformed line — skip
+      }
+    }
+
+    return entries.length > 0 ? entries : null;
+  } catch (err) {
+    console.error("[persona-prior] weight snapshot read error:", err);
     return null;
   }
 }
