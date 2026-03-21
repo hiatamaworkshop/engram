@@ -30,17 +30,43 @@ export interface RawHookEvent {
   tool_input?: Record<string, unknown>;
   exit_code?: number;
   // Claude Code hooks provide these fields
+  prompt_content?: string;  // UserPromptSubmit: raw user text (used for length only)
 }
 
 // ---- Event ID (session-scoped monotonic counter) ----
 
 let _nextEventId = 1;
 
+// ---- Dialogue tracking state ----
+
+const PROMPT_MIN_LENGTH = 10; // cutoff: ignore short low-info prompts
+let _lastPromptTs = 0;
+
 // ---- Normalize ----
 
 export function normalize(raw: RawHookEvent): NormalizedEvent | null {
   const { tool_name, tool_input, exit_code } = raw;
   const eventId = _nextEventId++;
+
+  // UserPromptSubmit → user_prompt (dialogue input)
+  if (tool_name === "UserPromptSubmit") {
+    const content = raw.prompt_content ?? (tool_input?.content as string) ?? "";
+    const length = content.length;
+    if (length < PROMPT_MIN_LENGTH) return null; // cutoff
+
+    const now = Date.now();
+    const interval = _lastPromptTs > 0 ? now - _lastPromptTs : 0;
+    _lastPromptTs = now;
+
+    return {
+      eventId,
+      action: "user_prompt",
+      ts: now,
+      result: "success",
+      promptLength: length,
+      turnInterval: interval,
+    };
+  }
 
   // engram tools → memory_read / memory_write
   if (tool_name.startsWith("engram_pull") || tool_name === "engram_ls") {

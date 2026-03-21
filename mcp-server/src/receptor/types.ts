@@ -13,7 +13,8 @@ export type NormalizedAction =
   | "shell_exec"
   | "delegation"
   | "memory_read"
-  | "memory_write";
+  | "memory_write"
+  | "user_prompt";
 
 export interface NormalizedEvent {
   eventId: number;
@@ -21,6 +22,8 @@ export interface NormalizedEvent {
   path?: string;
   result?: "success" | "failure" | "empty";
   ts: number;
+  promptLength?: number;     // user_prompt only: character count
+  turnInterval?: number;     // user_prompt only: ms since last user prompt
 }
 
 // ---- Emotion vector (5-axis) ----

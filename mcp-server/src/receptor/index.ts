@@ -394,12 +394,16 @@ export function ingestEvent(raw: RawHookEvent): void {
   updateWorkTime(event.ts);
 
   // Feed to subsystems
-  heatmap.agentState = metaNeuron.state;
-  heatmap.record(event);
+  // Dialogue input: skip heatmap and staleness (no file path involved)
+  const isDialogue = event.action === "user_prompt";
+  if (!isDialogue) {
+    heatmap.agentState = metaNeuron.state;
+    heatmap.record(event);
+  }
   commander.record(event);
 
   // Pre-neuron monitor: staleness check (fire-and-forget, after record)
-  if (event.path && (event.action === "file_read" || event.action === "file_edit")) {
+  if (!isDialogue && event.path && (event.action === "file_read" || event.action === "file_edit")) {
     const normalizedPath = event.path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
     detectStaleness(normalizedPath, heatmap);
   }
@@ -511,6 +515,7 @@ function fmtCounts(snap: { counts: Record<string, number>; total: number }): str
     ["delegation", "Ag"],
     ["memory_read", "Mr"],
     ["memory_write", "Mw"],
+    ["user_prompt", "Dl"],
   ];
   const parts: string[] = [];
   for (const [key, label] of labels) {

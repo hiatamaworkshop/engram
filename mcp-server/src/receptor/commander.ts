@@ -103,6 +103,7 @@ export class Commander {
       delegation: 0,
       memory_read: 0,
       memory_write: 0,
+      user_prompt: 0,
     };
 
     let bashFails = 0;

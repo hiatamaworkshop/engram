@@ -49,7 +49,7 @@ export function startReceptorHttp(): void {
       return;
     }
 
-    // /turn — lightweight turn boundary marker (UserPromptSubmit / Stop)
+    // /turn — turn boundary marker + optional dialogue ingestion
     if (req.url === "/turn") {
       let body = "";
       req.on("data", (chunk: Buffer) => { body += chunk; });
@@ -58,6 +58,15 @@ export function startReceptorHttp(): void {
           const json = JSON.parse(body);
           const type = json.type as string; // "user" or "agent"
           recordTurn(type === "user" ? "user" : "agent");
+
+          // Dialogue ingestion: if user turn carries content, ingest as user_prompt
+          if (type === "user" && typeof json.content === "string") {
+            ingestEvent({
+              tool_name: "UserPromptSubmit",
+              prompt_content: json.content,
+            });
+          }
+
           res.writeHead(200);
           res.end("ok");
         } catch {
@@ -144,6 +153,15 @@ function parseHookPayload(json: Record<string, unknown>): RawHookEvent | null {
   if (toolName.startsWith("mcp__")) {
     const parts = toolName.split("__");
     toolName = parts[parts.length - 1];
+  }
+
+  // UserPromptSubmit: extract prompt content from tool_input
+  if (toolName === "UserPromptSubmit") {
+    const input = (json.tool_input as Record<string, unknown>) ?? {};
+    return {
+      tool_name: "UserPromptSubmit",
+      prompt_content: (input.content as string) ?? (input.prompt as string) ?? "",
+    };
   }
 
   const toolInput = (json.tool_input as Record<string, unknown>) ?? {};
