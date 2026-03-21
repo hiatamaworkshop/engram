@@ -185,6 +185,11 @@ export function snapshotCount(): number {
   return _snapshots.length;
 }
 
+/** Get snapshots for debug inspection. */
+export function getSnapshots(): ReadonlyArray<Snapshot> {
+  return _snapshots;
+}
+
 // ---- Internal ----
 
 function _round3(v: number): number { return Math.round(v * 1000) / 1000; }

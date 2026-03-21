@@ -10,7 +10,8 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ingestEvent, recordTurn } from "./index.js";
+import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapshot } from "./index.js";
+import { getSnapshots as personaGetSnapshots } from "./persona-snapshot.js";
 import type { RawHookEvent } from "./normalizer.js";
 
 const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
@@ -43,6 +44,48 @@ export function startReceptorHttp(): void {
   if (_server) return; // already started
 
   _server = createServer((req, res) => {
+    // ---- GET debug endpoints (test/inspection) ----
+    if (req.method === "GET") {
+      res.setHeader("Content-Type", "application/json");
+
+      // GET /debug — full debug snapshot (session points, weights, persona snapshots, emotion)
+      if (req.url === "/debug") {
+        const sp = getDebugSnapshot();
+        const persona = personaGetSnapshots();
+        const state = getState();
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          receptor: {
+            watching: state.watching,
+            eventCount: state.eventCount,
+            emotion: state.lastEmotion,
+            signals: state.signals.map(s => ({ kind: s.kind, intensity: s.intensity })),
+          },
+          sessionPoints: sp.sessionPoints,
+          weightEntries: sp.weightEntries,
+          personaSnapshots: persona,
+          meta: {
+            workTimeMs: sp.workTimeMs,
+            sessionActive: sp.sessionActive,
+            recentFires: sp.recentFires,
+          },
+        }, null, 2));
+        return;
+      }
+
+      // GET /debug/flush — manual flush: write weight snapshot + session points to disk now
+      if (req.url === "/debug/flush") {
+        flushWeightSnapshot();
+        res.writeHead(200);
+        res.end(JSON.stringify({ flushed: true, ts: Date.now() }));
+        return;
+      }
+
+      res.writeHead(404);
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+
     if (req.method !== "POST") {
       res.writeHead(404);
       res.end();

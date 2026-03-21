@@ -236,3 +236,34 @@ export function sessionPointCount(): number {
 export function getWorkTimeMs(): number {
   return _workTimeMs;
 }
+
+/**
+ * Get live debug snapshot of all session-point state.
+ * For testing/inspection via HTTP debug endpoint.
+ */
+export function getDebugSnapshot(): {
+  sessionActive: boolean;
+  workTimeMs: number;
+  recentFires: number;
+  weightEntries: EngramWeightEntry[];
+  sessionPoints: SessionPoint[];
+} {
+  // Read session points from file (source of truth)
+  let sessionPoints: SessionPoint[] = [];
+  try {
+    if (fs.existsSync(SESSION_POINTS_PATH)) {
+      const content = fs.readFileSync(SESSION_POINTS_PATH, "utf-8").trim();
+      if (content) {
+        sessionPoints = content.split("\n").map(l => JSON.parse(l) as SessionPoint);
+      }
+    }
+  } catch { /* empty */ }
+
+  return {
+    sessionActive: _sessionActive,
+    workTimeMs: _workTimeMs,
+    recentFires: _recentFires.length,
+    weightEntries: [..._weightEntries.values()],
+    sessionPoints,
+  };
+}

@@ -573,6 +573,8 @@ async function main() {
 
   // Cleanup on process exit
   const cleanup = () => {
+    // Stop receptor watch — triggers persona finalize, session-point flush, weight snapshot
+    setWatch(false);
     closeAllMcpClients().catch(() => {});
     if (ctx.defaultProjectId) {
       deactivateProject(ctx, ctx.defaultProjectId).catch(() => {});

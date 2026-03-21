@@ -81,12 +81,13 @@ import {
   captureSnapshot as personaCaptureSnapshot,
   finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
+  getSnapshots as personaGetSnapshots,
 } from "./persona-snapshot.js";
 import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type SwapResult, type CompatResult } from "./persona-prior.js";
 import {
   updateWorkTime, recordSessionPoints, clearSessionPoints, stopSessionPoints,
   sessionPointCount, setLastPushNodeId, getWorkTimeMs,
-  recordEngramWeights, weightEntryCount,
+  recordEngramWeights, weightEntryCount, flushWeightSnapshot, getDebugSnapshot,
 } from "./session-point.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
@@ -314,8 +315,8 @@ export function swapLens(persona: import("./persona-snapshot.js").Persona): Swap
 // Re-export types for external callers
 export type { SwapResult, CompatResult };
 
-// Re-export session point API for engram push link tracking + weight recording
-export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights };
+// Re-export session point API for engram push link tracking + weight recording + debug
+export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights, flushWeightSnapshot, getDebugSnapshot };
 
 // ---- Public API ----
 
