@@ -83,6 +83,10 @@ import {
   clearPersonaState, snapshotCount as personaSnapshotCount,
 } from "./persona-snapshot.js";
 import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type SwapResult, type CompatResult } from "./persona-prior.js";
+import {
+  updateWorkTime, recordSessionPoints, clearSessionPoints, stopSessionPoints,
+  sessionPointCount, setLastPushNodeId, getWorkTimeMs,
+} from "./session-point.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -309,6 +313,9 @@ export function swapLens(persona: import("./persona-snapshot.js").Persona): Swap
 // Re-export types for external callers
 export type { SwapResult, CompatResult };
 
+// Re-export session point API for engram push link tracking
+export { setLastPushNodeId, getWorkTimeMs };
+
 // ---- Public API ----
 
 /** Toggle watch mode. Returns new state. */
@@ -329,6 +336,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     clearActionLogger();
     clearFutureProbe();
     clearPersonaState();
+    clearSessionPoints();
     _lastHeatmapFlush = 0;
 
     // Load prior persona — seed ambient baselines from previous session
@@ -340,6 +348,8 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     return { watching: true, message: `Receptor watch started. Monitoring agent behavior.${priorMsg}` };
   }
   if (!enabled && _watching) {
+    // Stop session point recording
+    stopSessionPoints();
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
@@ -379,6 +389,9 @@ export function ingestEvent(raw: RawHookEvent): void {
 
   _eventCount++;
   _lastEvent = event;
+
+  // Track cumulative work time for SessionPoint recording
+  updateWorkTime(event.ts);
 
   // Feed to subsystems
   heatmap.agentState = metaNeuron.state;
@@ -432,6 +445,11 @@ export function ingestEvent(raw: RawHookEvent): void {
   // Persona: capture snapshot on positive signals only (passive)
   if (_lastSignals.length > 0) {
     personaCaptureSnapshot(_lastSignals, _lastEmotion, metaNeuron.state, shortSnap.pattern, ambient, heatmap.entropy());
+  }
+
+  // SessionPoint: record ALL signals (good/bad/neutral) for experience trace
+  if (_lastSignals.length > 0) {
+    recordSessionPoints(_lastSignals);
   }
 
   // Notify listeners (connection targets)
@@ -609,8 +627,10 @@ export function formatState(): string {
   // ---- C: Meta neuron ----
   lines.push("");
   const pSnaps = personaSnapshotCount();
+  const spCount = sessionPointCount();
   const personaStr = pSnaps > 0 ? `  persona:${pSnaps}/${10}` : "";
-  lines.push(`[C] ${metaNeuron.format()}${personaStr}`);
+  const spStr = spCount > 0 ? `  sp:${spCount}` : "";
+  lines.push(`[C] ${metaNeuron.format()}${personaStr}${spStr}`);
 
   // Field adjustments from C (show only non-zero)
   const fieldParts: string[] = [];

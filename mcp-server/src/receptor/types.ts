@@ -81,6 +81,17 @@ export interface FireSignal {
   pattern: PatternKind;
 }
 
+// ---- Session point (persona loading — experience trace) ----
+
+export interface SessionPoint {
+  t: number;                    // cumulative work time since session start (ms)
+  label: string;                // semantic label from FireSignalKind
+  intensity: number;            // 0.0–1.0 (clamped)
+  valence: 1 | 0 | -1;         // good / neutral / bad
+  freq: number;                 // recent activation frequency (normalized 0.0–1.0)
+  link: string | null;          // engram node ID | null
+}
+
 // ---- Receptor state ----
 
 export interface ReceptorState {

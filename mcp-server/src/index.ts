@@ -31,7 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink } from "./receptor/index.js";
+import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId } from "./receptor/index.js";
 import { startReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
@@ -191,6 +191,9 @@ server.tool(
       );
 
       memoAdd(capsuleSeeds as Array<{ summary: string; tags?: string[] }>);
+
+      // Link session points to this push event
+      setLastPushNodeId(resolvedSessionId);
 
       const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
 

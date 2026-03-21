@@ -18,7 +18,7 @@ import type { PersonaPayload } from "./sphere-shaper.js";
 import type { Persona } from "./persona-snapshot.js";
 import { getProfileHash } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
-import type { AgentState } from "./types.js";
+import type { AgentState, SessionPoint } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -246,6 +246,60 @@ function readLatestPersona(): Persona | null {
     return null;
   } catch (err) {
     console.error("[persona-prior] read error:", err);
+    return null;
+  }
+}
+
+// ---- Session Point Loader (Phase 1: full view) ----
+
+const SESSION_POINTS_PATH = path.join(SPHERE_OUTPUT_DIR, "session-points.jsonl");
+
+export interface SessionPointWithGap {
+  point: SessionPoint;
+  gapMs: number;  // work time elapsed since previous point (0 for first)
+}
+
+/**
+ * Load all SessionPoints from the most recent session.
+ * Returns chronologically ordered points with inter-point time gaps.
+ * Returns null if no data exists.
+ */
+export function loadSessionPoints(): SessionPointWithGap[] | null {
+  try {
+    if (!fs.existsSync(SESSION_POINTS_PATH)) return null;
+
+    const content = fs.readFileSync(SESSION_POINTS_PATH, "utf-8").trim();
+    if (!content) return null;
+
+    const points: SessionPoint[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const parsed = JSON.parse(line) as SessionPoint;
+        if (typeof parsed.t === "number" && typeof parsed.label === "string") {
+          points.push(parsed);
+        }
+      } catch {
+        // Malformed line — skip
+      }
+    }
+
+    if (points.length === 0) return null;
+
+    // Sort by work time (should already be ordered, but defensive)
+    points.sort((a, b) => a.t - b.t);
+
+    // Compute inter-point gaps
+    const result: SessionPointWithGap[] = [];
+    for (let i = 0; i < points.length; i++) {
+      result.push({
+        point: points[i],
+        gapMs: i === 0 ? 0 : points[i].t - points[i - 1].t,
+      });
+    }
+
+    return result;
+  } catch (err) {
+    console.error("[persona-prior] session points read error:", err);
     return null;
   }
 }
