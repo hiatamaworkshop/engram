@@ -501,10 +501,10 @@ const EMOTION_AXES = ["frustration", "seeking", "confidence", "fatigue", "flow"]
 const AGENT_STATES: AgentState[] = ["stuck", "exploring", "deep_work", "idle", "delegating"];
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-type PriorHeader = ["H", number, number, number, number, number, number, number];
+type PriorHeader = ["H", number, number, number, number, number, number, number, string];
 type PriorSeparator = ["---"];
 type PriorArcPoint = ["A", number, number, string, number, number, number, number, number, number, string | null];
-type PriorFooter = ["F", number[], number[], number[], Array<[string, number]>];
+type PriorFooter = ["F", number[], number[], Array<[string, number]>, Array<[string, number]>];
 type PriorElement = PriorHeader | PriorSeparator | PriorArcPoint | PriorFooter;
 type PriorBlock = PriorElement[];
 
@@ -533,7 +533,10 @@ export function buildPriorBlock(
     ? EMOTION_AXES.map(a => r2(firstEmotion[a]))
     : [0, 0, 0, 0, 0];
 
-  const header: PriorHeader = ["H", durationMs, valenceBalance, ...initEmo as [number, number, number, number, number]];
+  // State flow: macro trajectory of agentState transitions (contrastive pair)
+  const stateFlow = deriveStateFlow(points);
+
+  const header: PriorHeader = ["H", durationMs, valenceBalance, ...initEmo as [number, number, number, number, number], stateFlow];
 
   // --- Arc ---
   let sampled = points;
@@ -605,14 +608,19 @@ function buildFooter(
     r2(sumI / points.length),
   ];
 
-  // F[2]: agentState ratio [stuck, exploring, deep_work, idle, delegating]
+  // F[2]: agentState ratio — ranked descending, zero-ratio states omitted (negative anchor)
   const stateCounts = new Map<string, number>();
   for (const s of AGENT_STATES) stateCounts.set(s, 0);
   for (const { point } of points) {
     const s = point.agentState ?? "idle";
     stateCounts.set(s, (stateCounts.get(s) ?? 0) + 1);
   }
-  const stateRatio = AGENT_STATES.map(s => r2((stateCounts.get(s) ?? 0) / points.length));
+  const stateRatio: Array<[string, number]> = [];
+  for (const s of AGENT_STATES) {
+    const ratio = r2((stateCounts.get(s) ?? 0) / points.length);
+    if (ratio > 0) stateRatio.push([s, ratio]);
+  }
+  stateRatio.sort((a, b) => b[1] - a[1]);
 
   // F[3]: engram top weights
   let engramTop: Array<[string, number]> = [];
@@ -678,12 +686,30 @@ function samplePoints(
   return sortedIndices.map(i => points[i]);
 }
 
+/** Manifest: declares data intent before schema. */
+const PRIOR_BLOCK_MANIFEST =
+  "[prior-block: prior session experience. use as context for continuity.]";
+
+/** Derive macro state trajectory: deduplicated consecutive agentState transitions. */
+function deriveStateFlow(points: SessionPointWithGap[]): string {
+  const states: string[] = [];
+  let prev = "";
+  for (const { point } of points) {
+    const s = point.agentState ?? "idle";
+    if (s !== prev) {
+      states.push(s);
+      prev = s;
+    }
+  }
+  return states.join("→");
+}
+
 /** Inline schema v2 — travels with the data. */
 const PRIOR_BLOCK_SCHEMA =
-  "[prior-block schema: " +
-  "H=header(durationMs,valenceBalance,frust,seek,conf,fatigue,flow) " +
+  "[schema: " +
+  "H=header(durationMs,valenceBalance,frust,seek,conf,fatigue,flow,stateFlow) " +
   "A=arc(t,gapMs,agentState,intensity,dFrust,dSeek,dConf,dFatig,dFlow,engramId?) " +
-  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[stuck,exploring,deep_work,idle,delegating],engramTop[...[summary,weight]]) " +
+  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[...[state,ratio]desc],engramTop[...[summary,weight]]) " +
   "---=separator]";
 
 /**
@@ -691,5 +717,5 @@ const PRIOR_BLOCK_SCHEMA =
  * Includes inline schema header so the receiving agent can interpret the data.
  */
 export function formatPriorBlock(block: PriorBlock): string {
-  return `${PRIOR_BLOCK_SCHEMA}\n${JSON.stringify(block)}`;
+  return `${PRIOR_BLOCK_MANIFEST}\n${PRIOR_BLOCK_SCHEMA}\n${JSON.stringify(block)}`;
 }
