@@ -10,7 +10,7 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapshot } from "./index.js";
+import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapshot, getPriorResult } from "./index.js";
 import { getSnapshots as personaGetSnapshots } from "./persona-snapshot.js";
 import type { RawHookEvent } from "./normalizer.js";
 
@@ -20,6 +20,12 @@ const DISCOVERY_FILE = join(DISCOVERY_DIR, `receptor.${process.pid}.port`);
 
 let _server: Server | null = null;
 let _boundPort: number | null = null;
+let _isPrimary = false;
+
+/** Whether this instance owns the receptor port (primary instance). */
+export function isReceptorPrimary(): boolean {
+  return _isPrimary;
+}
 
 /** Write the bound port to discovery file so hook scripts can find it. */
 function writeDiscovery(port: number): void {
@@ -40,9 +46,10 @@ function removeDiscovery(): void {
   }
 }
 
-export function startReceptorHttp(): void {
-  if (_server) return; // already started
+export function startReceptorHttp(): Promise<{ primary: boolean }> {
+  if (_server) return Promise.resolve({ primary: _isPrimary });
 
+  return new Promise((resolve) => {
   _server = createServer((req, res) => {
     // ---- GET debug endpoints (test/inspection) ----
     if (req.method === "GET") {
@@ -64,6 +71,7 @@ export function startReceptorHttp(): void {
           sessionPoints: sp.sessionPoints,
           weightEntries: sp.weightEntries,
           personaSnapshots: persona,
+          priorResult: getPriorResult(),
           meta: {
             workTimeMs: sp.workTimeMs,
             sessionActive: sp.sessionActive,
@@ -144,27 +152,34 @@ export function startReceptorHttp(): void {
     });
   });
 
-  // Try preferred port first, fall back to OS-assigned port on conflict
+  // Try preferred port — if in use, another instance already owns the receptor.
+  // Do NOT fall back to a random port; instead mark this as secondary instance.
   _server.listen(PREFERRED_PORT, "127.0.0.1", () => {
     _boundPort = (_server!.address() as { port: number }).port;
+    _isPrimary = true;
     writeDiscovery(_boundPort);
-    console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort}`);
+    console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort} (primary)`);
+    resolve({ primary: true });
   });
 
   _server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      console.error(`[engram] Port ${PREFERRED_PORT} in use — binding to random port`);
-      // Retry with port 0 (OS picks a free port)
-      _server!.listen(0, "127.0.0.1", () => {
-        _boundPort = (_server!.address() as { port: number }).port;
-        writeDiscovery(_boundPort);
-        console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort}`);
-      });
+      console.error(
+        `[engram] Port ${PREFERRED_PORT} already in use — another engram instance owns the receptor. ` +
+        `This instance runs as secondary (MCP tools only, no receptor watch).`
+      );
+      _server!.close();
+      _server = null;
+      _isPrimary = false;
+      resolve({ primary: false });
     } else {
       console.error(`[engram] Receptor HTTP error: ${err.message}`);
       _server = null;
+      _isPrimary = false;
+      resolve({ primary: false });
     }
   });
+  }); // end Promise
 }
 
 /** Stop HTTP server and clean up discovery file. */

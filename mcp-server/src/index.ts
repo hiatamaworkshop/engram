@@ -32,7 +32,7 @@ import {
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
 import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
-import { startReceptorHttp } from "./receptor/http.js";
+import { startReceptorHttp, isReceptorPrimary } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
 const ctx = loadContext();
@@ -234,7 +234,8 @@ server.tool(
     try {
       const status = await getStatus(ctx, projectId);
 
-      const lines: string[] = [`Engram Status (user: ${ctx.userId})`];
+      const instanceMode = isReceptorPrimary() ? "primary" : "secondary (receptor disabled)";
+      const lines: string[] = [`Engram Status (user: ${ctx.userId}, instance: ${instanceMode})`];
 
       if (status.store) {
         const s = status.store;
@@ -404,6 +405,20 @@ server.tool(
     }).optional().describe("[Internal] Hook event from Claude Code. Do not set manually."),
   },
   async ({ action, event }) => {
+    // Secondary instance: receptor is managed by the primary instance
+    if (!isReceptorPrimary()) {
+      return {
+        content: [{
+          type: "text",
+          text: "Receptor unavailable: this is a secondary engram instance.\n" +
+            "Another instance already owns the receptor (port " +
+            (process.env.RECEPTOR_PORT ?? "3101") + ").\n\n" +
+            "Functional: engram_pull, engram_push, engram_flag, engram_ls, engram_status\n" +
+            "Disabled:   engram_watch (receptor, session points, weight snapshots, persona)",
+        }],
+      };
+    }
+
     // Ingest event if provided
     if (event) {
       ingestEvent(event);
@@ -489,10 +504,19 @@ async function main() {
   console.error(`[engram] MCP v2 running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
 
   // Start receptor HTTP listener (receives PostToolUse hook events)
-  startReceptorHttp();
+  // If port is already taken, another instance owns the receptor — this one becomes secondary.
+  const { primary } = await startReceptorHttp();
 
-  // Auto-start receptor watch
-  setWatch(true);
+  if (primary) {
+    // Auto-start receptor watch (only primary instance)
+    setWatch(true);
+  } else {
+    console.error(
+      `[engram] Secondary instance: MCP tools (pull/push/flag/ls/status) are fully functional. ` +
+      `Receptor watch, session points, weight snapshots, and persona loading are DISABLED ` +
+      `(managed by the primary instance on port ${process.env.RECEPTOR_PORT ?? "3101"}).`
+    );
+  }
 
   // Register executors — receptor auto queue dispatches via service registry
   registerExecutor("engram_pull", {
@@ -574,7 +598,10 @@ async function main() {
   // Cleanup on process exit
   const cleanup = () => {
     // Stop receptor watch — triggers persona finalize, session-point flush, weight snapshot
-    setWatch(false);
+    // Only primary instance owns the receptor; secondary skips to avoid clobbering data.
+    if (isReceptorPrimary()) {
+      setWatch(false);
+    }
     closeAllMcpClients().catch(() => {});
     if (ctx.defaultProjectId) {
       deactivateProject(ctx, ctx.defaultProjectId).catch(() => {});

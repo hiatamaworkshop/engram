@@ -11,7 +11,7 @@
 import type { EmotionVector, EmotionAxis, FireSignal, PatternKind, AgentState, ProjectMeta } from "./types.js";
 import type { AmbientEstimator } from "./ambient.js";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ---- Profile hash (computed once at module load) ----
@@ -28,7 +28,9 @@ export function getProfileHash(): string { return _profileHash; }
 
 // ---- Constants ----
 
-const MAX_SNAPSHOTS = 10;
+// No upper limit during test phase — all snapshots retained for analysis.
+// Aggregation/thinning is the loader's job, not the recorder's.
+// Each snapshot ~200 bytes; 1000 snapshots = ~200KB. No memory concern.
 const POSITIVE_SIGNALS = new Set(["confidence_sustained", "flow_active"]);
 
 // workContext sanitization limits (same rules apply at Facade)
@@ -44,7 +46,7 @@ const CONFIDENCE_AVG_MIN = 0.4;
 
 // ---- Types ----
 
-interface Snapshot {
+export interface Snapshot {
   ts: number;
   emotion: EmotionVector;
   agentState: AgentState;
@@ -103,6 +105,14 @@ export interface Persona {
   };
 }
 
+// ---- Output path (kill-safe append) ----
+
+const OUTPUT_DIR = join(
+  process.env.ENGRAM_DATA_DIR ?? join(import.meta.dirname!, ".."),
+  "receptor-output",
+);
+const PERSONA_SNAPSHOTS_PATH = join(OUTPUT_DIR, "persona-snapshots.jsonl");
+
 // ---- Singleton state ----
 
 const _snapshots: Snapshot[] = [];
@@ -132,7 +142,7 @@ export function captureSnapshot(
     fieldAdj[axis] = ambient.fieldAdjustment[axis];
   }
 
-  _snapshots.push({
+  const snapshot: Snapshot = {
     ts: Date.now(),
     emotion: { ...emotion },
     agentState,
@@ -140,11 +150,16 @@ export function captureSnapshot(
     thresholds,
     fieldAdjustment: { ...fieldAdj },
     entropy,
-  });
+  };
 
-  // Evict oldest if over capacity
-  while (_snapshots.length > MAX_SNAPSHOTS) {
-    _snapshots.shift();
+  _snapshots.push(snapshot);
+
+  // Append immediately — kill-safe, no finalize dependency
+  try {
+    mkdirSync(OUTPUT_DIR, { recursive: true });
+    appendFileSync(PERSONA_SNAPSHOTS_PATH, JSON.stringify(snapshot) + "\n");
+  } catch (err) {
+    console.error("[persona] snapshot append error:", err);
   }
 }
 
@@ -175,9 +190,13 @@ export function finalizeSession(
   return _buildPersona(elapsedMs, learnedDelta, confidenceAvg, projectMeta, model);
 }
 
-/** Clear all state (called on watch start). */
+/** Clear all state (called on watch start). Truncates JSONL for new session. */
 export function clearPersonaState(): void {
   _snapshots.length = 0;
+  try {
+    mkdirSync(OUTPUT_DIR, { recursive: true });
+    writeFileSync(PERSONA_SNAPSHOTS_PATH, "");
+  } catch { /* ignore */ }
 }
 
 /** Get snapshot count (for status display). */
@@ -188,6 +207,38 @@ export function snapshotCount(): number {
 /** Get snapshots for debug inspection. */
 export function getSnapshots(): ReadonlyArray<Snapshot> {
   return _snapshots;
+}
+
+/**
+ * Build Persona from raw snapshots (degraded path).
+ * Used by persona-prior when finalizeSession didn't run (e.g. VSCode X-button kill).
+ * Same logic as finalizeSession + _buildPersona but accepts external snapshot array.
+ */
+export function buildPersonaFromRawSnapshots(
+  snapshots: Snapshot[],
+  learnedDelta?: Record<string, number>,
+  projectMeta?: ProjectMeta,
+  model?: string,
+): Persona | null {
+  if (snapshots.length < MIN_SNAPSHOTS) return null;
+
+  const confidenceAvg = snapshots.reduce((a, s) => a + s.emotion.confidence, 0) / snapshots.length;
+  if (confidenceAvg < CONFIDENCE_AVG_MIN) return null;
+
+  // Estimate elapsed from first/last snapshot timestamps
+  const elapsedMs = snapshots.length > 1
+    ? snapshots[snapshots.length - 1].ts - snapshots[0].ts
+    : 0;
+
+  // Temporarily swap _snapshots for _buildPersona (uses module-level array)
+  const saved = _snapshots.slice();
+  _snapshots.length = 0;
+  _snapshots.push(...snapshots);
+  const persona = _buildPersona(elapsedMs, learnedDelta ?? {}, confidenceAvg, projectMeta, model);
+  _snapshots.length = 0;
+  _snapshots.push(...saved);
+
+  return persona;
 }
 
 // ---- Internal ----

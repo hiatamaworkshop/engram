@@ -142,28 +142,46 @@ export function setLastPushNodeId(id: string): void {
  * Record engram node weights from pull/auto_pull results.
  * Called when engram_pull returns results — captures the weight distribution
  * of knowledge referenced during this session.
- * Later entries for the same nodeId overwrite earlier ones (weight may change mid-session).
+ * Later entries for the same nodeId overwrite in memory (weight may change mid-session).
+ * Every call appends to JSONL immediately — kill-safe, no flush dependency.
  */
 export function recordEngramWeights(
   results: Array<{ id: string; weight: number; summary: string }>,
   source: "pull" | "auto_pull",
 ): void {
+  console.error(`[session-point] recordEngramWeights called: source=${source} results=${results.length} sessionActive=${_sessionActive}`);
   if (!_sessionActive || results.length === 0) return;
 
   const now = Date.now();
+  const newEntries: EngramWeightEntry[] = [];
   for (const r of results) {
-    _weightEntries.set(r.id, {
+    console.error(`[session-point]   weight entry: id=${r.id?.slice(0, 12)} weight=${r.weight} summary=${r.summary?.slice(0, 40)}`);
+    const entry: EngramWeightEntry = {
       nodeId: r.id,
       weight: r.weight,
       summary: r.summary,
       ts: now,
       source,
-    });
+    };
+    _weightEntries.set(r.id, entry);
+    newEntries.push(entry);
+  }
+
+  // Append immediately — kill-safe
+  try {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const lines = newEntries.map(e => JSON.stringify(e)).join("\n") + "\n";
+    fs.appendFileSync(WEIGHT_SNAPSHOT_PATH, lines);
+  } catch (err) {
+    console.error("[session-point] weight append error:", err);
   }
 }
 
 /**
- * Flush engram weight snapshot to JSONL. Called on session stop.
+ * Flush deduplicated engram weight snapshot to JSONL. Called on session stop.
+ * Overwrites the append-only file with deduplicated entries (latest per nodeId).
+ * This is a bonus cleanup — if kill happens before this, the append-only file
+ * still has all data (with possible duplicates the loader can deduplicate).
  */
 export function flushWeightSnapshot(): void {
   if (_weightEntries.size === 0) return;
