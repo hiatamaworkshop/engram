@@ -12,6 +12,8 @@ import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapshot, getPriorResult } from "./index.js";
 import { getSnapshots as personaGetSnapshots } from "./persona-snapshot.js";
+import { buildPriorBlock, formatPriorBlock, loadWeightSnapshot } from "./persona-prior.js";
+import type { SessionPointWithGap } from "./persona-prior.js";
 import type { RawHookEvent } from "./normalizer.js";
 
 const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
@@ -78,6 +80,33 @@ export function startReceptorHttp(): Promise<{ primary: boolean }> {
             recentFires: sp.recentFires,
           },
         }, null, 2));
+        return;
+      }
+
+      // GET /debug/prior-block — generate Prior Block from current session data (test endpoint)
+      if (req.url === "/debug/prior-block") {
+        const sp = getDebugSnapshot();
+        const points: SessionPointWithGap[] = sp.sessionPoints.map((p: any, i: number, arr: any[]) => ({
+          point: p,
+          gapMs: i === 0 ? 0 : p.t - arr[i - 1].t,
+        }));
+        if (points.length === 0) {
+          res.writeHead(200);
+          res.end(JSON.stringify({ error: "no session points yet", pointCount: 0 }));
+          return;
+        }
+        const weights = sp.weightEntries.length > 0 ? sp.weightEntries : loadWeightSnapshot();
+        const prior = getPriorResult() ?? { applied: false, source: "none" };
+        const block = buildPriorBlock(points, weights, prior);
+        if (!block) {
+          res.writeHead(200);
+          res.end(JSON.stringify({ error: "buildPriorBlock returned null" }));
+          return;
+        }
+        const formatted = formatPriorBlock(block);
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.writeHead(200);
+        res.end(formatted);
         return;
       }
 
