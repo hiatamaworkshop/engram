@@ -373,27 +373,18 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
       );
     }
 
-    const priorMsg = _priorResult.applied
-      ? ` Prior loaded: ${_priorResult.dominantAxis}/${_priorResult.dominantState}.`
-      : "";
-    const arcMsg = _priorResult.sessionArc
-      ? ` Arc: ${_priorResult.sessionArc.pointCount}pts.`
-      : "";
-    const weightMsg = _priorResult.weightSummary
-      ? ` Knowledge: ${_priorResult.weightSummary.nodeCount} nodes.`
-      : "";
-
     // Build Prior Block (AI Native Format) for agent consumption
     let priorBlockMsg = "";
     if (priorPoints) {
       const block = buildPriorBlock(priorPoints, priorWeights, _priorResult);
       if (block) {
-        priorBlockMsg = `\n\n[prior-block]\n${formatPriorBlock(block)}`;
-        console.error(`[persona-prior] prior block: ${block.length} elements (H + ${block.length - (priorWeights ? 2 : 1)} arc + F)`);
+        const arcCount = block.filter(e => Array.isArray(e) && e[0] === "A").length;
+        priorBlockMsg = `\n${formatPriorBlock(block)}`;
+        console.error(`[persona-prior] prior block: ${arcCount} arc points`);
       }
     }
 
-    return { watching: true, message: `Receptor watch started.${priorMsg}${arcMsg}${weightMsg}${priorBlockMsg}` };
+    return { watching: true, message: `Receptor watch started.${priorBlockMsg}` };
   }
   if (!enabled && _watching) {
     // Stop session point recording

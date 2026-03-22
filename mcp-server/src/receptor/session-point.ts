@@ -115,6 +115,8 @@ export function recordSessionPoints(signals: FireSignal[]): void {
       valence: VALENCE_MAP[signal.kind] ?? 0,
       freq,
       link,
+      emotion: { ...signal.emotion },
+      agentState: signal.agentState,
     });
 
     // link is shared across simultaneous signals but consumed for next cycle

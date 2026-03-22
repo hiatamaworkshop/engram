@@ -18,7 +18,7 @@ import type { PersonaPayload } from "./sphere-shaper.js";
 import type { Persona, Snapshot } from "./persona-snapshot.js";
 import { getProfileHash, buildPersonaFromRawSnapshots } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
-import type { AgentState, SessionPoint, EngramWeightEntry } from "./types.js";
+import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -483,38 +483,35 @@ export function summarizeWeights(entries: EngramWeightEntry[]): WeightSummary {
   return { nodeCount: entries.length, topNodes };
 }
 
-// ---- Prior Block Builder (AI Native Format) ----
+// ---- Prior Block Builder v2 (AI Native Format) ----
 
 /**
  * Build a Prior Block — compact JSON array for AI consumption.
  *
- * Three-part structure:
- *   Header (purpose)  → what the session was about
- *   Arc    (journey)  → time-series of session points with inter-point gaps
- *   Footer (outcome)  → weight distribution of referenced knowledge
+ * Three-part structure separated by ["---"]:
+ *   Header (purpose)  → session duration, valence, initial emotion state
+ *   Arc    (journey)  → time-series with per-axis deltas + agentState + engram links
+ *   Footer (outcome)  → final emotion, stats, agentState distribution, engram weights
  *
- * Design: docs/PERSONA_LOADING_SYSTEM.md — AI Native Prior Format
+ * Design: docs/PERSONA_LOADING_SYSTEM.md — AI Native Prior Format v2
  */
 
-// Sampling thresholds
 const PRIOR_BLOCK_MAX_POINTS = 200;
+const EMOTION_AXES = ["frustration", "seeking", "confidence", "fatigue", "flow"] as const;
+const AGENT_STATES: AgentState[] = ["stuck", "exploring", "deep_work", "idle", "delegating"];
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
-type PriorHeader = ["H", number, number, ...number[]];
-// ["H", durationMs, valenceBalance, frustration, seeking, confidence, fatigue, flow]
-
-type PriorArcPoint = ["A", number, number, string, number, number, number];
-// ["A", t, gapMs, label, intensity, valence, freq]
-// Note: per-axis deltas will replace label/valence in future iteration
-
-type PriorFooter = ["F", number, ...Array<[string, number]>];
-// ["F", nodeCount, [summary, weight], ...]
-
-type PriorBlock = [PriorHeader, ...PriorArcPoint[], PriorFooter] | [PriorHeader, ...PriorArcPoint[]];
+type PriorHeader = ["H", number, number, number, number, number, number, number];
+type PriorSeparator = ["---"];
+type PriorArcPoint = ["A", number, number, string, number, number, number, number, number, number, string | null];
+type PriorFooter = ["F", number[], number[], number[], Array<[string, number]>];
+type PriorElement = PriorHeader | PriorSeparator | PriorArcPoint | PriorFooter;
+type PriorBlock = PriorElement[];
 
 export function buildPriorBlock(
   points: SessionPointWithGap[],
   weights: EngramWeightEntry[] | null,
-  priorResult: PriorResult,
+  _priorResult: PriorResult,
 ): PriorBlock | null {
   if (points.length === 0) return null;
 
@@ -528,13 +525,15 @@ export function buildPriorBlock(
     if (point.valence === -1) negativeCount++;
   }
   const total = positiveCount + negativeCount;
-  const valenceBalance = total > 0
-    ? Math.round(((positiveCount - negativeCount) / total) * 100) / 100
-    : 0;
+  const valenceBalance = total > 0 ? r2((positiveCount - negativeCount) / total) : 0;
 
-  // Initial emotion state placeholder — 5 zeros until we record emotion snapshots
-  // Future: read from first persona-snapshot or ambient state at session start
-  const header: PriorHeader = ["H", durationMs, valenceBalance, 0, 0, 0, 0, 0];
+  // Initial emotion: from first point's emotion vector, or zeros if unavailable
+  const firstEmotion = points[0].point.emotion;
+  const initEmo = firstEmotion
+    ? EMOTION_AXES.map(a => r2(firstEmotion[a]))
+    : [0, 0, 0, 0, 0];
+
+  const header: PriorHeader = ["H", durationMs, valenceBalance, ...initEmo as [number, number, number, number, number]];
 
   // --- Arc ---
   let sampled = points;
@@ -542,32 +541,92 @@ export function buildPriorBlock(
     sampled = samplePoints(points, PRIOR_BLOCK_MAX_POINTS);
   }
 
-  const arc: PriorArcPoint[] = sampled.map(({ point, gapMs }) => [
-    "A",
-    point.t,
-    gapMs,
-    point.label,
-    Math.round(point.intensity * 100) / 100,
-    point.valence,
-    Math.round(point.freq * 100) / 100,
-  ]);
+  const arc: PriorArcPoint[] = [];
+  let prevEmotion: EmotionVector | null = null;
 
-  // --- Footer ---
-  if (weights && weights.length > 0) {
-    const sorted = [...weights].sort((a, b) => b.weight - a.weight);
-    const topPairs: Array<[string, number]> = sorted
-      .slice(0, 5)
-      .map(e => [e.summary, Math.round(e.weight * 10) / 10]);
-    const footer: PriorFooter = ["F", weights.length, ...topPairs];
-    return [header, ...arc, footer] as PriorBlock;
+  for (const { point, gapMs } of sampled) {
+    const state = point.agentState ?? "idle";
+    const emo = point.emotion;
+
+    // First point: absolute emotion values. Subsequent: delta from previous.
+    let emoValues: number[];
+    if (!prevEmotion || !emo) {
+      emoValues = emo ? EMOTION_AXES.map(a => r2(emo[a])) : [0, 0, 0, 0, 0];
+    } else {
+      emoValues = EMOTION_AXES.map(a => r2(emo[a] - prevEmotion![a]));
+    }
+
+    if (emo) prevEmotion = emo;
+
+    arc.push([
+      "A",
+      point.t,
+      gapMs,
+      state,
+      r2(point.intensity),
+      ...emoValues as [number, number, number, number, number],
+      point.link,
+    ]);
   }
 
-  return [header, ...arc] as PriorBlock;
+  // --- Footer ---
+  const footer = buildFooter(points, weights);
+
+  return [header, ["---"], ...arc, ["---"], footer];
+}
+
+/**
+ * Build Footer: final emotion, stats, agentState distribution, engram weights.
+ */
+function buildFooter(
+  points: SessionPointWithGap[],
+  weights: EngramWeightEntry[] | null,
+): PriorFooter {
+  const last = points[points.length - 1].point;
+
+  // F[0]: final emotion
+  const finalEmo = last.emotion
+    ? EMOTION_AXES.map(a => r2(last.emotion![a]))
+    : [0, 0, 0, 0, 0];
+
+  // F[1]: stats [totalEvents, activeMs, arcPoints, maxIntensity, meanIntensity]
+  const durationMs = points[points.length - 1].point.t - points[0].point.t;
+  let maxI = 0;
+  let sumI = 0;
+  for (const { point } of points) {
+    if (point.intensity > maxI) maxI = point.intensity;
+    sumI += point.intensity;
+  }
+  const stats = [
+    points.length,
+    durationMs,
+    points.length,
+    r2(maxI),
+    r2(sumI / points.length),
+  ];
+
+  // F[2]: agentState ratio [stuck, exploring, deep_work, idle, delegating]
+  const stateCounts = new Map<string, number>();
+  for (const s of AGENT_STATES) stateCounts.set(s, 0);
+  for (const { point } of points) {
+    const s = point.agentState ?? "idle";
+    stateCounts.set(s, (stateCounts.get(s) ?? 0) + 1);
+  }
+  const stateRatio = AGENT_STATES.map(s => r2((stateCounts.get(s) ?? 0) / points.length));
+
+  // F[3]: engram top weights
+  let engramTop: Array<[string, number]> = [];
+  if (weights && weights.length > 0) {
+    const sorted = [...weights].sort((a, b) => b.weight - a.weight);
+    engramTop = sorted.slice(0, 5).map(e => [e.summary, r2(e.weight)]);
+  }
+
+  return ["F", finalEmo, stats, stateRatio, engramTop];
 }
 
 /**
  * Sample points for large sessions.
- * Strategy: keep high-delta points + sign-reversal points + even spacing.
+ * Strategy: keep high-intensity + delta-change points + even spacing.
  */
 function samplePoints(
   points: SessionPointWithGap[],
@@ -575,21 +634,31 @@ function samplePoints(
 ): SessionPointWithGap[] {
   if (points.length <= maxPoints) return points;
 
-  // Always keep first and last
   const kept = new Set<number>([0, points.length - 1]);
 
-  // Score each point: intensity + valence reversal bonus
+  // Score each point: intensity + agentState change bonus + emotion delta magnitude
   const scores: Array<{ idx: number; score: number }> = [];
   for (let i = 1; i < points.length - 1; i++) {
     let score = points[i].point.intensity;
-    // Valence reversal bonus
-    if (i > 0 && points[i].point.valence !== points[i - 1].point.valence) {
-      score += 0.3;
+
+    // agentState change bonus
+    if (points[i].point.agentState !== points[i - 1].point.agentState) {
+      score += 0.4;
     }
+
+    // Emotion delta magnitude bonus (if available)
+    const curr = points[i].point.emotion;
+    const prev = points[i - 1].point.emotion;
+    if (curr && prev) {
+      let deltaMag = 0;
+      for (const a of EMOTION_AXES) deltaMag += Math.abs(curr[a] - prev[a]);
+      score += deltaMag * 0.5;
+    }
+
     scores.push({ idx: i, score });
   }
 
-  // Take top scorers
+  // Take top scorers (60%)
   const highDelta = Math.floor(maxPoints * 0.6);
   scores.sort((a, b) => b.score - a.score);
   for (let i = 0; i < Math.min(highDelta, scores.length); i++) {
@@ -605,17 +674,17 @@ function samplePoints(
     }
   }
 
-  // Sort by index and return
   const sortedIndices = [...kept].sort((a, b) => a - b).slice(0, maxPoints);
   return sortedIndices.map(i => points[i]);
 }
 
-/** Inline schema — travels with the data so the agent always knows the format. */
+/** Inline schema v2 — travels with the data. */
 const PRIOR_BLOCK_SCHEMA =
   "[prior-block schema: " +
-  "H=header(durationMs,valenceBalance,frustration,seeking,confidence,fatigue,flow) " +
-  "A=arc(t,gapMs,label,intensity,valence,freq) " +
-  "F=footer(nodeCount,...[summary,weight])]";
+  "H=header(durationMs,valenceBalance,frust,seek,conf,fatigue,flow) " +
+  "A=arc(t,gapMs,agentState,intensity,dFrust,dSeek,dConf,dFatig,dFlow,engramId?) " +
+  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[stuck,exploring,deep_work,idle,delegating],engramTop[...[summary,weight]]) " +
+  "---=separator]";
 
 /**
  * Format Prior Block as a compact string for tool response embedding.

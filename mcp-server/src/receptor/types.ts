@@ -94,6 +94,8 @@ export interface SessionPoint {
   freq: number;                 // recent activation frequency (normalized 0.0–1.0)
   link: string | null;          // engram node ID | null
   engramWeight?: number;        // weight of linked engram node at snapshot time
+  emotion?: EmotionVector;      // full 5-axis emotion state at fire time
+  agentState?: AgentState;      // behavioral context at fire time
 }
 
 // ---- Engram weight snapshot (knowledge weight distribution at session time) ----
