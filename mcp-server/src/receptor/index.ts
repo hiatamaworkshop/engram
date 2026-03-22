@@ -83,7 +83,12 @@ import {
   clearPersonaState, snapshotCount as personaSnapshotCount,
   getSnapshots as personaGetSnapshots,
 } from "./persona-snapshot.js";
-import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type SwapResult, type CompatResult } from "./persona-prior.js";
+import {
+  loadPrior, readPriorPersona, applyPriorPersona, applyLens, validatePersonaCompat,
+  loadSessionPoints, loadWeightSnapshot, summarizeSessionArc, summarizeWeights,
+  buildPriorBlock, formatPriorBlock,
+  type PriorResult, type SwapResult, type CompatResult,
+} from "./persona-prior.js";
 import {
   updateWorkTime, recordSessionPoints, clearSessionPoints, stopSessionPoints,
   sessionPointCount, setLastPushNodeId, getWorkTimeMs,
@@ -328,6 +333,12 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     _eventCount = 0;
     _lastEmotion = { ...ZERO_EMOTION };
     _lastSignals = [];
+    // Phase 1: Read all prior data BEFORE clear — files are truncated by clear*()
+    const priorPersona = readPriorPersona();
+    const priorPoints = loadSessionPoints();
+    const priorWeights = loadWeightSnapshot();
+
+    // Phase 2: Clear all state + truncate JSONL files for new session
     heatmap.clear();
     commander.clear();
     ambient.clear();
@@ -341,13 +352,48 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     clearSessionPoints();
     _lastHeatmapFlush = 0;
 
-    // Load prior persona — seed ambient baselines from previous session
-    _priorResult = loadPrior(ambient);
+    // Phase 3: Apply prior persona to fresh ambient
+    _priorResult = applyPriorPersona(priorPersona, ambient);
+    if (priorPoints) {
+      _priorResult.sessionArc = summarizeSessionArc(priorPoints);
+      console.error(
+        `[persona-prior] session arc: ${_priorResult.sessionArc.pointCount} points, ` +
+        `${Math.round(_priorResult.sessionArc.durationMs / 1000)}s, ` +
+        `peak=${_priorResult.sessionArc.peakSignal}(${_priorResult.sessionArc.peakIntensity?.toFixed(2)}), ` +
+        `valence=${_priorResult.sessionArc.valenceBalance.toFixed(2)}`
+      );
+    }
+    if (priorWeights) {
+      _priorResult.weightSummary = summarizeWeights(priorWeights);
+      const topSummaries = _priorResult.weightSummary.topNodes
+        .map(n => `${n.summary}(w=${n.weight.toFixed(1)})`)
+        .join(", ");
+      console.error(
+        `[persona-prior] knowledge: ${_priorResult.weightSummary.nodeCount} nodes referenced. top: ${topSummaries}`
+      );
+    }
+
     const priorMsg = _priorResult.applied
       ? ` Prior loaded: ${_priorResult.dominantAxis}/${_priorResult.dominantState}.`
       : "";
+    const arcMsg = _priorResult.sessionArc
+      ? ` Arc: ${_priorResult.sessionArc.pointCount}pts.`
+      : "";
+    const weightMsg = _priorResult.weightSummary
+      ? ` Knowledge: ${_priorResult.weightSummary.nodeCount} nodes.`
+      : "";
 
-    return { watching: true, message: `Receptor watch started. Monitoring agent behavior.${priorMsg}` };
+    // Build Prior Block (AI Native Format) for agent consumption
+    let priorBlockMsg = "";
+    if (priorPoints) {
+      const block = buildPriorBlock(priorPoints, priorWeights, _priorResult);
+      if (block) {
+        priorBlockMsg = `\n\n[prior-block]\n${formatPriorBlock(block)}`;
+        console.error(`[persona-prior] prior block: ${block.length} elements (H + ${block.length - (priorWeights ? 2 : 1)} arc + F)`);
+      }
+    }
+
+    return { watching: true, message: `Receptor watch started.${priorMsg}${arcMsg}${weightMsg}${priorBlockMsg}` };
   }
   if (!enabled && _watching) {
     // Stop session point recording
@@ -489,6 +535,10 @@ export function getState(): ReceptorState {
     lastEmotion: { ..._lastEmotion },
     signals: [..._lastSignals],
   };
+}
+
+export function getPriorResult(): PriorResult | null {
+  return _priorResult;
 }
 
 // ---- Formatting helpers ----
@@ -636,7 +686,7 @@ export function formatState(): string {
   const pSnaps = personaSnapshotCount();
   const spCount = sessionPointCount();
   const wCount = weightEntryCount();
-  const personaStr = pSnaps > 0 ? `  persona:${pSnaps}/${10}` : "";
+  const personaStr = pSnaps > 0 ? `  persona:${pSnaps}` : "";
   const spStr = spCount > 0 ? `  sp:${spCount}` : "";
   const wStr = wCount > 0 ? `  ew:${wCount}` : "";
   lines.push(`[C] ${metaNeuron.format()}${personaStr}${spStr}${wStr}`);
