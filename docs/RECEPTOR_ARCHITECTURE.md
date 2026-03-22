@@ -83,6 +83,20 @@ engram_push   → memory_write
 **設計意図**: Cursor や他のエディタに移行する場合、Normalizer のマッピングだけ差し替えれば
 下流の emotion engine は変更不要。
 
+**マルチモーダル拡張**: この正規化設計は LLM コーディングエージェントに限定されない。任意の AI runtime の行動ログを `NormalizedEvent { action, result, ts }` に変換するアダプタを書けば、receptor core がそのまま載る。
+
+```
+LLM エージェント:    tool_name → action (file_read, shell_exec, ...)
+自動運転 AI:         control_command → action (lane_change, brake, scan, ...)
+ロボティクス AI:     motor_command + sensor_feedback → action (grasp, reach, wait, ...)
+マルチモーダル AI:   modality_switch + attention_shift → action (visual_focus, audio_parse, ...)
+Copilot 型:          proposal + user_reaction → action (accept, reject, accept_then_edit, ...)
+```
+
+各ドメインの行動語彙は異なるが、正規化後の構造は共通。emotion-profile.json をドメインごとに用意すれば、蓄積・delta 計算・SessionPoint 記録・Prior Block 生成は全て共通の receptor core が処理する。アダプタ層は薄いシム — ドメイン固有の汚れをここに閉じ込め、core の純粋性を保つ。
+
+参照: [DATA_COST_PROTOCOL.md](DATA_COST_PROTOCOL.md) — Receptor 汎用化、アダプタ層設計
+
 ---
 
 ## 2. Commander — 「何をしているか」の時間窓分析
@@ -334,7 +348,7 @@ state === stuck:
   frustration threshold -= 0.02 (max -0.10)
   → 苦戦中はより敏感に検知
 
-fatigue threshold: C は変更しない（安全原則）
+fatigue threshold: C は変更しな��（安全原則）
 flow threshold: C は変更しない（A の不可侵性）
 ```
 

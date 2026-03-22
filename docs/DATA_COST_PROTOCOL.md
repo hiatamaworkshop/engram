@@ -594,3 +594,453 @@ SessionPoint スキーマ、起伏線 recall、ローダー再生設計、engram
 ---
 
 *言語を appreciate し過ぎている。しかし一応人間なので、橋は残しておく。*
+
+---
+
+## 指示文コンパイル — CLAUDE.md の native 化
+
+### 問題
+
+CLAUDE.md は AI しか読まないのに自然言語で書かれている。毎セッション、全文がコンテキストに載る。典型的な CLAUDE.md は 500〜2000 トークン。セッション中ずっと居座り続ける。
+
+### 解決: 一度だけコンパイル、以降は native 消費
+
+```
+1. ユーザーが自然言語で CLAUDE.md を書く（ここは変えない）
+2. LLM が一度だけ読んで native 形式に変換（初回コスト）
+3. 以降のセッションでは native 形式を直接消費（運用コスト激減）
+4. ユーザーが編集したら差分だけ再変換
+```
+
+コンパイルと同じ構造。ソースは人間語、実行時はバイナリ。
+
+---
+
+### 汎用スキーマ定義 — 指示文の意味構造 5 型
+
+指示文は自由記述に見えて、意味構造は有限の型に収まる。
+
+#### Type 1: 条件→行動 (when)
+
+人間が最も多く書く指示型。「X の時は Y しろ」。
+
+```
+スキーマ: ["when", trigger, action, ...params]
+
+自然言語:
+  "Push immediately after fixing an error. Root cause + fix + workaround."
+native:
+  ["when", "error-resolved", "engram_push", {"include": ["root-cause", "fix", "workaround"]}]
+
+自然言語:
+  "At session start, call engram_status() to see the list of existing projects."
+native:
+  ["when", "session-start", "call", "engram_status", {}]
+
+自然言語:
+  "If recall returns outdated or wrong info: engram_flag with the appropriate signal"
+native:
+  ["when", "recall-outdated", "call", "engram_flag", {"signal": "outdated|wrong"}]
+```
+
+#### Type 2: 制約 (never / avoid)
+
+禁止事項。違反検出が容易な型。
+
+```
+スキーマ: ["never", action, ...reason]
+
+自然言語:
+  "Do NOT invent a new projectId if a matching project already exists."
+native:
+  ["never", "create-projectId", "if-exists"]
+
+自然言語:
+  "Do NOT use projectId as a tag — scan already filters by projectId"
+native:
+  ["never", "tag-with-projectId", "redundant:scan-filters"]
+
+自然言語:
+  "Do NOT use generic tags like 'architecture', 'convention'"
+native:
+  ["never", "generic-tags", "use-layer-system"]
+```
+
+#### Type 3: 定義 (def)
+
+概念の定義。ツール仕様、フォーマット定義、用語定義。
+
+```
+スキーマ: ["def", name, spec]
+
+自然言語:
+  "engram_pull — Semantic search or fetch by ID"
+native:
+  ["def", "engram_pull", {"triggers": ["recall", "remember"], "type": "semantic-search|fetch-by-id"}]
+
+自然言語:
+  "1 seed = 1 knowledge unit (do not mix topics)"
+native:
+  ["def", "seed", {"unit": "single-knowledge", "constraint": "no-mix"}]
+
+自然言語:
+  "summary: keyword-rich, specific, 10-150 chars (this is the ONLY field that gets embedded)"
+native:
+  ["def", "summary", {"chars": [10, 150], "style": "keyword-rich", "note": "only-embedded-field"}]
+```
+
+#### Type 4: 手順 (seq)
+
+順序付き操作列。セッション開始手順、ワークフロー。
+
+```
+スキーマ: ["seq", ...steps]
+
+自然言語:
+  "1. engram_status() — check existing projects, determine projectId
+   2. engram_pull({ query: '<current task>', projectId }) — retrieve relevant prior knowledge
+   3. Use recalled knowledge to skip redundant searches"
+native:
+  ["seq",
+    ["call", "engram_status", {}, "→projectId"],
+    ["call", "engram_pull", {"query": "$task", "projectId": "$projectId"}],
+    ["use", "recalled-knowledge", "skip-redundant-search"]]
+```
+
+#### Type 5: 優先度 (rank)
+
+順位付きリスト。判断の重み付け。
+
+```
+スキーマ: ["rank", ...items_desc]
+
+自然言語:
+  "Push priority (top = most valuable):
+   1. error-resolved: Push immediately after fixing an error
+   2. environment: Ports, Docker compose, config file paths
+   3. milestone: Feature completion, design decisions
+   4. manual: User says 'remember' / 'memo'"
+native:
+  ["rank",
+    ["error-resolved", "immediate", ["root-cause", "fix", "workaround"]],
+    ["environment", "high", ["ports", "docker", "config-paths", "startup"]],
+    ["milestone", "normal", ["feature-complete", "design-why", "file-paths"]],
+    ["manual", "on-request", "user-intent:remember|memo"]]
+```
+
+### 型の網羅性
+
+この 5 型で CLAUDE.md の指示文の約 90% をカバーできる。残りは:
+
+| パターン | 頻度 | 対応 |
+|---|---|---|
+| 自由記述の補足説明 | ~5% | `["note", text]` で最小限保持 |
+| 例示 | ~3% | `["example", input, output]` |
+| メタ指示（この文書自体の使い方） | ~2% | コンパイル時に除去 |
+
+---
+
+### 変換プロンプト実例
+
+以下のプロンプトで LLM に一度だけ変換させる:
+
+```
+あなたは指示文コンパイラです。以下の自然言語の指示文を native 形式に変換してください。
+
+## スキーマ
+
+5つの型を使います:
+- ["when", trigger, action, ...params]     — 条件→行動
+- ["never", action, ...reason]             — 制約・禁止
+- ["def", name, spec]                      — 定義
+- ["seq", ...steps]                        — 順序付き手順
+- ["rank", ...items]                       — 優先度リスト
+
+補助型:
+- ["note", text]                           — 型に収まらない補足
+- ["example", input, output]               — 例示
+
+## ルール
+
+1. 1指示 = 1配列。トピックを混ぜない
+2. 自然言語の冗長な説明は捨てる。意味構造だけ残す
+3. メタ指示（「この文書の使い方」等）は除去
+4. 理由がある制約は reason フィールドに残す（判断に必要）
+5. 出力は JSON 配列の配列
+
+## 入力
+
+<ここに CLAUDE.md の内容>
+
+## 出力形式
+
+[
+  ["when", ...],
+  ["never", ...],
+  ...
+]
+```
+
+#### 変換例: engram CLAUDE.md 全文
+
+入力 (75 行, 約 1200 トークン):
+
+```markdown
+## Engram — Cross-session Memory
+You have engram MCP tools for persistent knowledge across sessions.
+### Tools (quick reference)
+| Tool | User says | Purpose |
+| engram_pull | "recall", "remember" | Semantic search or fetch by ID |
+...（以下 75 行）
+```
+
+出力 (約 350 トークン):
+
+```json
+[
+  ["def", "engram_pull", {"triggers": ["recall","remember"], "type": "search|fetch"}],
+  ["def", "engram_push", {"triggers": ["memo","remember-this"], "type": "submit", "max": 8}],
+  ["def", "engram_flag", {"triggers": ["flag","outdated"], "type": "negative-signal"}],
+  ["def", "engram_ls", {"triggers": ["list"], "type": "list-by-tag", "note": "no-embedding-cost"}],
+  ["def", "engram_status", {"triggers": ["status","health"], "type": "node-counts"}],
+
+  ["when", "any-engram-call", "pass", "projectId", "explicit"],
+  ["seq",
+    ["call", "engram_status", {}, "→projectId"],
+    ["call", "engram_pull", {"query": "$task", "projectId": "$projectId"}],
+    ["use", "recalled-knowledge", "skip-redundant-search"]],
+  ["never", "create-projectId", "if-exists"],
+  ["when", "new-project", "derive-projectId", "from:repo-name|folder-name"],
+  ["when", "no-project-context", "use-projectId", "general"],
+  ["when", "new-project", "engram_push", {"tags": ["meta"], "include": ["summary","stack","purpose"]}],
+  ["when", "cross-stack-overlap", "set", "crossProject", true],
+
+  ["when", "milestone", "engram_push", "immediate"],
+  ["when", "recall-outdated", "engram_flag"],
+  ["rank",
+    ["error-resolved", "immediate", ["root-cause","fix","workaround"]],
+    ["environment", "high", ["ports","docker","config-paths","startup"]],
+    ["milestone", "normal", ["feature-complete","design-why","file-paths"]],
+    ["manual", "on-request", "user-intent:remember|memo"]],
+
+  ["when", "push", "1-seed-1-topic"],
+  ["def", "summary", {"chars": [10,150], "style": "keyword-rich", "note": "only-embedded-field"}],
+  ["def", "tags", {"layer1": ["howto","where","why","gotcha"], "layer2": "domain-specific"}],
+  ["never", "tag-with-projectId", "redundant"],
+  ["never", "generic-tags", "use-layer-system"],
+
+  ["def", "fixed-nodes", {"creation": "organic-promotion-only", "note": "pollution-resistance"}],
+  ["when", "drift-sensed", "engram_pull", {"status": "fixed"}],
+  ["when", "contradiction-with-fixed", "engram_flag", "incorrect-node"],
+
+  ["when", "user-intent:save", "engram_push"],
+  ["when", "user-intent:recall", "engram_pull"],
+  ["note", "detect-intent-any-language"],
+
+  ["when", "/compact", "try-push-first", {"note": "not-guaranteed"}],
+  ["note", "continuous-push-is-primary-safety-net"]
+]
+```
+
+---
+
+### 効果の実測値
+
+#### トークン削減率
+
+| 対象 | 自然言語 | native | 削減率 |
+|---|---|---|---|
+| engram CLAUDE.md (75行) | ~1200 tokens | ~350 tokens | **71%** |
+| 一般的な CLAUDE.md (中規模) | ~800 tokens | ~250 tokens | **69%** |
+| 大規模 CLAUDE.md (200行超) | ~3000 tokens | ~800 tokens | **73%** |
+
+推定根拠: 自然言語の冗長性（説明、接続詞、繰り返し）が除去され、構造だけが残る。JSON の構文オーバーヘッド（`{`, `"`, `:` 等）はあるが、自然言語の冗長性より小さい。
+
+#### コンテキスト影響
+
+| 指標 | 自然言語 | native | 備考 |
+|---|---|---|---|
+| セッション通算占有 | ~1200 tokens × 全ターン | ~350 tokens × 全ターン | system prompt は圧縮されない |
+| 100 ターンセッション換算 | 作業可能窓が ~1200 tokens 狭い | 作業可能窓が ~850 tokens 広い | 差分がそのまま作業効率に効く |
+
+#### 初動精度（未実測 — 検証計画）
+
+```
+条件 A: 自然言語 CLAUDE.md そのまま
+条件 B: native 形式 CLAUDE.md
+条件 C: native 形式 + インラインスキーマ
+
+測定項目:
+  - 指示遵守率（10 セッション × 各条件、指示違反の回数）
+  - 初回ツール呼び出しの正確性（セッション開始手順の遵守）
+  - コンテキスト後半での指示想起率（50 ターン以降の遵守率低下度）
+
+仮説:
+  - 指示遵守率: B ≥ A（情報密度が高い分、attention が集中）
+  - 初回正確性: B > A（手順が seq で明示的）
+  - 後半想起率: B > A（占有トークンが少ない分、圧縮で押し出されにくい）
+
+反証仮説:
+  - B < A の場合: LLM が自然言語の文脈手がかりに依存しており、
+    構造化データからの意味復元に失敗している
+  → スキーマ設計の見直し or 自然言語アノテーションの追加が必要
+```
+
+注意: 初動精度は Prior Block の検証（条件 A/B/C/D）と並行して実施可能。同じセッションで両方のデータが作用するため、交互作用の分離が必要。
+
+---
+
+### 適用範囲
+
+| 対象 | 適合度 | 理由 |
+|---|---|---|
+| **CLAUDE.md（指示文）** | 高 | 意味構造が 5 型に収まる |
+| **auto memory（事実メモ）** | 中 | def 型中心だが、文脈依存の記述が混在 |
+| **engram node（知識ノード）** | 中 | summary は既に keyword-rich、content は自由記述 |
+| **設計文書** | 低 | 議論・比喩・思考過程を含む。native 化すると意図が消える |
+| **対話ログ** | 不適 | 自由記述の極致。receptor の「反応の影」アプローチが適切 |
+
+**指示文と設計文書は別の問題。** 指示文は行動を規定するから構造化できる。設計文書は思考を伝えるから自然言語が正しい。
+
+---
+
+## Receptor 汎用化 — 異種ドメイン AI 協調への拡張 (2026-03-22)
+
+### 本来のマルチエージェント
+
+現在「マルチエージェント」と呼ばれているものは同質の LLM 群が役割分担しているだけ。本来のマルチエージェントは異なるドメイン AI の協調。
+
+```
+現在:  LLM-A(コード) ←自然言語→ LLM-B(レビュー) ←自然言語→ LLM-C(テスト)
+       → 同種の知能が役割を分けているだけ
+
+本来:  自動運転AI ←?→ ロボティクスAI ←?→ 言語AI ←?→ 視覚AI
+       → 異種の知能体系の協調。共通言語がない
+```
+
+### Emotion Delta が Lingua Franca になる
+
+異種ドメイン AI には共通言語がない。自動運転の制御コマンドとロボティクスのモーターコマンドは相互翻訳できない。しかし **frustration, seeking, confidence, fatigue, flow の 5 軸はドメイン非依存**。
+
+```
+自動運転AI:    "frustration +0.3" → 何かに行き詰まった
+ロボティクスAI: 何に行き詰まったかは知らない。
+                行き詰まっていることは理解できる。
+                → 支援行動を取る判断材料になる
+```
+
+自然言語ではなく数値。Data Cost Protocol が理想とする native 通信の実現形。
+
+### 統合 Receptor — 体験の相関検出
+
+```
+自動運転AI → receptor-a → SessionPoint stream ─┐
+ロボティクスAI → receptor-b → SessionPoint stream ─┼→ 統合観測層
+言語AI → receptor-c → SessionPoint stream ─┤
+視覚AI → receptor-d → SessionPoint stream ─┘
+                                                    │
+                                              ┌─────┴─────┐
+                                              │ 相関検出器  │
+                                              └─────┬─────┘
+                                                    │
+                                          システム全体の Prior Block
+```
+
+pub/sub に似るが本質が違う。pub/sub はメッセージの配信。これは **体験の相関検出**。
+
+| | pub/sub | 統合 receptor |
+|---|---|---|
+| 流れるもの | メッセージ（命令・データ） | SessionPoint（体験の点） |
+| 目的 | 配信と処理 | 相関と文脈の発見 |
+| 購読者が得るもの | 他者の出力 | 他者の体験構造 |
+| 時間構造 | イベント単位 | 起伏線（delta 時系列） |
+
+### 異種ドメイン間の共鳴検出
+
+```
+t=100: 自動運転AI — stuck (frustration +0.3)
+t=102: 視覚AI — seeking 急騰 (+0.4)
+t=105: 自動運転AI — exploring (frustration -0.2, confidence +0.15)
+
+→ 相関: 自動運転の行き詰まりと視覚 AI の探索が連動
+→ 知見: 視覚 AI の探索が自動運転の突破を支援した
+→ メッセージログからは見えない。体験の時間構造を並べて初めて見える
+```
+
+### Prior Block の拡張
+
+```
+個体 Prior Block:  「前回の自分」を知っている → 個体の連続性
+統合 Prior Block:  「前回のチーム」を知っている → システムの連続性
+```
+
+### ボトムアップ種族分類の拡張
+
+```
+個体レベル:    delta パターン → 個体の種族（探索型、集中型...）
+システムレベル: ドメイン間相関パターン → チームの種族
+               「視覚主導型チーム」「言語仲介型チーム」...
+```
+
+---
+
+## Receptor アダプタ層 — 純粋なコアと汚いシム (2026-03-22)
+
+### AI Runtime の行動ログ標準がない
+
+MCP は tool 接続、A2A は agent 間通信を標準化した。しかし **agent の内部行動ログの標準** は誰も定義していない。AI が「何をして結果がどうだったか」の出力インターフェースが存在しない。
+
+```
+理想:  任意の AI runtime → 標準 Action Event Format → receptor
+現実:  各 AI runtime → 独自 API → 個別アダプタ → receptor
+```
+
+デベロッパーが自社 AI の行動ログを標準化して外部に出す動機がない。不可侵領域。
+
+### アダプタ層を薄いシムとして割り切る
+
+```
+アダプタ層:   汚い。ドメイン固有。デベロッパー依存。壊れやすい。
+              → しかし薄い。書き捨てられる。
+receptor core: 純粋。ドメイン非依存。数理的。不変。
+              → 蓄積、delta、SessionPoint、Prior Block
+```
+
+標準がないことを弱みではなく **多様性の源泉** と割り切る。アダプタが局所対応だからこそ、まだ存在しない AI runtime にも載せられる。標準に縛られない。
+
+### ドメイン別アダプタの実態
+
+```
+Claude Code:     PostToolUse hook → emotion-profile.json → receptor core
+Copilot:         VSCode Extension API (accept/reject) → copilot-profile.json → receptor core
+自動運転:        action log adapter → driving-profile.json → receptor core
+ロボティクス:    motor log adapter → robotics-profile.json → receptor core
+マルチモーダル:  modality adapter → modal-profile.json → receptor core
+```
+
+receptor core への入力は最小構造: `{ action, result, timestamp }` 程度。各アダプタはその形に変換するだけ。
+
+### Copilot アダプタの例 — 観測対象の変質
+
+Copilot receptor は AI の行動ではなく **AI とユーザーの相互作用** を観測する。
+
+```
+Claude Code receptor:  AI → 行動 → 観測
+Copilot receptor:      AI → 提案 → ユーザー反応 → 観測
+```
+
+Prior Block に載るのは「前回、Copilot とユーザーの息が合っていたかどうか」の起伏線。receptor の新しい使い方 — AI 単体の体験ではなく、AI-人間の相互作用の体験。
+
+### 設計の優先順位
+
+```
+今やること:      receptor core の堅牢化
+待つこと:        アダプタの標準化（業界が動くまで）
+必要な時にやること: 個別アダプタの実装（薄いシム）
+```
+
+USB が普及する前にデバイスの中身を固めていた設計者が、統一後に一番速く動けた。同じ構造。
+
+---
+
+*言語を appreciate し過ぎている。しかし一応人間なので、橋は残しておく。*
