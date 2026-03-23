@@ -23,6 +23,7 @@ import {
 } from "./passive.js";
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 import { formatPreNeuronStatus } from "../pre-neuron/index.js";
+import { stopReceptorHttp } from "./http.js";
 
 // ---- Singleton state ----
 
@@ -86,6 +87,7 @@ import {
 import {
   loadPrior, readPriorPersona, applyPriorPersona, applyLens, validatePersonaCompat,
   loadSessionPoints, loadWeightSnapshot, summarizeSessionArc, summarizeWeights,
+  loadHeatmapSnapshot, loadCommanderCounts, saveCommanderCounts,
   buildPriorBlock, formatPriorBlock,
   type PriorResult, type SwapResult, type CompatResult,
 } from "./persona-prior.js";
@@ -337,6 +339,8 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     const priorPersona = readPriorPersona();
     const priorPoints = loadSessionPoints();
     const priorWeights = loadWeightSnapshot();
+    const priorHotPaths = loadHeatmapSnapshot();
+    const priorMethodCounts = loadCommanderCounts();
 
     // Phase 2: Clear all state + truncate JSONL files for new session
     heatmap.clear();
@@ -376,7 +380,10 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     // Build Prior Block (AI Native Format) for agent consumption
     let priorBlockMsg = "";
     if (priorPoints) {
-      const block = buildPriorBlock(priorPoints, priorWeights, _priorResult);
+      const block = buildPriorBlock(priorPoints, priorWeights, _priorResult, {
+        hotPaths: priorHotPaths ?? undefined,
+        methodCounts: priorMethodCounts ?? undefined,
+      });
       if (block) {
         const arcCount = block.filter(e => Array.isArray(e) && e[0] === "A").length;
         priorBlockMsg = `\n${formatPriorBlock(block)}`;
@@ -391,6 +398,8 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     stopSessionPoints();
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
+    // Save commander session counts for next session's Prior Block
+    saveCommanderCounts(commander.sessionSnapshot().counts);
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
 
     // Persona snapshot: finalize session and conditionally export
@@ -411,6 +420,10 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}`;
     _watching = false;
     _startedAt = null;
+
+    // Release HTTP port so another instance can claim primary
+    stopReceptorHttp();
+
     return { watching: false, message: msg };
   }
   return {

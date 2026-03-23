@@ -18,7 +18,7 @@ import type { PersonaPayload } from "./sphere-shaper.js";
 import type { Persona, Snapshot } from "./persona-snapshot.js";
 import { getProfileHash, buildPersonaFromRawSnapshots } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
-import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector } from "./types.js";
+import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector, NormalizedAction } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -444,6 +444,50 @@ export function loadWeightSnapshot(): EngramWeightEntry[] | null {
   }
 }
 
+// ---- Heatmap Snapshot Loader (for Prior Block footer) ----
+
+const HEATMAP_SNAPSHOT_PATH = path.join(SPHERE_OUTPUT_DIR, "heatmap.json");
+
+export function loadHeatmapSnapshot(): Array<{ path: string; count: number }> | null {
+  try {
+    if (!fs.existsSync(HEATMAP_SNAPSHOT_PATH)) return null;
+    const content = fs.readFileSync(HEATMAP_SNAPSHOT_PATH, "utf-8").trim();
+    if (!content) return null;
+    const snapshot = JSON.parse(content) as { topPaths?: Array<{ path: string; count: number }> };
+    return snapshot.topPaths && snapshot.topPaths.length > 0 ? snapshot.topPaths : null;
+  } catch (err) {
+    console.error("[persona-prior] heatmap snapshot read error:", err);
+    return null;
+  }
+}
+
+// ---- Commander Counts Loader (for Prior Block footer) ----
+
+const COMMANDER_COUNTS_PATH = path.join(SPHERE_OUTPUT_DIR, "commander-counts.json");
+
+export function loadCommanderCounts(): Record<string, number> | null {
+  try {
+    if (!fs.existsSync(COMMANDER_COUNTS_PATH)) return null;
+    const content = fs.readFileSync(COMMANDER_COUNTS_PATH, "utf-8").trim();
+    if (!content) return null;
+    const counts = JSON.parse(content) as Record<string, number>;
+    const hasData = Object.values(counts).some(v => v > 0);
+    return hasData ? counts : null;
+  } catch (err) {
+    console.error("[persona-prior] commander counts read error:", err);
+    return null;
+  }
+}
+
+export function saveCommanderCounts(counts: Record<string, number>): void {
+  try {
+    fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
+    fs.writeFileSync(COMMANDER_COUNTS_PATH, JSON.stringify(counts) + "\n");
+  } catch (err) {
+    console.error("[persona-prior] commander counts write error:", err);
+  }
+}
+
 // ---- Summarizers (for PriorResult) ----
 
 export function summarizeSessionArc(points: SessionPointWithGap[]): SessionArcSummary {
@@ -504,14 +548,20 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 type PriorHeader = ["H", number, number, number, number, number, number, number, string];
 type PriorSeparator = ["---"];
 type PriorArcPoint = ["A", number, number, string, number, number, number, number, number, number, string | null];
-type PriorFooter = ["F", number[], number[], Array<[string, number]>, Array<[string, number]>];
+type PriorFooter = ["F", number[], number[], Array<[string, number]>, Array<[string, number]>, Array<[string, number]>, Array<[string, number]>];
 type PriorElement = PriorHeader | PriorSeparator | PriorArcPoint | PriorFooter;
 type PriorBlock = PriorElement[];
+
+export interface PriorBlockContext {
+  hotPaths?: Array<{ path: string; count: number }>;
+  methodCounts?: Record<string, number>;
+}
 
 export function buildPriorBlock(
   points: SessionPointWithGap[],
   weights: EngramWeightEntry[] | null,
   _priorResult: PriorResult,
+  ctx?: PriorBlockContext,
 ): PriorBlock | null {
   if (points.length === 0) return null;
 
@@ -573,17 +623,19 @@ export function buildPriorBlock(
   }
 
   // --- Footer ---
-  const footer = buildFooter(points, weights);
+  const footer = buildFooter(points, weights, ctx);
 
   return [header, ["---"], ...arc, ["---"], footer];
 }
 
 /**
- * Build Footer: final emotion, stats, agentState distribution, engram weights.
+ * Build Footer: final emotion, stats, agentState distribution, engram weights,
+ * hot paths (heatmap), method ranking (commander).
  */
 function buildFooter(
   points: SessionPointWithGap[],
   weights: EngramWeightEntry[] | null,
+  ctx?: PriorBlockContext,
 ): PriorFooter {
   const last = points[points.length - 1].point;
 
@@ -629,7 +681,22 @@ function buildFooter(
     engramTop = sorted.slice(0, 5).map(e => [e.summary, r2(e.weight)]);
   }
 
-  return ["F", finalEmo, stats, stateRatio, engramTop];
+  // F[4]: hot paths — top file paths by access frequency (from heatmap)
+  let hotPaths: Array<[string, number]> = [];
+  if (ctx?.hotPaths && ctx.hotPaths.length > 0) {
+    hotPaths = ctx.hotPaths.slice(0, 10).map(p => [p.path, p.count]);
+  }
+
+  // F[5]: method ranking — action types ranked by count (from commander session snapshot)
+  let methodRank: Array<[string, number]> = [];
+  if (ctx?.methodCounts) {
+    const entries = Object.entries(ctx.methodCounts)
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+    methodRank = entries.map(([action, count]) => [action, count]);
+  }
+
+  return ["F", finalEmo, stats, stateRatio, engramTop, hotPaths, methodRank];
 }
 
 /**
@@ -709,7 +776,7 @@ const PRIOR_BLOCK_SCHEMA =
   "[schema: " +
   "H=header(durationMs,valenceBalance,frust,seek,conf,fatigue,flow,stateFlow) " +
   "A=arc(t,gapMs,agentState,intensity,dFrust,dSeek,dConf,dFatig,dFlow,engramId?) " +
-  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[...[state,ratio]desc],engramTop[...[summary,weight]]) " +
+  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[...[state,ratio]desc],engramTop[...[summary,weight]],hotPaths[...[path,count]desc],methodRank[...[action,count]desc]) " +
   "---=separator]";
 
 /**

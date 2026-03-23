@@ -69,6 +69,11 @@ export class Commander {
     };
   }
 
+  /** Session-wide snapshot (all events, no eviction). For Prior Block footer. */
+  sessionSnapshot(): WindowSnapshot {
+    return this._snapshot(this.allEvents, Date.now() - this._sessionStart);
+  }
+
   /** Clear (for testing). */
   clear(): void {
     this.shortWindow = [];
