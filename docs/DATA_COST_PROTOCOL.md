@@ -1099,6 +1099,68 @@ A2A:  agent 間通信の標準 → 存在する
 - **アダプタは局所的に書く**（Claude Code, Cursor, ... 個別対応）
 - **Prior Block の portability を武器にする**（format は universal、読み取りは AI の自然な解釈に委ねる）
 
+### Brain AI 構想: 異種ドメイン AI 協調と Experience Package ストリーミング (2026-03-23)
+
+#### 同種並列は無意味、異種協調に価値がある
+
+同じ Claude Code を複数ウィンドウで開いて receptor の signal を共有しても、同じドメイン・同じ行動語彙だからノイズが増えるだけ。メッセージパッシングが有意味になるのは **異種ドメイン AI が協調している場面** に限られる。
+
+```
+有意味:  コーディング AI + 設計 AI + テスト AI（異なる観点、同じプロジェクト）
+無意味:  Claude Code × 2（同じ行動語彙、冗長な signal）
+```
+
+#### receptor から Brain AI への送信内容
+
+receptor 発火時に送信するのは感情情報だけではない。**Experience Package の部分情報** — 作業の進捗監視に必要なコンテキストを含む。
+
+```
+Live Experience Fragment (receptor → Brain AI):
+  emotion:     [0.08, 0.35, 0.45, 0.12, 0.60]   // 5軸の現在値
+  agentState:  "exploring"                         // 現在の行動状態
+  hotPaths:    ["receptor/learn.ts", ...]          // 何を触っているか
+  stateFlow:   "idle→exploring→deep_work"         // ここまでの軌跡
+  recentArc:   [["A", ...], ["A", ...]]           // 直近の arc points
+```
+
+これは Experience Package の **ストリーミング版** — セッション終了を待たず、発火のたびに部分情報が流れる。Data Cost Protocol compact JSON でそのまま送信。
+
+#### Brain AI の役割
+
+```
+Brain AI の視界:
+
+  receptor A (コーディング): exploring, seeking+0.35
+  receptor B (設計 AI):      deep_work, confidence+0.20
+  receptor C (テスト AI):    stuck, frustration+0.40  ← 介入判断
+```
+
+Brain AI は各ドメインの receptor から Live Experience Fragment を受け取り:
+
+- **進捗監視** — 各 AI が何をしていて、どういう状態か
+- **相関検出** — A の成果が C の行き詰まりを解決するか？B の設計変更が C の原因か？
+- **介入判断** — いつ、どの AI に、何を渡すか
+- **オーケストレーション** — ドメイン横断の意思決定
+
+Brain AI 自身はおそらく高機能 LLM。compact JSON を自然に読めることは Prior Block 実験で実証済み。Data Cost Protocol がそのまま Brain AI への通信プロトコルになる。
+
+#### Data Cost Protocol の位置づけ
+
+```
+現在:  AI-AI 間通信の最適化（engram 内部）
+将来:  異種ドメイン AI 間の lingua franca
+
+receptor A (Claude Code)  → compact JSON →
+receptor B (設計 AI)      → compact JSON →  Brain AI → 統合判断
+receptor C (テスト AI)    → compact JSON →
+```
+
+emotion delta 5 軸が共通語彙。行動語彙（tool 名、action 種別）はドメイン固有だが、感情軸は universal — frustration/seeking/confidence/fatigue/flow はドメインを問わない。Brain AI はこの共通軸で各ドメインの状態を比較できる。
+
+#### メソッド群のドメイン固有性
+
+receptor に紐づくメソッド（path_suggest, future_probe, action_logger 等）はドメイン固有。各ドメインの AI は自分の receptor に固有のメソッドを持ち、Brain AI からの指示も自分のメソッド群を通じて実行する。Brain AI は「何をすべきか」を判断し、「どうやるか」は各ドメインの receptor に委ねる。
+
 ---
 
 *言語を appreciate し過ぎている。しかし一応人間なので、橋は残しておく。*
