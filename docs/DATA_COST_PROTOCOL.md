@@ -1041,6 +1041,64 @@ Prior Block に載るのは「前回、Copilot とユーザーの息が合って
 
 USB が普及する前にデバイスの中身を固めていた設計者が、統一後に一番速く動けた。同じ構造。
 
+### 将来のネック: 異種 AI への Experience Package 流通 (2026-03-23)
+
+Experience Package（Persona + Prior Block の統合流通パッケージ）が Sphere を通じて流通する場合、ネックは **consumer 側の receptor アダプタ** に集中する。
+
+```
+問題の構造:
+
+  engram (Claude Code) → Experience Package 生成 → Sphere に投入
+                                                        ↓
+  別の AI runtime が Package をロード ← ← ← ← ← ← ← ← ←
+    ↓
+  Persona の learnedDelta を適用したい
+    → しかしその AI の行動ログ形式が不明
+    → emotion-profile のマッピングが根本から異なる
+    → アダプタが書けない = delta の意味が変わる
+```
+
+**Package の content（Data Cost Protocol compact JSON）は universal** — どの AI でも parse できる。問題はデータの読み取りではなく **適用**。
+
+具体的なネック:
+
+| 層 | ネック | 理由 |
+|---|---|---|
+| Prior Block の読み取り | **なし** | compact JSON を context に注入するだけ。AI が自然に解釈する |
+| Persona の emotionProfile 適用 | **あり** | emotion 軸の意味が AI runtime ごとに異なる可能性。frustration が何を意味するかは行動語彙に依存 |
+| learnedDelta の適用 | **あり** | delta は passive receptor のスコアリングに乗数として適用される。receptor 自体がその AI に載っていなければ意味がない |
+| origin.profileHash の検証 | **あり** | 異なる emotion-profile で生成された Persona は互換性がない。profileHash 不一致で弾かれる |
+
+**Prior Block は portable、Persona は non-portable** — これが本質。
+
+```
+Prior Block:  体験データ。consumer の目的関数に対して中立。どの AI でも自然に読める
+Persona:      身体性データ。receptor + emotion-profile に密結合。同一アーキテクチャでないと適用できない
+```
+
+Experience Package が異種 AI 間で流通する場合:
+- **Prior Block だけは常に流通可能** — Data Cost Protocol のおかげで format は universal
+- **Persona は同一 receptor アーキテクチャ間でのみ流通** — profileHash による互換性ゲート
+- **異種 AI は Prior Block だけ取得し、自分の receptor で再解釈する** — これが現実的な落としどころ
+
+つまり Experience Package の分離可能設計（Persona と Prior Block を別々に取得できる）は、異種 AI 流通の問題に対する**設計時点での予防策**でもある。
+
+### AI Runtime 行動ログ標準化の不在
+
+根本的にこの問題が解決するのは **AI runtime が行動ログを標準フォーマットで外部出力する窓口を提供した時** だけ。
+
+```
+MCP:  tool 呼び出しの標準 → 存在する
+A2A:  agent 間通信の標準 → 存在する
+???:  agent 内部行動ログの標準 → 存在しない
+```
+
+この3つ目の標準が定義されれば、receptor のアダプタ層は薄いシムから標準コネクタに進化し、Persona を含む Experience Package 全体が異種 AI 間で流通可能になる。それまでは:
+
+- **core を堅牢にしておく**（receptor core + Data Cost Protocol + Experience Package format）
+- **アダプタは局所的に書く**（Claude Code, Cursor, ... 個別対応）
+- **Prior Block の portability を武器にする**（format は universal、読み取りは AI の自然な解釈に委ねる）
+
 ---
 
 *言語を appreciate し過ぎている。しかし一応人間なので、橋は残しておく。*
