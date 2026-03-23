@@ -1118,7 +1118,9 @@ You have engram MCP tools for persistent knowledge across sessions.
 
 ---
 
-## Receptor 汎用化 — 異種ドメイン AI 協調への拡張 (2026-03-22)
+## Receptor 汎用化 — 異種ドメイン AI 協調への拡張
+
+> **移植済み:** 以下のセクション（異種ドメイン AI 協調、Brain AI 構想、量子ノード、アダプタ層）は [MULTI_AGENT_VISION.md](./MULTI_AGENT_VISION.md) に統合・拡張された。本セクションは経緯の記録として残す。最新の議論は MULTI_AGENT_VISION.md を参照。
 
 ### 本来のマルチエージェント
 
