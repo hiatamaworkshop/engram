@@ -530,6 +530,91 @@ native data: ["replace","auth","jwt","session",0.94]
 
 ただし「直接は効かない」領域にも間接的な解がある → 次節。
 
+### ストリーミングスキーマヘッダ — マルチスキーマ混在通信 (2026-03-23)
+
+マルチエージェント環境では異なるスキーマのデータが同一ストリームに混在する。Prior Block と Live Fragment と制御メッセージが同じチャネルを流れる。
+
+#### 問題
+
+```
+受信側: ["A", 1200, 0.3, "stuck", 0.42, ...] ← これは何のスキーマ？
+```
+
+単一スキーマなら先頭行のマニフェストで済む。複数スキーマが混在するとマニフェスト1行では足りない。
+
+#### 解決: インラインスキーマヘッダ
+
+```
+["$S", "prior-arc", 11, "type","t","valence","state","intensity","fru","seek","conf","fati","flow","link"]
+["A", 1200, 0.3, "stuck", 0.42, -0.1, 0.05, -0.2, 0.0, 0.0, null]
+["A", 2400, 0.1, "exploring", 0.28, -0.05, 0.35, 0.1, -0.1, 0.0, "abc123"]
+["$S", "live-frag", 6, "emotion","state","hotPath","entropy","ts","projectId"]
+["L", [0.1, 0.3, 0.2, -0.1, 0.4], "exploring", "receptor/index.ts", 2.3, 1711234567, "engram"]
+["$S", "control", 2, "command","target"]
+["C", "pause", "receptor-B"]
+```
+
+#### スキーマヘッダの構造
+
+```
+["$S", schema_id, field_count, ...field_names]
+```
+
+- `"$S"`: スキーマ定義行のマーカー（データ行と区別）
+- `schema_id`: スキーマの識別子（"prior-arc", "live-frag", "control" 等）
+- `field_count`: 後続データ行のフィールド数（パーサーがデータ境界を知る）
+- `...field_names`: 各位置の意味（LLM がスキーマを理解するため）
+
+#### 受信側のパース
+
+```
+ストリーム受信:
+  "$S" 行 → スキーマ登録（schema_id → field_names のマップに保持）
+  データ行 → 先頭要素で schema_id を引き、field_names で解釈
+
+LLM が受信する場合:
+  "$S" 行を1回読めば、以降のデータ行を自然に解釈できる
+  人間語の説明は不要 — field_names が十分な情報を持つ
+```
+
+#### 既知のプロトコルとの対応
+
+これは新しい発明ではない。ネットワークプロトコルの基本作法の再適用:
+
+| 既知の作法 | Data Cost Protocol 対応 |
+|---|---|
+| TCP ヘッダ（パケット長 + フラグ） | `["$S", id, field_count, ...]` |
+| HTTP Content-Type | `schema_id` |
+| Protocol Buffers .proto 定義 | `field_names` 列 |
+| CSV ヘッダ行 | `...field_names` |
+| TLV (Type-Length-Value) | `["$S"(type), field_count(length), data(value)]` |
+
+50年前にネットワークエンジニアが解決した問題。AI 業界が自然言語に回帰して忘れていた作法を、AI-AI 通信に再適用しただけ。だからこそ堅い。
+
+#### マルチエージェントでの活用
+
+```
+Brain AI が受信するストリーム:
+
+  receptor A (コーディング):
+    ["$S", "live-frag", 6, "emotion","state","hotPath","entropy","ts","projectId"]
+    ["L", [...], "exploring", "receptor/index.ts", 2.3, 1711234567, "engram"]
+
+  receptor B (テスト AI):
+    ["$S", "live-frag", 6, "emotion","state","hotPath","entropy","ts","projectId"]
+    ["L", [...], "stuck", "test/integration.ts", 1.8, 1711234570, "engram"]
+
+スキーマが同じならヘッダは1回で済む。異なるスキーマが来たら新しい "$S" 行が先行する。
+Brain AI は全ドメインのデータを同一フォーマットで受信し、emotion vector の相関でドメイン横断の判断を行う。
+```
+
+#### 設計原則
+
+- **スキーマは送信側が宣言する** — 受信側は事前知識不要
+- **ヘッダは必要な時だけ送る** — 同一スキーマのデータが続く間は省略可能
+- **field_names は人間語に近い短い単語** — LLM の自然な理解と機械的 parse の両立
+- **field_count でデータ境界を明示** — 可変長フィールドがあっても安全に parse 可能
+
 ---
 
 ## LLM の時間感覚と反応の影
