@@ -1157,9 +1157,24 @@ receptor C (テスト AI)    → compact JSON →
 
 emotion delta 5 軸が共通語彙。行動語彙（tool 名、action 種別）はドメイン固有だが、感情軸は universal — frustration/seeking/confidence/fatigue/flow はドメインを問わない。Brain AI はこの共通軸で各ドメインの状態を比較できる。
 
-#### メソッド群のドメイン固有性
+#### 通信は登録メソッドの1つにすぎない
 
-receptor に紐づくメソッド（path_suggest, future_probe, action_logger 等）はドメイン固有。各ドメインの AI は自分の receptor に固有のメソッドを持ち、Brain AI からの指示も自分のメソッド群を通じて実行する。Brain AI は「何をすべきか」を判断し、「どうやるか」は各ドメインの receptor に委ねる。
+receptor の本質は変わらない — **発火 → 登録済みメソッド群を実行 → そのドメイン AI の作業を助ける**。Brain AI への通信は特別な通信層ではなく、method resolver + executor にそのまま載る汎用メソッドの1つ。
+
+```
+receptor-rules.json (コーディング AI):
+  - path_suggest      → ファイル推薦（ドメイン固有）
+  - future_probe      → 予測知識供給（ドメイン固有）
+  - action_logger     → 行動記録（ドメイン固有）
+  - signal_relay      → Brain AI に Live Fragment 送信（汎用通信）
+
+receptor-rules.json (テスト AI):
+  - test_suggest      → テスト候補推薦（ドメイン固有）
+  - coverage_probe    → カバレッジ分析（ドメイン固有）
+  - signal_relay      → Brain AI に Live Fragment 送信（汎用通信）
+```
+
+`signal_relay` は `path_suggest` と同列。passive scorer がスコアリングし、閾値を超えたら発火し、executor が実行する。通信もまた「発火で駆動される機能」。各ドメインの receptor はドメイン固有メソッドで自分の AI を助け、汎用通信メソッドで Brain AI にコンテキストを渡す。
 
 ---
 
