@@ -24,6 +24,7 @@ import {
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 import { formatPreNeuronStatus } from "../pre-neuron/index.js";
 import { stopReceptorHttp } from "./http.js";
+import { applyLearnedDelta } from "./learn.js";
 
 // ---- Singleton state ----
 
@@ -34,6 +35,7 @@ let _lastEmotion: EmotionVector = { ...ZERO_EMOTION };
 let _lastSignals: FireSignal[] = [];
 let _lastEvent: NormalizedEvent | undefined;
 let _priorResult: PriorResult | null = null;
+let _learnMode = false;
 
 const heatmap = new PathHeatmap();
 const commander = new Commander();
@@ -328,9 +330,10 @@ export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights, flushWeightSnaps
 // ---- Public API ----
 
 /** Toggle watch mode. Returns new state. */
-export function setWatch(enabled: boolean): { watching: boolean; message: string } {
+export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean; message: string } {
   if (enabled && !_watching) {
     _watching = true;
+    _learnMode = learn ?? false;
     _startedAt = Date.now();
     _eventCount = 0;
     _lastEmotion = { ...ZERO_EMOTION };
@@ -402,6 +405,15 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     saveCommanderCounts(commander.sessionSnapshot().counts);
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
 
+    // Learn mode: auto-calibrate receptor sensitivity from session fire patterns
+    let learnMsg = "";
+    if (_learnMode) {
+      const elapsedMs = _startedAt ? Date.now() - _startedAt : 0;
+      const result = applyLearnedDelta(elapsedMs);
+      if (result) learnMsg = ` ${result}`;
+      _learnMode = false;
+    }
+
     // Persona snapshot: finalize session and conditionally export
     let personaMsg = "";
     try {
@@ -417,7 +429,7 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
       console.error("[receptor] persona finalize error:", err);
     }
 
-    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}`;
+    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}${learnMsg}`;
     _watching = false;
     _startedAt = null;
 

@@ -32,7 +32,7 @@ import {
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
 import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
-import { startReceptorHttp, isReceptorPrimary } from "./receptor/http.js";
+import { startReceptorHttp, isReceptorPrimary, stopReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
 const ctx = loadContext();
@@ -398,13 +398,15 @@ server.tool(
   {
     action: z.enum(["start", "stop", "status"]).optional()
       .describe("start=begin monitoring, stop=end+summary, omit or status=show current state"),
+    learn: z.boolean().optional()
+      .describe("Enable learn mode — auto-calibrate receptor sensitivity from session fire patterns. Only applies on start."),
     event: z.object({
       tool_name: z.string(),
       tool_input: z.record(z.unknown()).optional(),
       exit_code: z.number().optional(),
     }).optional().describe("[Internal] Hook event from Claude Code. Do not set manually."),
   },
-  async ({ action, event }) => {
+  async ({ action, learn, event }) => {
     // Secondary instance: receptor is managed by the primary instance
     if (!isReceptorPrimary()) {
       return {
@@ -426,7 +428,7 @@ server.tool(
 
     // Start/stop
     if (action === "start" || action === "stop") {
-      const result = setWatch(action === "start");
+      const result = setWatch(action === "start", action === "start" ? learn : undefined);
       return {
         content: [{ type: "text", text: result.message }],
       };
@@ -601,6 +603,7 @@ async function main() {
     // Only primary instance owns the receptor; secondary skips to avoid clobbering data.
     if (isReceptorPrimary()) {
       setWatch(false);
+      stopReceptorHttp(); // release port + remove discovery file
     }
     closeAllMcpClients().catch(() => {});
     if (ctx.defaultProjectId) {
