@@ -25,6 +25,7 @@ import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 import { formatPreNeuronStatus } from "../pre-neuron/index.js";
 import { stopReceptorHttp } from "./http.js";
 import { applyLearnedDelta } from "./learn.js";
+import { buildPackage, savePackage, loadPackage } from "./experience-package.js";
 
 // ---- Singleton state ----
 
@@ -339,11 +340,15 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
     _lastEmotion = { ...ZERO_EMOTION };
     _lastSignals = [];
     // Phase 1: Read all prior data BEFORE clear — files are truncated by clear*()
-    const priorPersona = readPriorPersona();
-    const priorPoints = loadSessionPoints();
-    const priorWeights = loadWeightSnapshot();
-    const priorHotPaths = loadHeatmapSnapshot();
-    const priorMethodCounts = loadCommanderCounts();
+    // Try Experience Package first (unified), fallback to legacy separate files
+    const pkg = loadPackage();
+    const priorPersona = pkg
+      ? { persona: pkg.persona, source: "experience-package.json" } as import("./persona-prior.js").ReadPriorResult
+      : readPriorPersona();
+    const priorPoints = pkg ? null : loadSessionPoints();
+    const priorWeights = pkg ? null : loadWeightSnapshot();
+    const priorHotPaths = pkg ? null : loadHeatmapSnapshot();
+    const priorMethodCounts = pkg ? null : loadCommanderCounts();
 
     // Phase 2: Clear all state + truncate JSONL files for new session
     heatmap.clear();
@@ -381,8 +386,17 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
     }
 
     // Build Prior Block (AI Native Format) for agent consumption
+    // Package path: Prior Block is already built, just format it
+    // Legacy path: build from session-points + weights
     let priorBlockMsg = "";
-    if (priorPoints) {
+    if (pkg) {
+      if (pkg.priorBlock && pkg.priorBlock.length > 0) {
+        const arcCount = pkg.priorBlock.filter(e => Array.isArray(e) && e[0] === "A").length;
+        // Cast: Package stores PriorBlock as unknown[][] for serialization; formatPriorBlock expects the internal type
+        priorBlockMsg = `\n${formatPriorBlock(pkg.priorBlock as Parameters<typeof formatPriorBlock>[0])}`;
+        console.error(`[experience-package] prior block loaded: ${arcCount} arc points`);
+      }
+    } else if (priorPoints) {
       const block = buildPriorBlock(priorPoints, priorWeights, _priorResult, {
         hotPaths: priorHotPaths ?? undefined,
         methodCounts: priorMethodCounts ?? undefined,
@@ -397,12 +411,18 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
     return { watching: true, message: `Receptor watch started.${priorBlockMsg}` };
   }
   if (!enabled && _watching) {
+    // Capture session data BEFORE stop (files are still intact)
+    const currentSessionPoints = loadSessionPoints();
+    const currentWeights = loadWeightSnapshot();
+    const currentHotPaths = heatmap.topPaths(10);
+    const currentMethodCounts = commander.sessionSnapshot().counts;
+
     // Stop session point recording
     stopSessionPoints();
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
     // Save commander session counts for next session's Prior Block
-    saveCommanderCounts(commander.sessionSnapshot().counts);
+    saveCommanderCounts(currentMethodCounts);
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
 
     // Learn mode: auto-calibrate receptor sensitivity from session fire patterns
@@ -416,20 +436,60 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
 
     // Persona snapshot: finalize session and conditionally export
     let personaMsg = "";
+    let finalizedPersona: import("./persona-snapshot.js").Persona | null = null;
     try {
       const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
       const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
       const model = process.env.ENGRAM_MODEL || undefined;
-      const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
-      if (persona) {
-        exportPersona(persona).catch(e => console.error("[receptor] persona export error:", e));
+      finalizedPersona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
+      if (finalizedPersona) {
+        exportPersona(finalizedPersona).catch(e => console.error("[receptor] persona export error:", e));
         personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
       }
     } catch (err) {
       console.error("[receptor] persona finalize error:", err);
     }
 
-    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}${learnMsg}`;
+    // Experience Package: unify Persona + Prior Block → local sink
+    let pkgMsg = "";
+    if (finalizedPersona && currentSessionPoints) {
+      try {
+        const dummyPrior: PriorResult = {
+          applied: true,
+          source: "current-session",
+          dominantAxis: finalizedPersona.emotionProfile.dominantAxis,
+        };
+        const block = buildPriorBlock(currentSessionPoints, currentWeights, dummyPrior, {
+          hotPaths: currentHotPaths,
+          methodCounts: currentMethodCounts,
+        });
+        if (block) {
+          // Extract stateFlow and valenceBalance from Prior Block header
+          const header = block.find(e => Array.isArray(e) && e[0] === "H") as unknown[] | undefined;
+          const stateFlow = header ? String(header[8] ?? "") : "";
+          const valenceBalance = header ? Number(header[2] ?? 0) : 0;
+          // meanIntensity from footer stats
+          const footer = block.find(e => Array.isArray(e) && e[0] === "F") as unknown[] | undefined;
+          const stats = footer ? (footer[2] as number[]) : [];
+          const meanIntensity = stats[4] ?? 0;
+
+          const pkg = buildPackage(
+            finalizedPersona,
+            block,
+            stateFlow,
+            valenceBalance,
+            meanIntensity,
+            process.env.ENGRAM_PROJECT_ID || undefined,
+          );
+          savePackage(pkg);
+          pkgMsg = ` Package saved.`;
+        }
+      } catch (err) {
+        console.error("[receptor] experience package error:", err);
+      }
+    }
+
+    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}${pkgMsg}${learnMsg}`;
     _watching = false;
     _startedAt = null;
 
