@@ -7,8 +7,8 @@
 //
 // The hook script is a dumb pipe (cat | curl). All parsing is here.
 
-import { createServer, type Server } from "node:http";
-import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { createServer, request as httpRequest, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { writeFileSync, unlinkSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapshot, getPriorResult } from "./index.js";
 import { getSnapshots as personaGetSnapshots } from "./persona-snapshot.js";
@@ -48,130 +48,155 @@ function removeDiscovery(): void {
   }
 }
 
-export function startReceptorHttp(): Promise<{ primary: boolean }> {
-  if (_server) return Promise.resolve({ primary: _isPrimary });
-
-  return new Promise((resolve) => {
-  _server = createServer((req, res) => {
-    // ---- GET debug endpoints (test/inspection) ----
-    if (req.method === "GET") {
-      res.setHeader("Content-Type", "application/json");
-
-      // GET /debug — full debug snapshot (session points, weights, persona snapshots, emotion)
-      if (req.url === "/debug") {
-        const sp = getDebugSnapshot();
-        const persona = personaGetSnapshots();
-        const state = getState();
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          receptor: {
-            watching: state.watching,
-            eventCount: state.eventCount,
-            emotion: state.lastEmotion,
-            signals: state.signals.map(s => ({ kind: s.kind, intensity: s.intensity })),
-          },
-          sessionPoints: sp.sessionPoints,
-          weightEntries: sp.weightEntries,
-          personaSnapshots: persona,
-          priorResult: getPriorResult(),
-          meta: {
-            workTimeMs: sp.workTimeMs,
-            sessionActive: sp.sessionActive,
-            recentFires: sp.recentFires,
-          },
-        }, null, 2));
-        return;
-      }
-
-      // GET /debug/prior-block — generate Prior Block from current session data (test endpoint)
-      if (req.url === "/debug/prior-block") {
-        const sp = getDebugSnapshot();
-        const points: SessionPointWithGap[] = sp.sessionPoints.map((p: any, i: number, arr: any[]) => ({
-          point: p,
-          gapMs: i === 0 ? 0 : p.t - arr[i - 1].t,
-        }));
-        if (points.length === 0) {
-          res.writeHead(200);
-          res.end(JSON.stringify({ error: "no session points yet", pointCount: 0 }));
-          return;
-        }
-        const weights = sp.weightEntries.length > 0 ? sp.weightEntries : loadWeightSnapshot();
-        const prior = getPriorResult() ?? { applied: false, source: "none" };
-        const block = buildPriorBlock(points, weights, prior);
-        if (!block) {
-          res.writeHead(200);
-          res.end(JSON.stringify({ error: "buildPriorBlock returned null" }));
-          return;
-        }
-        const formatted = formatPriorBlock(block);
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.writeHead(200);
-        res.end(formatted);
-        return;
-      }
-
-      // GET /debug/flush — manual flush: write weight snapshot + session points to disk now
-      if (req.url === "/debug/flush") {
-        flushWeightSnapshot();
-        res.writeHead(200);
-        res.end(JSON.stringify({ flushed: true, ts: Date.now() }));
-        return;
-      }
-
-      res.writeHead(404);
-      res.end(JSON.stringify({ error: "not found" }));
-      return;
-    }
-
-    if (req.method !== "POST") {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-
-    // /turn — turn boundary marker + optional dialogue ingestion
-    if (req.url === "/turn") {
-      let body = "";
-      req.on("data", (chunk: Buffer) => { body += chunk; });
-      req.on("end", () => {
+/** Remove discovery files whose PID is no longer alive. */
+function cleanStaleDiscovery(): void {
+  try {
+    const files = readdirSync(DISCOVERY_DIR);
+    for (const f of files) {
+      const m = f.match(/^receptor\.(\d+)\.port$/);
+      if (!m) continue;
+      const pid = parseInt(m[1], 10);
+      if (pid === process.pid) continue; // skip self
+      try {
+        process.kill(pid, 0); // probe — throws if dead
+      } catch {
+        // PID is dead — remove stale file
         try {
-          const json = JSON.parse(body);
-          const type = json.type as string; // "user" or "agent"
-          recordTurn(type === "user" ? "user" : "agent");
+          unlinkSync(join(DISCOVERY_DIR, f));
+          console.error(`[engram] Cleaned stale discovery file: ${f}`);
+        } catch { /* ignore */ }
+      }
+    }
+  } catch {
+    // DISCOVERY_DIR may not exist yet
+  }
+}
 
-          // Dialogue ingestion: if user turn carries content, ingest as user_prompt
-          if (type === "user" && typeof json.content === "string") {
-            ingestEvent({
-              tool_name: "UserPromptSubmit",
-              prompt_content: json.content,
-            });
-          }
-
-          res.writeHead(200);
-          res.end("ok");
+/** Probe whether something is actually listening on the given port. */
+function probePort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path: "/debug", method: "GET", timeout: 1000 }, (res) => {
+      // Only consider alive if we get a 200 with valid JSON body.
+      // TIME_WAIT ghosts on Windows can sometimes accept connections briefly.
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve(false);
+        return;
+      }
+      let body = "";
+      res.on("data", (chunk: Buffer) => { body += chunk; });
+      res.on("end", () => {
+        try {
+          JSON.parse(body);
+          resolve(true);
         } catch {
-          res.writeHead(400);
-          res.end("bad request");
+          resolve(false);
         }
       });
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
+// ---- HTTP request handler (extracted so it can be reused on retry) ----
+
+function requestHandler(req: IncomingMessage, res: ServerResponse): void {
+  // ---- GET debug endpoints (test/inspection) ----
+  if (req.method === "GET") {
+    res.setHeader("Content-Type", "application/json");
+
+    // GET /debug — full debug snapshot (session points, weights, persona snapshots, emotion)
+    if (req.url === "/debug") {
+      const sp = getDebugSnapshot();
+      const persona = personaGetSnapshots();
+      const state = getState();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        receptor: {
+          watching: state.watching,
+          eventCount: state.eventCount,
+          emotion: state.lastEmotion,
+          signals: state.signals.map(s => ({ kind: s.kind, intensity: s.intensity })),
+        },
+        sessionPoints: sp.sessionPoints,
+        weightEntries: sp.weightEntries,
+        personaSnapshots: persona,
+        priorResult: getPriorResult(),
+        meta: {
+          workTimeMs: sp.workTimeMs,
+          sessionActive: sp.sessionActive,
+          recentFires: sp.recentFires,
+        },
+      }, null, 2));
       return;
     }
 
-    if (req.url !== "/receptor") {
-      res.writeHead(404);
-      res.end();
+    // GET /debug/prior-block — generate Prior Block from current session data (test endpoint)
+    if (req.url === "/debug/prior-block") {
+      const sp = getDebugSnapshot();
+      const points: SessionPointWithGap[] = sp.sessionPoints.map((p: any, i: number, arr: any[]) => ({
+        point: p,
+        gapMs: i === 0 ? 0 : p.t - arr[i - 1].t,
+      }));
+      if (points.length === 0) {
+        res.writeHead(200);
+        res.end(JSON.stringify({ error: "no session points yet", pointCount: 0 }));
+        return;
+      }
+      const weights = sp.weightEntries.length > 0 ? sp.weightEntries : loadWeightSnapshot();
+      const prior = getPriorResult() ?? { applied: false, source: "none" };
+      const block = buildPriorBlock(points, weights, prior);
+      if (!block) {
+        res.writeHead(200);
+        res.end(JSON.stringify({ error: "buildPriorBlock returned null" }));
+        return;
+      }
+      const formatted = formatPriorBlock(block);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.writeHead(200);
+      res.end(formatted);
       return;
     }
 
+    // GET /debug/flush — manual flush: write weight snapshot + session points to disk now
+    if (req.url === "/debug/flush") {
+      flushWeightSnapshot();
+      res.writeHead(200);
+      res.end(JSON.stringify({ flushed: true, ts: Date.now() }));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: "not found" }));
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+
+  // /turn — turn boundary marker + optional dialogue ingestion
+  if (req.url === "/turn") {
     let body = "";
     req.on("data", (chunk: Buffer) => { body += chunk; });
     req.on("end", () => {
       try {
         const json = JSON.parse(body);
-        const event = parseHookPayload(json);
-        if (event) {
-          ingestEvent(event);
+        const type = json.type as string; // "user" or "agent"
+        recordTurn(type === "user" ? "user" : "agent");
+
+        // Dialogue ingestion: if user turn carries content, ingest as user_prompt
+        if (type === "user" && typeof json.content === "string") {
+          ingestEvent({
+            tool_name: "UserPromptSubmit",
+            prompt_content: json.content,
+          });
         }
+
         res.writeHead(200);
         res.end("ok");
       } catch {
@@ -179,40 +204,193 @@ export function startReceptorHttp(): Promise<{ primary: boolean }> {
         res.end("bad request");
       }
     });
-  });
+    return;
+  }
 
-  // Try preferred port — if in use, another instance already owns the receptor.
-  // Do NOT fall back to a random port; instead mark this as secondary instance.
-  _server.listen(PREFERRED_PORT, "127.0.0.1", () => {
-    _boundPort = (_server!.address() as { port: number }).port;
-    _isPrimary = true;
-    writeDiscovery(_boundPort);
-    console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort} (primary)`);
-    resolve({ primary: true });
-  });
+  if (req.url !== "/receptor") {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
 
-  _server.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(
-        `[engram] Port ${PREFERRED_PORT} already in use — another engram instance owns the receptor. ` +
-        `This instance runs as secondary (MCP tools only, no receptor watch).`
-      );
-      _server!.close();
-      _server = null;
-      _isPrimary = false;
-      resolve({ primary: false });
-    } else {
-      console.error(`[engram] Receptor HTTP error: ${err.message}`);
-      _server = null;
-      _isPrimary = false;
-      resolve({ primary: false });
+  let body = "";
+  req.on("data", (chunk: Buffer) => { body += chunk; });
+  req.on("end", () => {
+    try {
+      const json = JSON.parse(body);
+      const event = parseHookPayload(json);
+      if (event) {
+        ingestEvent(event);
+      }
+      res.writeHead(200);
+      res.end("ok");
+    } catch {
+      res.writeHead(400);
+      res.end("bad request");
     }
   });
-  }); // end Promise
+}
+
+// ---- Bind helpers ----
+
+// ---- Retry configuration ----
+// VSCode restart takes a few seconds; Windows TIME_WAIT can hold the port
+// for up to 30s after the previous process exits. Graduated retries cover
+// the realistic window without blocking startup for too long.
+const RETRY_DELAYS_MS = [1500, 3000, 5000, 5000]; // total ~14.5s max wait
+
+/** Try to bind once. Resolves true on success, false on EADDRINUSE. Rejects on other errors. */
+function attemptBind(): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    _server = createServer(requestHandler);
+    _server.listen(PREFERRED_PORT, "127.0.0.1", () => {
+      _boundPort = (_server!.address() as { port: number }).port;
+      _isPrimary = true;
+      writeDiscovery(_boundPort);
+      resolve(true);
+    });
+    _server.on("error", (err: NodeJS.ErrnoException) => {
+      _server?.close();
+      _server = null;
+      if (err.code === "EADDRINUSE") {
+        resolve(false);
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
+/** Attempt to bind to PREFERRED_PORT with graduated retries for TIME_WAIT recovery. */
+async function tryBind(resolve: (result: { primary: boolean }) => void): Promise<void> {
+  // First attempt — may succeed immediately
+  try {
+    if (await attemptBind()) {
+      console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort} (primary)`);
+      resolve({ primary: true });
+      return;
+    }
+  } catch (err) {
+    console.error(`[engram] Receptor HTTP error: ${(err as Error).message}`);
+    _isPrimary = false;
+    resolve({ primary: false });
+    return;
+  }
+
+  // Port is in use — check if a live instance actually owns it
+  const alive = await probePort(PREFERRED_PORT);
+  if (alive) {
+    console.error(`[engram] Port ${PREFERRED_PORT} in use by live instance — running as secondary (will monitor).`);
+    _isPrimary = false;
+    resolve({ primary: false });
+    // The primary may die later — schedule background promotion to take over.
+    scheduleBackgroundPromotion();
+    return;
+  }
+
+  // Port held by dead/ghost process (TIME_WAIT) — retry with graduated delays
+  console.error(`[engram] Port ${PREFERRED_PORT} EADDRINUSE but no live listener — retrying...`);
+
+  for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
+    await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[i]));
+    try {
+      if (await attemptBind()) {
+        console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort} (primary, retry ${i + 1})`);
+        resolve({ primary: true });
+        return;
+      }
+    } catch (err) {
+      console.error(`[engram] Retry ${i + 1} error: ${(err as Error).message}`);
+      break;
+    }
+    // Still EADDRINUSE — check again if something new claimed it
+    const nowAlive = await probePort(PREFERRED_PORT);
+    if (nowAlive) {
+      console.error(`[engram] Port ${PREFERRED_PORT} now claimed by live instance — running as secondary.`);
+      _isPrimary = false;
+      resolve({ primary: false });
+      return;
+    }
+    console.error(`[engram] Retry ${i + 1}/${RETRY_DELAYS_MS.length} — port still in TIME_WAIT...`);
+  }
+
+  console.error(`[engram] All retries exhausted — running as secondary (will promote in background).`);
+  _isPrimary = false;
+  resolve({ primary: false });
+
+  // Background promotion: keep trying to claim primary after startup completes.
+  // This covers the case where TIME_WAIT outlasts the initial retry window.
+  scheduleBackgroundPromotion();
+}
+
+export function startReceptorHttp(): Promise<{ primary: boolean }> {
+  if (_server) return Promise.resolve({ primary: _isPrimary });
+
+  cleanStaleDiscovery();
+
+  return new Promise((resolve) => {
+    tryBind(resolve);
+  });
+}
+
+// ---- Background promotion ----
+// If initial retries fail (TIME_WAIT outlasted the window), keep trying
+// in the background so the instance can self-promote to primary once the
+// port is free — without requiring a VSCode restart.
+
+const BG_PROMOTE_INTERVAL_MS = 10_000; // check every 10s
+const BG_PROMOTE_MAX_ATTEMPTS = 18;    // give up after ~3 minutes
+let _bgPromoteTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleBackgroundPromotion(): void {
+  let attempts = 0;
+
+  const tick = async () => {
+    attempts++;
+    if (_isPrimary || _server) {
+      // Already promoted or server exists — stop
+      _bgPromoteTimer = null;
+      return;
+    }
+    if (attempts > BG_PROMOTE_MAX_ATTEMPTS) {
+      console.error(`[engram] Background promotion gave up after ${attempts - 1} attempts.`);
+      _bgPromoteTimer = null;
+      return;
+    }
+
+    // If a live instance appeared, stay secondary
+    const alive = await probePort(PREFERRED_PORT);
+    if (alive) {
+      console.error(`[engram] Background promotion: live instance detected — staying secondary.`);
+      _bgPromoteTimer = null;
+      return;
+    }
+
+    try {
+      if (await attemptBind()) {
+        console.error(`[engram] Receptor HTTP on 127.0.0.1:${_boundPort} (primary, background promotion)`);
+        _bgPromoteTimer = null;
+        return;
+      }
+    } catch {
+      // non-EADDRINUSE error — stop trying
+      _bgPromoteTimer = null;
+      return;
+    }
+
+    // Still TIME_WAIT — schedule next attempt
+    _bgPromoteTimer = setTimeout(tick, BG_PROMOTE_INTERVAL_MS);
+  };
+
+  _bgPromoteTimer = setTimeout(tick, BG_PROMOTE_INTERVAL_MS);
 }
 
 /** Stop HTTP server and clean up discovery file. */
 export function stopReceptorHttp(): void {
+  if (_bgPromoteTimer) {
+    clearTimeout(_bgPromoteTimer);
+    _bgPromoteTimer = null;
+  }
   if (_server) {
     _server.close();
     _server = null;
