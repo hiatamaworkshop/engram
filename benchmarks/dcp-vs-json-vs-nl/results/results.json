@@ -1,0 +1,92 @@
+[
+  {
+    "format": "DCP compact",
+    "recordCount": 100,
+    "sizeBytes": 8266,
+    "sizePerRecord": 82.7,
+    "parseTimeMs": 0.101,
+    "parsePerRecordUs": 1.009,
+    "overlayTimeMs": 0.126,
+    "overlayPerTimepointUs": 1.262
+  },
+  {
+    "format": "JSON (JSONL)",
+    "recordCount": 100,
+    "sizeBytes": 18073,
+    "sizePerRecord": 180.7,
+    "parseTimeMs": 0.145,
+    "parsePerRecordUs": 1.448,
+    "overlayTimeMs": 0.023,
+    "overlayPerTimepointUs": 0.234
+  },
+  {
+    "format": "Natural language",
+    "recordCount": 100,
+    "sizeBytes": 22195,
+    "sizePerRecord": 221.9,
+    "parseTimeMs": 0.241,
+    "parsePerRecordUs": 2.406,
+    "overlayTimeMs": 0.129,
+    "overlayPerTimepointUs": 1.291
+  },
+  {
+    "format": "DCP compact",
+    "recordCount": 1000,
+    "sizeBytes": 81927,
+    "sizePerRecord": 81.9,
+    "parseTimeMs": 0.972,
+    "parsePerRecordUs": 0.972,
+    "overlayTimeMs": 0.195,
+    "overlayPerTimepointUs": 0.195
+  },
+  {
+    "format": "JSON (JSONL)",
+    "recordCount": 1000,
+    "sizeBytes": 180834,
+    "sizePerRecord": 180.8,
+    "parseTimeMs": 1.472,
+    "parsePerRecordUs": 1.472,
+    "overlayTimeMs": 0.258,
+    "overlayPerTimepointUs": 0.258
+  },
+  {
+    "format": "Natural language",
+    "recordCount": 1000,
+    "sizeBytes": 221882,
+    "sizePerRecord": 221.9,
+    "parseTimeMs": 2.379,
+    "parsePerRecordUs": 2.379,
+    "overlayTimeMs": 0.337,
+    "overlayPerTimepointUs": 0.337
+  },
+  {
+    "format": "DCP compact",
+    "recordCount": 10000,
+    "sizeBytes": 829996,
+    "sizePerRecord": 83,
+    "parseTimeMs": 10.898,
+    "parsePerRecordUs": 1.09,
+    "overlayTimeMs": 6.632,
+    "overlayPerTimepointUs": 0.663
+  },
+  {
+    "format": "JSON (JSONL)",
+    "recordCount": 10000,
+    "sizeBytes": 1819903,
+    "sizePerRecord": 182,
+    "parseTimeMs": 15.838,
+    "parsePerRecordUs": 1.584,
+    "overlayTimeMs": 5.548,
+    "overlayPerTimepointUs": 0.555
+  },
+  {
+    "format": "Natural language",
+    "recordCount": 10000,
+    "sizeBytes": 2229719,
+    "sizePerRecord": 223,
+    "parseTimeMs": 26.579,
+    "parsePerRecordUs": 2.658,
+    "overlayTimeMs": 4.995,
+    "overlayPerTimepointUs": 0.499
+  }
+]

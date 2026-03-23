@@ -1,0 +1,13 @@
+{
+  "name": "dcp-benchmark",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "bench": "tsx bench.ts",
+    "generate": "tsx generate-data.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  }
+}
