@@ -610,6 +610,62 @@ Sphere のショーケースに置かれるのは:
 - Prior Block は factual（何をしたか）と affective（どう感じたか）の両方を運ぶ — engram pull（議事録）との質的差異が実証された
 - persona snapshot count (27) 単体でもセッション品質の proxy になる（正シグナル発火回数 ≈ 順調度）
 
+#### 実験 2: 他システム比較による設計原理の検証 (2026-03-23)
+
+**条件**: 既存の AI セッション記憶システム（商用・OSS・研究）を網羅的に調査し、engram Persona Loading System の設計原理がどこに位置するかを検証。
+
+**調査対象**:
+
+| カテゴリ | システム |
+|---|---|
+| 商用 | ChatGPT Memory, Claude Memory, Gemini Memory, Cursor, Windsurf, Copilot |
+| OSS | MemGPT/Letta, Mem0, Zep, LangChain Memory, Cognee |
+| 研究 | Generative Agents (Stanford), Reflexion, MemoryBank |
+
+**全システムの共通設計**:
+
+```
+イベント発生 → LLM に「これ重要？」と聞く → 言語で要約 → 保存
+```
+
+MemGPT は LLM 自身に memory tool を呼ばせる。Generative Agents は LLM に importance を 1-10 で採点させる。Mem0 は LLM にエンティティ抽出させる。全て「判断を LLM の推論に委ねる」設計。記憶の保存・検索・活用の全段階で LLM 推論コストが発生する。
+
+**engram の方式**:
+
+```
+イベント発生 → normalizer → heatmap/commander → emotion impulse → ambient decay → threshold → fire
+```
+
+LLM に「これ重要か？」とは聞かない。数値が閾値を超えたら発火する。重要度の判断は推論ではなく、アクセス頻度・パターン遷移・時間減衰という物理量から導出される。
+
+**生物的原理との対応**:
+
+| receptor コンポーネント | 神経系の対応物 |
+|---|---|
+| heatmap の順応 | 感覚受容器の順応。同じ刺激は減衰し、変化に反応する |
+| ambient baseline | 恒常性 (homeostasis)。現在の水準を「普通」として学習し、逸脱にのみ反応 |
+| emotion vector の time decay | 神経伝達物質の再取り込み。刺激がなければベースラインへ戻る |
+| hold/release | 時間的加重 (temporal summation)。1回では発火しないが反復で発火 |
+| persona snapshot | 覚醒度依存記憶。覚醒の高い瞬間に記憶が定着しやすい生物学的事実の反映 |
+
+**機能比較**:
+
+| 機能 | ChatGPT 等 | MemGPT | Generative Agents | **engram** |
+|---|---|---|---|---|
+| 事実の永続化 | Yes | Yes | Yes | Yes |
+| 行動/ペルソナ継続 | No | 部分的 (自己編集) | Yes (reflection) | **Yes (persona snapshot)** |
+| 感情状態の追跡 | No | No | No | **Yes (emotion vector + ambient)** |
+| 構造化セッション引き継ぎ | No | No | No | **Yes (Prior Block)** |
+| 推論コストゼロの記憶判断 | No | No | No | **Yes (閾値発火)** |
+| knowledge graph | No | No | No | No |
+| 自動忘却/減衰 | No | No | 部分的 (recency decay) | ambient decay + heatmap metabolism |
+
+**結論**:
+
+他のシステムが「図書館司書」（分類→索引→検索）なら、engram は「神経系」（刺激→伝達→閾値→発火→記憶定着）。この差異は設計思想の違いであり、engram は確実な記憶機能の構築ではなく自然原理に従った実装を意識している。AI に命じて何かを読ませ解釈させるという方式を取らず、より生物的・人間的な挙動に近い作法を踏まえている。
+
+engram だけが持つもの: affective continuity（感情の連続性）、Prior Block（構造化体験引き継ぎ）、推論コストゼロの記憶判断。engram に無いもの: knowledge graph (Mem0, Zep)、チーム共有メモリ (Copilot Enterprise)。
+
 ### 次
 
 1. ~~実動作検証~~ — ✓ 実験 1 で確認済み
