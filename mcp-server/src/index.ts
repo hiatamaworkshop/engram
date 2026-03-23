@@ -516,7 +516,7 @@ async function main() {
 
   if (primary) {
     // Auto-start receptor watch (only primary instance)
-    setWatch(true);
+    setWatch(true, { learn: true, persona: true, priorBlock: true });
   } else {
     console.error(
       `[engram] Secondary instance: MCP tools (pull/push/flag/ls/status) are fully functional. ` +
