@@ -1523,6 +1523,103 @@ receptor-rules.json (テスト AI):
 
 `signal_relay` は `path_suggest` と同列。passive scorer がスコアリングし、閾値を超えたら発火し、executor が実行する。通信もまた「発火で駆動される機能」。各ドメインの receptor はドメイン固有メソッドで自分の AI を助け、汎用通信メソッドで Brain AI にコンテキストを渡す。
 
+#### Brain AI スキーマテーブルと量子ノード構想 (2026-03-23)
+
+##### 1. スキーマテーブル事前保持 — 高速マルチスキーマ処理
+
+Brain AI は複数ドメインの receptor から異なるスキーマのデータを同時に受信する。毎回 `"$S"` を parse するのではなく、起動時にスキーマテーブルを保持する:
+
+```
+Brain AI schema_table (メモリ常駐):
+  "prior-arc":  ["type","t","valence","state","intensity","fru","seek","conf","fati","flow","link"]
+  "live-frag":  ["emotion","state","hotPath","entropy","ts","projectId"]
+  "control":    ["command","target"]
+
+ストリーム受信:
+  "$S" 行 → schema_table を更新（新スキーマ or バージョン変更時のみ）
+  データ行 → 先頭要素で schema_id を引き、即 parse。コストほぼゼロ
+  "$V" 行 → 検証プロセスに転送（メイン処理を止めない）
+```
+
+HTTP/2 の HPACK（ヘッダテーブル事前共有）と同じ作法。
+
+##### 2. 量子ノード — DCP による多層履歴の重ね合わせ
+
+古典的なマルチ AI ログ解析:
+
+```
+AI-A ログ → 集約 → 解析 → レポート
+AI-B ログ → 集約 → 解析 → レポート
+AI-C ログ → 集約 → 解析 → レポート
+→ 3つのレポートを読み比べる。N × 解析コスト。重い。
+```
+
+量子ノード案:
+
+```
+AI-A 履歴 (DCP compact) ──┐
+AI-B 履歴 (DCP compact) ──┼→ シャローコピーで重ねる → 1つの量子ノード
+AI-C 履歴 (DCP compact) ──┘
+→ Brain AI がクエリ角度で射影 → 必要な解釈だけ浮かぶ
+→ 解析コストはクエリ時のみ。事前集約不要。
+```
+
+DCP だからこそ成立する。スキーマが共通だから構造的に重ね合わせ可能:
+
+```
+同一時刻 t=1200 の3ドメインの状態:
+  AI-A: ["A", 1200, 0.3,  "stuck",      0.42, ...]  ← コーディング
+  AI-B: ["A", 1200, -0.1, "exploring",  0.28, ...]  ← 設計
+  AI-C: ["A", 1200, 0.5,  "deep_work",  0.60, ...]  ← テスト
+```
+
+自然言語なら重ねられない — フォーマットがバラバラでノイズの山になる。positional array + 共通スキーマだから、同一座標系に並ぶ。
+
+##### 量子ノードの構造
+
+```
+quantum_node = {
+  schema_table: { ... }           // 共有スキーマテーブル（実体は1つ）
+  layers: [
+    { source: "receptor-A", ref: → AI-A 履歴 },   // シャローコピー（参照のみ）
+    { source: "receptor-B", ref: → AI-B 履歴 },
+    { source: "receptor-C", ref: → AI-C 履歴 },
+  ]
+}
+```
+
+実体はコピーしない。スキーマテーブルと参照だけ持つ。Brain AI が処理した各レイヤーの解釈結果もスナップショットとして蓄積される。
+
+##### クエリによる射影
+
+```
+クエリ: 「テスト失敗の原因は？」
+
+Brain AI が量子ノードを射影:
+  → layer C (テスト): t=1200 で frustration spike、stuck 状態
+  → layer A (コーディング): t=1180 で file_edit、receptor/learn.ts を変更
+  → 相関発見: 「A が編集した 20ms 後に C が stuck になった」
+  → layer B (設計): t=1200 は deep_work、confidence 高 → 設計側に問題なし
+
+クエリ: 「設計の品質は？」
+
+同じ量子ノードを別角度で射影:
+  → layer B が主に浮かぶ
+  → layer A, C は背景情報
+```
+
+同じデータ、同じノード。クエリの角度で見え方が変わる。これが Sphere ノードの「触る人間によって反応を変える」概念の、Brain AI レベルでの実現。
+
+##### DCP がなければ成立しない理由
+
+```
+自然言語履歴:  重ねると混沌。スキーマがない。時刻の対応付けが曖昧。
+JSON 履歴:     重ねられるが重い。キーが毎行付くから N 倍のコスト。
+DCP 履歴:      スキーマ共通、positional array、軽量。重ねてもコスト増は参照分のみ。
+```
+
+量子ノードは DCP の軽量性なしには実用的でない。
+
 ---
 
 *言語を appreciate し過ぎている。しかし一応人間なので、橋は残しておく。*
