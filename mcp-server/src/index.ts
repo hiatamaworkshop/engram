@@ -400,13 +400,17 @@ server.tool(
       .describe("start=begin monitoring, stop=end+summary, omit or status=show current state"),
     learn: z.boolean().optional()
       .describe("Enable learn mode — auto-calibrate receptor sensitivity from session fire patterns. Only applies on start."),
+    persona: z.boolean().optional()
+      .describe("Enable persona loading — apply prior session's Persona (body calibration) on start, export on stop. Only applies on start."),
+    priorBlock: z.boolean().optional()
+      .describe("Enable Prior Block — inject prior session's experience arc into start response, include in Experience Package on stop. Only applies on start."),
     event: z.object({
       tool_name: z.string(),
       tool_input: z.record(z.unknown()).optional(),
       exit_code: z.number().optional(),
     }).optional().describe("[Internal] Hook event from Claude Code. Do not set manually."),
   },
-  async ({ action, learn, event }) => {
+  async ({ action, learn, persona, priorBlock, event }) => {
     // Secondary instance: receptor is managed by the primary instance
     if (!isReceptorPrimary()) {
       return {
@@ -428,7 +432,8 @@ server.tool(
 
     // Start/stop
     if (action === "start" || action === "stop") {
-      const result = setWatch(action === "start", action === "start" ? learn : undefined);
+      const isStart = action === "start";
+      const result = setWatch(isStart, isStart ? { learn, persona, priorBlock } : undefined);
       return {
         content: [{ type: "text", text: result.message }],
       };

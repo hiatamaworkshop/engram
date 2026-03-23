@@ -37,6 +37,14 @@ let _lastSignals: FireSignal[] = [];
 let _lastEvent: NormalizedEvent | undefined;
 let _priorResult: PriorResult | null = null;
 let _learnMode = false;
+let _personaMode = false;
+let _priorBlockMode = false;
+
+export interface WatchOptions {
+  learn?: boolean;
+  persona?: boolean;
+  priorBlock?: boolean;
+}
 
 const heatmap = new PathHeatmap();
 const commander = new Commander();
@@ -331,24 +339,30 @@ export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights, flushWeightSnaps
 // ---- Public API ----
 
 /** Toggle watch mode. Returns new state. */
-export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean; message: string } {
+export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boolean; message: string } {
   if (enabled && !_watching) {
     _watching = true;
-    _learnMode = learn ?? false;
+    _learnMode = opts?.learn ?? false;
+    _personaMode = opts?.persona ?? false;
+    _priorBlockMode = opts?.priorBlock ?? false;
     _startedAt = Date.now();
     _eventCount = 0;
     _lastEmotion = { ...ZERO_EMOTION };
     _lastSignals = [];
     // Phase 1: Read all prior data BEFORE clear — files are truncated by clear*()
-    // Try Experience Package first (unified), fallback to legacy separate files
-    const pkg = loadPackage();
-    const priorPersona = pkg
-      ? { persona: pkg.persona, source: "experience-package.json" } as import("./persona-prior.js").ReadPriorResult
-      : readPriorPersona();
-    const priorPoints = pkg ? null : loadSessionPoints();
-    const priorWeights = pkg ? null : loadWeightSnapshot();
-    const priorHotPaths = pkg ? null : loadHeatmapSnapshot();
-    const priorMethodCounts = pkg ? null : loadCommanderCounts();
+    // Only load if persona or priorBlock mode is enabled
+    const wantPersona = _personaMode;
+    const wantPrior = _priorBlockMode;
+    const pkg = (wantPersona || wantPrior) ? loadPackage() : null;
+    const priorPersona = wantPersona
+      ? (pkg
+        ? { persona: pkg.persona, source: "experience-package.json" } as import("./persona-prior.js").ReadPriorResult
+        : readPriorPersona())
+      : { persona: null, source: "disabled" } as import("./persona-prior.js").ReadPriorResult;
+    const priorPoints = (wantPrior && !pkg) ? loadSessionPoints() : null;
+    const priorWeights = (wantPrior && !pkg) ? loadWeightSnapshot() : null;
+    const priorHotPaths = (wantPrior && !pkg) ? loadHeatmapSnapshot() : null;
+    const priorMethodCounts = (wantPrior && !pkg) ? loadCommanderCounts() : null;
 
     // Phase 2: Clear all state + truncate JSONL files for new session
     heatmap.clear();
@@ -386,17 +400,16 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
     }
 
     // Build Prior Block (AI Native Format) for agent consumption
-    // Package path: Prior Block is already built, just format it
-    // Legacy path: build from session-points + weights
+    // Only if priorBlock mode is enabled
     let priorBlockMsg = "";
-    if (pkg) {
+    if (wantPrior && pkg) {
       if (pkg.priorBlock && pkg.priorBlock.length > 0) {
         const arcCount = pkg.priorBlock.filter(e => Array.isArray(e) && e[0] === "A").length;
         // Cast: Package stores PriorBlock as unknown[][] for serialization; formatPriorBlock expects the internal type
         priorBlockMsg = `\n${formatPriorBlock(pkg.priorBlock as Parameters<typeof formatPriorBlock>[0])}`;
         console.error(`[experience-package] prior block loaded: ${arcCount} arc points`);
       }
-    } else if (priorPoints) {
+    } else if (wantPrior && priorPoints) {
       const block = buildPriorBlock(priorPoints, priorWeights, _priorResult, {
         hotPaths: priorHotPaths ?? undefined,
         methodCounts: priorMethodCounts ?? undefined,
@@ -437,22 +450,24 @@ export function setWatch(enabled: boolean, learn?: boolean): { watching: boolean
     // Persona snapshot: finalize session and conditionally export
     let personaMsg = "";
     let finalizedPersona: import("./persona-snapshot.js").Persona | null = null;
-    try {
-      const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
-      const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
-      const model = process.env.ENGRAM_MODEL || undefined;
-      finalizedPersona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
-      if (finalizedPersona) {
-        exportPersona(finalizedPersona).catch(e => console.error("[receptor] persona export error:", e));
-        personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
+    if (_personaMode || _priorBlockMode) {
+      try {
+        const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
+        const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
+        const model = process.env.ENGRAM_MODEL || undefined;
+        finalizedPersona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
+        if (finalizedPersona && _personaMode) {
+          exportPersona(finalizedPersona).catch(e => console.error("[receptor] persona export error:", e));
+          personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
+        }
+      } catch (err) {
+        console.error("[receptor] persona finalize error:", err);
       }
-    } catch (err) {
-      console.error("[receptor] persona finalize error:", err);
     }
 
     // Experience Package: unify Persona + Prior Block → local sink
     let pkgMsg = "";
-    if (finalizedPersona && currentSessionPoints) {
+    if ((_personaMode || _priorBlockMode) && finalizedPersona && currentSessionPoints) {
       try {
         const dummyPrior: PriorResult = {
           applied: true,
