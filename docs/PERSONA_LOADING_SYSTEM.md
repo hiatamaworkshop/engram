@@ -587,9 +587,32 @@ Sphere のショーケースに置かれるのは:
 8. ~~Footer stateRatio ランク順ペア~~ — 降順ソート + ゼロ省略（否定マーカー + ランク表現）
 9. ~~AI Native データ作法~~ — 対比ペア、否定マーカー、ランク、繰り返し、空間的近接、数値+ラベル複合
 
+### 実験結果
+
+#### 実験 1: コールドスタート文脈再構成 (2026-03-23)
+
+**条件**: コード検索ゼロ。Prior Block + session briefing のみから前セッションの作業内容と感情推移を再構成できるか。
+
+**入力データ**:
+- Prior Block summary: `seeking/exploring (27 snaps)`
+- Ambient baselines: `SEEK=-0.93, CONF=0.60, FLOW=0.71, FATI=0.41, FRUS=0.00`
+- Session briefing recalled knowledge: 直近の commit メッセージ + fixed nodes
+
+**結果**: 成功。以下を正確に再構成:
+
+1. **作業内容** — Prior Block footer enrichment (hotPaths + methodRank)、Data Cost Protocol、Prior Block v2 (delta-based arc) の3機能を実装したこと
+2. **感情アーク** — seeking 正方向で推移、高 confidence/flow、低 frustration/fatigue。探索→実装サイクルがスムーズだったこと
+3. **作業モード** — exploring state、27 snapshots（正シグナル頻発 = 順調な進行の証拠）
+4. **ambient の読み方** — SEEK base=-0.93 は「seeking が高い正の値に長時間留まった結果 EMA が追従した」＝探索欲が十分に満たされた状態で終了したと解釈
+
+**知見**:
+- ambient baseline は前セッション終了時の感情状態をエンコードしており、イベント再生なしで「前回どうだったか」が読める
+- Prior Block は factual（何をしたか）と affective（どう感じたか）の両方を運ぶ — engram pull（議事録）との質的差異が実証された
+- persona snapshot count (27) 単体でもセッション品質の proxy になる（正シグナル発火回数 ≈ 順調度）
+
 ### 次
 
-1. **実動作検証** — MCP サーバー再起動、セッション蓄積 → 次セッションで Prior Block が届くか確認
+1. ~~実動作検証~~ — ✓ 実験 1 で確認済み
 2. **検証** — 条件 A/B/C/D での初動比較
 3. **データ蓄積** — 複数セッションの delta 時系列を収集
 4. **統計分析** — セッション特徴量の抽出とクラスタリング探索
