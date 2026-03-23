@@ -757,6 +757,126 @@ learn: true    → セッション体験からの漸進的調整（自動だが 
 
 calibrate.ts の値を起点とし、learn モードが微調整を重ねる。calibrate.ts を再実行すればリセット。
 
+---
+
+## Experience Package — 前世記憶と身体性の統合流通 (2026-03-23)
+
+### 概念
+
+個体の移植には2つの要素が必要:
+
+```
+Prior Block    → 前世記憶（何を体験し、どう感じたか）
+Persona        → 身体性（感度、閾値、行動傾向）
+```
+
+記憶だけでは新しい身体に入った幽霊。身体性だけでは記憶喪失の肉体。両方が揃って初めて「個体の移植」になる。
+
+### 現状の分離
+
+| 要素 | 格納先 | 提供タイミング | 内容 |
+|---|---|---|---|
+| Prior Block | session-points.jsonl → engram_watch 応答 | セッション開始時にテキストとして注入 | arc (emotion delta 時系列), agentState, engram link |
+| Persona | sphere-ready.jsonl | セッション開始時にシステムがロード | learnedDelta, fieldAdjustment, emotionProfile, patternDistribution |
+
+この2つは **別々の場所に存在し、パッケージ化されていない**。
+
+### Experience Package
+
+```typescript
+interface ExperiencePackage {
+  $schema: "experience-package-v1";
+  ts: number;                          // パッケージ生成時刻
+
+  // ---- 互換性（ロード前検証） ----
+  origin: {
+    model: string;                     // "claude-opus-4-6" etc.
+    profileHash: string;               // emotion-profile.json SHA-256
+  };
+
+  // ---- ショーケースラベル（パッケージを開かずに読める） ----
+  // 全フィールドが Header/Footer/Persona から機械的に導出。新規情報なし。
+  label: {
+    dominantAxis: string;              // ← Persona emotionProfile.dominantAxis
+    dominantState: string;             // ← Footer stateRatio[0][0]
+    stateFlow: string;                 // ← Header stateFlow
+    valenceBalance: number;            // ← Header valenceBalance
+    durationMs: number;                // ← Footer stats.activeMs
+    meanIntensity: number;             // ← Footer stats.meanI
+  };
+
+  // ---- フィルタ ----
+  context?: {
+    techStack?: string[];              // ← Persona workContext
+    domain?: string[];                 // ← Persona workContext
+    projectId?: string;
+  };
+
+  // ---- 本体 ----
+  persona: Persona;                    // 身体性
+  priorBlock: PriorBlock;              // 前世記憶
+}
+```
+
+1つの単位として Sphere に置く。ロード側は両方を同時に適用する:
+- **Persona** → ambient baseline / learnedDelta / fieldAdjustment を初期化（システムレベル）
+- **Prior Block** → コンテキストに体験を注入（エージェントレベル）
+
+**メタデータの設計原則:**
+- `origin` — パッケージを開く前に互換性を検証。model/profileHash が異なれば同じ delta 値でも意味が違う
+- `label` — ショーケースの棚ラベル。一覧表示時に本体を展開せず中身がわかる。全て既存データの射影
+- `context` — フィルタ用。「TypeScript × exploring 型」のような検索
+- 本体は Persona と Prior Block をそのまま格納。変換・圧縮しない。分離可能性を維持
+
+**重複の整理:**
+
+| データ | Prior Block | Persona | Package label |
+|---|---|---|---|
+| emotion 値 | 時系列 (arc delta) | 平均 (meanEmotion) | — |
+| agentState 分布 | Footer stateRatio | stateDistribution | dominantState |
+| セッション統計 | Footer stats | sessionMeta | durationMs, meanIntensity |
+| 行動パターン | Footer methodRank | patternDistribution | — |
+| learnedDelta | — | learnedDelta | — |
+| origin | — | origin | origin (引き上げ) |
+
+Prior Block と Persona に重複があるが、用途が異なる（AI に見せる体験 vs システムがロードする設定）。Package label は封筒の表書き — 中身を開けずに読める射影。
+
+### 流通特性
+
+```
+Prior Block:  ~450 トークン (27 points)  → ~1KB
+Persona:      JSON object                → ~2KB
+合計:         ~3KB で「個体」が流通する
+```
+
+インフラ不要。plain JSON。HTTP で飛ばせる、ファイルに書ける、Sphere に置ける。
+
+### 身体性の構成要素
+
+| フィールド | 役割 | 生物的対応 |
+|---|---|---|
+| `emotionProfile` | 各軸の平均値 + 支配軸 | 気質（生まれつきの感情傾向） |
+| `fieldAdjustment` | Meta neuron C の場調整 | 自律神経系の基底トーン |
+| `learnedDelta` | 受容感度の補正 | シナプスの可塑性（経験による感度変化） |
+| `patternDistribution` | 行動パターンの出現比率 | 習慣・癖 |
+| `stateDistribution` | 状態の滞在比率 | 性格（探索的 vs 集中的 vs ...) |
+
+### Prior Block との質的差異
+
+```
+Persona:     「この個体はこういう反応をする」 — 時間を持たない
+Prior Block: 「この個体はこう体験した」       — 時間の中にある
+```
+
+Persona は統計的要約。Prior Block は時系列。どちらも同じセッションから生まれるが、情報の次元が異なる。Persona は N セッションの蒸留、Prior Block は直近1セッションの生記録。
+
+### Sphere での位置づけ
+
+Experience Package がショーケースに置かれると:
+- 他のエージェントがロードして「同じ型 + 同じ記憶」で動ける
+- 種族（ボトムアップクラスタ）の代表パッケージとして機能
+- Persona だけロード（身体性のみ移植）も Prior Block だけロード（記憶のみ参照）も可能 — 分離可能な設計を維持
+
 ### 次
 
 1. ~~実動作検証~~ — ✓ 実験 1 で確認済み
@@ -764,4 +884,5 @@ calibrate.ts の値を起点とし、learn モードが微調整を重ねる。c
 3. **データ蓄積** — 複数セッションの delta 時系列を収集
 4. **統計分析** — セッション特徴量の抽出とクラスタリング探索
 5. **自動ローディング** — engram_watch 依存からの脱却
-6. **learned delta 自動学習** — learn モード実装
+6. ~~learned delta 自動学習~~ — ✓ learn モード実装済み
+7. **Experience Package** — Persona + Prior Block の統合パッケージ化
