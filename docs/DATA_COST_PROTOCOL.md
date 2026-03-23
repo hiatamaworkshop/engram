@@ -1099,6 +1099,86 @@ A2A:  agent 間通信の標準 → 存在する
 - **アダプタは局所的に書く**（Claude Code, Cursor, ... 個別対応）
 - **Prior Block の portability を武器にする**（format は universal、読み取りは AI の自然な解釈に委ねる）
 
+### 非 LLM ドメインのアダプタ戦略: 時間ウィンドウ積分 (2026-03-23)
+
+#### 2つのアダプタパターン
+
+LLM は tool call という明確な離散イベントがある。しかし他ジャンルの AI は連続的な行動ループで動いており、「1イベント」の境界が自明でない。
+
+```
+パターン A: イベント離散化（LLM 向き）
+  1 tool call = 1 NormalizedEvent
+  → Claude Code, Cursor, Copilot 等
+
+パターン B: 時間ウィンドウ積分（非 LLM 向き）
+  連続行動の t ms ウィンドウを切る
+  → ウィンドウ内の信号分布を集計
+  → セマンティックラベルを付与
+  → 1 NormalizedEvent として emit
+```
+
+#### パターン B: セマンティックラベリング
+
+ウィンドウ内の信号分布から、4-6 種の直交するラベルを付与する。精密な分類は不要 — 「だいたい何をしているか」がわかれば emotion impulse は計算できる。receptor は閾値ベースだからノイズや欠損に対して本質的に頑健。
+
+```
+ロボティクス (500ms window):
+  モーター出力の分散が大     → action: "exploration"
+  モーター出力が一定方向     → action: "execution"
+  センサー入力が急変         → action: "reaction"
+  全て低出力                 → action: "idle"
+
+自動運転 (200ms window):
+  ステアリング変化量 大      → action: "maneuver"
+  速度変化 大                → action: "speed_adjust"
+  センサー注視点が移動       → action: "scan"
+  全て安定                   → action: "cruise"
+
+画像生成 (per-step):
+  拡散ステップ進行中         → action: "generating"
+  ユーザー入力変更           → action: "reconfig"
+  出力評価フェーズ           → action: "evaluation"
+  待機中                     → action: "idle"
+```
+
+#### 設計原則
+
+- **直交する 4-6 軸でラベリング** — commander のパターン判定はこの程度の粒度で十分動く
+- **ラベリングルールはドメインの emotion-profile.json に同梱** — impulse 係数と一緒に定義。アダプタが「この分布ならこのラベル」を決め、profile が「このラベルならこの emotion delta」を決める。分離が保たれる
+- **微調整は必然** — LLM でも emotion-profile の調整は多かった。他ドメインでも同様。calibrate.ts + learn mode で漸進的に最適化
+- **ウィンドウ幅はドメイン固有** — ロボティクスの 500ms と自動運転の 200ms は行動の時間スケールに依存。これもアダプタのパラメータ
+
+#### 観測手段の現実
+
+公式 API/hooks がない AI runtime でも、ローカルマシン上で動いている限り:
+
+```
+ファイル I/O:   FSWatch で検出可能
+プロセス生成:   OS レベルで監視可能
+ネットワーク:   ローカルプロキシで横取り可能
+stdin/stdout:   パイプバイパスで検出可能
+```
+
+完璧な観測がなくても receptor は動く:
+
+```
+100%: 全ツール呼び出しを正確にキャッチ → 理想
+ 80%: ファイル I/O + シェル生成 → heatmap + commander は十分
+ 50%: ファイル編集だけ → heatmap 単体でも意味がある
+```
+
+1 イベント見逃しても emotion vector は time decay で自然に回復する。人間の感覚器と同じ — 完璧でなくても「だいたい合っている」感情推移が得られる。
+
+#### 非 LLM ドメインの未知数
+
+LLM は API 経由で誰でも触れ、行動の単位が明確。他ジャンルの AI は:
+
+- **一般の手に渡ることがほぼない** — 行動ログの仕様が非公開
+- **独自性の高い成長をしている可能性** — LLM とは根本的に異なるアーキテクチャ
+- **行動の粒度が桁違い** — 自動運転は数十ms単位、ロボティクスは連続制御
+
+アダプタ開発は面倒だが、receptor core は一切変更不要。NormalizedEvent `{ action, result, ts }` の最小構造がこの拡張性を担保している。
+
 ### Brain AI 構想: 異種ドメイン AI 協調と Experience Package ストリーミング (2026-03-23)
 
 #### 同種並列は無意味、異種協調に価値がある
