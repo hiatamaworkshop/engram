@@ -23,6 +23,10 @@ export interface NodeSeed {
   summary: string;
   tags: string[];
   content?: string;
+  // DCP native fields (Phase 1: optional, Phase 2: recommended)
+  native?: unknown[];          // compact positional array
+  schema?: string;             // schema ID e.g. "knowledge:v1"
+  index?: string;              // human-readable restore key for search + reverse translation
 }
 
 // ---- Request types ----
@@ -34,6 +38,7 @@ export interface RecallRequest {
   limit?: number;
   minWeight?: number;
   status?: NodeStatus;
+  queryType?: "human" | "agent";  // DCP: agent gets native payload only, human gets full response
 }
 
 export interface IngestRequest {
@@ -73,6 +78,10 @@ export interface RecallResult {
   weight: number;
   status: NodeStatus;
   content?: string;
+  // DCP native fields (present if node was stored with native)
+  native?: unknown[];
+  schema?: string;
+  index?: string;
 }
 
 export interface RecallResponse {
@@ -87,6 +96,7 @@ export interface IngestResponse {
   projectId?: string;
   nodesIngested?: number;
   merged?: number;
+  dcpWarnings?: string[];   // DCP validation warnings (Phase 1: advisory)
 }
 
 export interface StatusResponse {

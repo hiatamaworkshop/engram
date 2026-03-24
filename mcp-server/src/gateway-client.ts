@@ -15,6 +15,10 @@ export interface RecallResult {
   weight: number;
   status: NodeStatus;
   content?: string;
+  // DCP native fields
+  native?: unknown[];
+  schema?: string;
+  index?: string;
 }
 
 export interface RecallResponse {
@@ -29,6 +33,7 @@ export interface IngestResponse {
   projectId?: string;
   nodesIngested?: number;
   merged?: number;
+  dcpWarnings?: string[];
 }
 
 export interface StatusResponse {
@@ -124,10 +129,12 @@ export async function recallNodes(
   limit = 10,
   minWeight?: number,
   status?: string,
+  queryType?: "human" | "agent",
 ): Promise<RecallResponse> {
   const body: Record<string, unknown> = { query, projectId, limit };
   if (minWeight !== undefined) body.minWeight = minWeight;
   if (status) body.status = status;
+  if (queryType) body.queryType = queryType;
   const res = await fetch(`${ctx.gatewayUrl}/recall`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

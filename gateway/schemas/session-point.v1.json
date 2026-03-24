@@ -1,0 +1,19 @@
+{
+  "$dcp": "schema",
+  "id": "session-point:v1",
+  "description": "SessionPoint — chronological fire signal trace for experience replay",
+  "fields": ["t", "label", "intensity", "valence", "freq", "link"],
+  "fieldCount": 6,
+  "types": {
+    "t": { "type": "number", "description": "cumulative work time ms" },
+    "label": { "type": "string", "enum": ["frustration_spike", "seeking_spike", "confidence_sustained", "fatigue_rising", "flow_active", "compound_frustration_seeking"] },
+    "intensity": { "type": "number", "min": 0, "max": 1 },
+    "valence": { "type": "number", "enum": [1, 0, -1] },
+    "freq": { "type": "number", "min": 0, "max": 1 },
+    "link": { "type": ["string", "null"] }
+  },
+  "examples": [
+    [5200, "frustration_spike", 0.72, -1, 0.3, null],
+    [8400, "confidence_sustained", 0.55, 1, 0.1, "node-abc"]
+  ]
+}

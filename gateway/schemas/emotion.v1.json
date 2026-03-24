@@ -1,0 +1,18 @@
+{
+  "$dcp": "schema",
+  "id": "emotion:v1",
+  "description": "5-axis emotion vector — receptor core representation",
+  "fields": ["frustration", "seeking", "confidence", "fatigue", "flow"],
+  "fieldCount": 5,
+  "types": {
+    "frustration": { "type": "number" },
+    "seeking": { "type": "number" },
+    "confidence": { "type": "number" },
+    "fatigue": { "type": "number" },
+    "flow": { "type": "number" }
+  },
+  "examples": [
+    [0.08, 0.35, 0.45, 0.12, 0.60],
+    [0.42, -0.1, 0.05, -0.2, 0.0]
+  ]
+}

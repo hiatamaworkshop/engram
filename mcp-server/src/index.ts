@@ -57,8 +57,9 @@ server.tool(
     limit: z.number().min(1).max(30).default(5).describe("Max results to return"),
     minWeight: z.number().optional().describe("Only return nodes with weight >= this value (higher = more trusted)"),
     status: z.enum(["recent", "fixed"]).optional().describe("Only return nodes with this status"),
+    queryType: z.enum(["human", "agent"]).optional().describe("DCP: 'agent' returns native payload only (compact), 'human' returns full natural language. Default: human."),
   },
-  async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status }) => {
+  async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status, queryType }) => {
     const health = await checkHealth(ctx);
     if (!health.ok) {
       return {
@@ -96,7 +97,7 @@ server.tool(
         };
       }
 
-      const response = await recallNodes(ctx, query, projectId, limit, minWeight, status);
+      const response = await recallNodes(ctx, query, projectId, limit, minWeight, status, queryType);
 
       if (response.results.length === 0) {
         const scope = projectId ? ` in project:${projectId}` : "";
@@ -119,6 +120,8 @@ server.tool(
         return [
           `[${i + 1}] ${r.summary}`,
           r.content ? `    ${r.content}` : null,
+          r.native ? `    native: ${JSON.stringify(r.native)}` : null,
+          r.schema ? `    schema: ${r.schema}` : null,
           `    hits=${r.hitCount} weight=${r.weight} status=${r.status} relevance=${r.relevance.toFixed(3)}`,
           `    tags: ${r.tags.join(", ") || "(none)"}`,
           `    id: ${r.id}`,
@@ -153,6 +156,10 @@ const nodeSeedSchema = z.object({
   summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
   tags: z.array(z.string()).min(0).max(5).default([]).describe("0-5 lowercase hyphenated tags. Auto-generated from summary if empty."),
   content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
+  // DCP native fields (recommended — see DATA_COST_PROTOCOL.md)
+  native: z.array(z.unknown()).optional().describe("DCP compact positional array. Recommended for AI-to-AI efficiency. e.g. [\"fix\",\"docker\",\"port conflict\",0.9]"),
+  schema: z.string().optional().describe("DCP schema ID. e.g. \"knowledge:v1\". Required when native is provided."),
+  index: z.string().optional().describe("Human-readable restore key for search + reverse translation. e.g. \"docker port-conflict fix\""),
 });
 
 server.tool(
@@ -198,7 +205,12 @@ server.tool(
       // Link session points to this push event
       setLastPushNodeId(resolvedSessionId);
 
-      const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
+      let line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
+
+      // Surface DCP warnings from gateway validator
+      if (result.dcpWarnings?.length) {
+        line += `\n⚠ DCP: ${result.dcpWarnings.join(" | ")}`;
+      }
 
       return {
         content: [{ type: "text", text: line + memoFormat("push") }],

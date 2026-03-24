@@ -10,10 +10,14 @@ import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, get
 import type { ExpiredNodeInfo } from "./digestor.js";
 import { handleMcpRequest } from "./mcp-endpoint.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
+import { loadSchemas } from "./schema-registry.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
 const startTime = Date.now();
+
+// ---- DCP Schema Registry ----
+loadSchemas();
 
 // ---- UpperLayer init (Qdrant + embedding) ----
 initUpperLayer(cfg.upperLayer).catch((err) => {

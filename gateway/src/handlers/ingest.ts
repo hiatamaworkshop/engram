@@ -29,6 +29,13 @@ export async function handleIngest(body: IngestRequest): Promise<IngestResponse>
     };
   }
 
+  // Log DCP warnings (Phase 1: warn, don't reject)
+  if (gate.warnings?.length) {
+    for (const w of gate.warnings) {
+      console.log(`[gateway] dcp warning: ${w.code} — ${w.message}`);
+    }
+  }
+
   // ---- Auto-generate tags for seeds with empty tags ----
   for (const seed of body.capsuleSeeds) {
     if (seed.tags.length === 0) {
@@ -44,10 +51,12 @@ export async function handleIngest(body: IngestRequest): Promise<IngestResponse>
 
   const { ingested } = await ingestNodes(body.capsuleSeeds, body.projectId, trigger, sessionId, userId);
 
+  const dcpWarnings = gate.warnings?.map((w) => w.message);
   return {
     status: "accepted",
     reason: `${ingested} nodes ingested.`,
     projectId: body.projectId,
     nodesIngested: ingested,
+    ...(dcpWarnings?.length ? { dcpWarnings } : {}),
   };
 }

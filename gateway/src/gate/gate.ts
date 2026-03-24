@@ -6,8 +6,14 @@
 
 import type { IngestRequest, NodeSeed } from "../types.js";
 import { SEED_CONSTRAINTS } from "./constraints.js";
+import { getSchema, validateNative } from "../schema-registry.js";
 
 export interface GateError {
+  code: string;
+  message: string;
+}
+
+export interface GateWarning {
   code: string;
   message: string;
 }
@@ -15,6 +21,7 @@ export interface GateError {
 export interface GateResult {
   valid: boolean;
   errors: GateError[];
+  warnings?: GateWarning[];
 }
 
 /**
@@ -22,6 +29,7 @@ export interface GateResult {
  */
 export function validateIngest(body: IngestRequest): GateResult {
   const errors: GateError[] = [];
+  const warnings: GateWarning[] = [];
 
   if (!body) {
     errors.push({ code: "EMPTY_BODY", message: "Request body is empty." });
@@ -49,7 +57,7 @@ export function validateIngest(body: IngestRequest): GateResult {
   for (let i = 0; i < body.capsuleSeeds.length; i++) {
     const seed = body.capsuleSeeds[i];
     const prefix = `seed[${i}]`;
-    validateSeed(seed, prefix, errors);
+    validateSeed(seed, prefix, errors, warnings);
   }
 
   // ---- sessionId ----
@@ -57,10 +65,10 @@ export function validateIngest(body: IngestRequest): GateResult {
     errors.push({ code: "SESSION_ID_TOO_LONG", message: `sessionId too long: ${body.sessionId.length} > ${SEED_CONSTRAINTS.maxSessionIdLength}.` });
   }
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[]): void {
+function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[], warnings: GateWarning[]): void {
   // summary
   if (!seed.summary || seed.summary.trim().length < SEED_CONSTRAINTS.minSummaryLength) {
     errors.push({ code: "SUMMARY_TOO_SHORT", message: `${prefix}: summary too short (min ${SEED_CONSTRAINTS.minSummaryLength}).` });
@@ -80,5 +88,34 @@ function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[]): void
   // content
   if (seed.content && seed.content.length > SEED_CONSTRAINTS.maxContentLength) {
     errors.push({ code: "CONTENT_TOO_LONG", message: `${prefix}: content too long: ${seed.content.length} > ${SEED_CONSTRAINTS.maxContentLength}.` });
+  }
+
+  // ---- DCP validation (Phase 1: warn, not reject) ----
+
+  if (!seed.native) {
+    // No native field — DCP format recommended
+    warnings.push({
+      code: "DCP_RECOMMENDED",
+      message: `${prefix}: DCP native format recommended. Include 'native' and 'schema' fields. See DATA_COST_PROTOCOL.md.`,
+    });
+  } else {
+    // native provided — validate structure
+    if (!Array.isArray(seed.native)) {
+      errors.push({ code: "NATIVE_NOT_ARRAY", message: `${prefix}: native must be an array (DCP compact positional format).` });
+    } else if (seed.schema) {
+      // schema provided — validate against registry
+      const result = validateNative(seed.native, seed.schema);
+      if (!result.valid) {
+        for (const err of result.errors) {
+          errors.push({ code: "DCP_SCHEMA_VIOLATION", message: `${prefix}: ${err}` });
+        }
+      }
+    } else {
+      // native without schema — warn
+      warnings.push({
+        code: "DCP_NO_SCHEMA",
+        message: `${prefix}: native field present but no schema ID. Include 'schema' for validation.`,
+      });
+    }
   }
 }
