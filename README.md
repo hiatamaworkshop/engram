@@ -103,9 +103,9 @@ cp hooks/engram-receptor-hook.sh hooks/engram-turn-hook.sh ~/.claude/hooks/
 
 Each MCP server instance writes a discovery file (`~/.engram/receptor.<pid>.port`). Hook scripts fan out to all active instances in parallel. Stale discovery files are auto-cleaned on failed delivery.
 
-### 4. Add CLAUDE.md snippet
+### 4. Add CLAUDE.md instructions
 
-Copy `CLAUDE.md.template` to your global `~/.claude/CLAUDE.md`:
+Append `CLAUDE.md.template` to your global `~/.claude/CLAUDE.md`. The template is a DCP-native instruction set — compact structured data that LLMs consume directly:
 
 ```bash
 cat CLAUDE.md.template >> ~/.claude/CLAUDE.md
@@ -128,7 +128,34 @@ Engram works with any MCP-compatible client. Only the registration format differ
 | `engram_flag` | Mark as outdated / incorrect / superseded / merged (lowers weight) |
 | `engram_ls` | Lightweight listing by tag/status (no embedding cost) |
 | `engram_status` | Store health, node counts, project list |
-| `engram_watch` | Receptor control — start/stop/status of behavior monitoring |
+| `engram_watch` | Receptor control — start/stop/status with optional mode flags |
+
+`engram_watch` accepts mode flags on `start`:
+
+| Flag | Effect |
+|------|--------|
+| `persona` | Load prior session's Persona for cold-start calibration; export on stop |
+| `priorBlock` | Inject prior session's experience arc into start response |
+| `learn` | Auto-calibrate receptor sensitivity from session fire patterns |
+
+## Data Cost Protocol (DCP)
+
+Engram recommends **DCP-native format** for `engram_push`. Natural language summaries are accepted but discouraged — the gateway validator will warn when native fields are missing.
+
+```
+Natural language push (legacy):
+  { summary: "auth jwt→session migration", content: "...", tags: [...] }
+  → accepted with warning: "DCP format recommended"
+
+DCP-native push (recommended):
+  { native: ["replace","auth",{"from":"jwt","to":"session"}], schema: "action:v1",
+    index: "auth jwt→session", tags: [...] }
+  → stored as-is. AI consumers receive native directly. Humans get decoded on request.
+```
+
+Why: AI-to-AI communication is 90%+ of engram traffic. Natural language adds token cost, context pollution, and translation error accumulation for no benefit when the consumer is an LLM. DCP cuts total system cost by an order of magnitude.
+
+The gateway holds a schema registry (`gateway/schemas/`). Schema versioning replaces field extension — new schema IDs, never variable-length fields. See [DATA_COST_PROTOCOL.md](docs/DATA_COST_PROTOCOL.md).
 
 ## Receptor
 
@@ -178,6 +205,14 @@ Pre-neuron monitor that tracks which knowledge areas the agent hasn't revisited.
 ### Persona System — Perceptual Lens Distillation
 
 Successful sessions export a Persona: a statistical fingerprint of emotion baselines, field adjustments, and pattern distributions. On next session start, the receptor loads the prior persona to calibrate from — no cold start. Personas are model-aware (`origin.model`) and profile-versioned (`origin.profileHash`). See [PERSONA_DESIGN.md](docs/PERSONA_DESIGN.md).
+
+### Prior Block — Experience Arc Injection
+
+On session start, the Prior Block injects the previous session's behavioral arc: emotion trajectory, hot paths, method rankings, and learned deltas. The agent starts with context about where it left off — not just calibration (Persona), but narrative continuity. Combined with Persona as an Experience Package. See [PERSONA_LOADING_SYSTEM.md](docs/PERSONA_LOADING_SYSTEM.md).
+
+### Learn Mode — Adaptive Sensitivity Tuning
+
+Opt-in mode (`engram_watch start` with `learn: true`) that records which receptor signals actually fire during a session and adjusts thresholds accordingly. Frequency-based calibration — signals that fire too often get dampened, signals that never fire get sensitized. Export as `learnedDelta` in the Persona.
 
 ### Sphere Shaping — Data Export Pipeline
 
@@ -230,6 +265,10 @@ Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a
 | `GATEWAY_URL` | `http://localhost:3100` | MCP server → Gateway connection |
 | `ENGRAM_PROJECT_ID` | auto-detected | Override project scope (falls back to git remote or cwd) |
 | `ENGRAM_USER_ID` | `"default"` | User identifier |
+| `RECEPTOR_PORT` | `3101` | Receptor HTTP listener port |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant connection (gateway + receptor) |
+| `ENGRAM_MODEL` | `"unknown"` | Model identifier for persona origin tracking |
+| `ENGRAM_DATA_DIR` | MCP server root | Data directory for personas, session points, learn data |
 
 ### Gateway Endpoints
 
@@ -241,7 +280,7 @@ Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a
 | POST | `/feedback` | Weight signal |
 | POST | `/activate` | Add project to Digestor scope |
 | POST | `/deactivate` | Remove project from Digestor scope |
-| POST | `/mcp` | Streamable HTTP MCP endpoint |
+| POST/GET | `/mcp` | Streamable HTTP MCP endpoint (same tools as stdio, for remote clients) |
 | GET | `/scan/:projectId` | List nodes (?tag, ?status, ?sort) |
 | GET | `/status` | Store statistics |
 | GET | `/health` | Health check |
