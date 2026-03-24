@@ -17,6 +17,7 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist/ ./dist/
 COPY gateway.config.json ./
+COPY schemas/ ./schemas/
 
 EXPOSE 3100
 
