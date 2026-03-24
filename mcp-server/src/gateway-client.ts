@@ -70,6 +70,52 @@ export interface ScanResponse {
   total: number;
 }
 
+// ---- Schema fetching (for tool descriptions) ----
+
+export interface GatewaySchema {
+  $dcp: "schema";
+  id: string;
+  description: string;
+  fields: string[];
+  fieldCount: number;
+  types: Record<string, { type: string | string[]; enum?: (string | number)[] }>;
+  examples?: unknown[][];
+}
+
+export async function fetchSchemas(gatewayUrl: string): Promise<GatewaySchema[]> {
+  try {
+    const listRes = await fetch(`${gatewayUrl}/schemas`);
+    if (!listRes.ok) return [];
+    const { schemas } = (await listRes.json()) as { schemas: string[] };
+
+    const results: GatewaySchema[] = [];
+    for (const id of schemas) {
+      try {
+        const res = await fetch(`${gatewayUrl}/schemas/${encodeURIComponent(id)}`);
+        if (res.ok) results.push((await res.json()) as GatewaySchema);
+      } catch { /* skip */ }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export function formatSchemaHint(schemas: GatewaySchema[]): string {
+  if (schemas.length === 0) return "";
+  const lines = schemas.map((s) => {
+    const fieldDefs = s.fields.map((f) => {
+      const t = s.types[f];
+      if (!t) return f;
+      const typeStr = Array.isArray(t.type) ? t.type.join("|") : t.type;
+      const enumStr = t.enum ? `(${t.enum.join("|")})` : "";
+      return `${f}:${typeStr}${enumStr}`;
+    });
+    return `  ${s.id} → [${fieldDefs.join(", ")}]`;
+  });
+  return `\nDCP schemas (use with native + schema fields):\n${lines.join("\n")}`;
+}
+
 // ---- Health (cached) ----
 
 export interface HealthResult {

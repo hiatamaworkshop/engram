@@ -164,7 +164,7 @@ const nodeSeedSchema = z.object({
 
 server.tool(
   "engram_push",
-  "Submit 1-8 knowledge seeds. 1 seed = 1 topic. See CLAUDE.md for push guidelines.",
+  `Submit 1-8 knowledge seeds. 1 seed = 1 topic. DCP native format recommended (include native + schema fields). Primary schema: knowledge:v1 → [action:string(add|replace|remove|fix|discover|configure|gotcha), domain:string, detail:string|object, confidence:number(0-1)]. Example: native:["fix","docker","port 3100 conflict",0.9], schema:"knowledge:v1". Other schemas available via gateway GET /schemas.`,
   {
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),

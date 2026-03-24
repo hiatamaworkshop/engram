@@ -104,10 +104,18 @@ function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[], warni
       errors.push({ code: "NATIVE_NOT_ARRAY", message: `${prefix}: native must be an array (DCP compact positional format).` });
     } else if (seed.schema) {
       // schema provided — validate against registry
+      const schema = getSchema(seed.schema);
       const result = validateNative(seed.native, seed.schema);
       if (!result.valid) {
+        // (A) Include schema definition in error so LLM can self-correct
+        const schemaHint = schema
+          ? ` — schema ${seed.schema}: fields=[${schema.fields.join(",")}]` +
+            Object.entries(schema.types).map(([k, v]) =>
+              ` ${k}:${Array.isArray(v.type) ? v.type.join("|") : v.type}${v.enum ? `(${v.enum.join("|")})` : ""}`
+            ).join(",")
+          : "";
         for (const err of result.errors) {
-          errors.push({ code: "DCP_SCHEMA_VIOLATION", message: `${prefix}: ${err}` });
+          errors.push({ code: "DCP_SCHEMA_VIOLATION", message: `${prefix}: ${err}${schemaHint}` });
         }
       }
     } else {
