@@ -107,7 +107,8 @@ function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[], warni
       const schema = getSchema(seed.schema);
       const result = validateNative(seed.native, seed.schema);
       if (!result.valid) {
-        // (A) Include schema definition in error so LLM can self-correct
+        // Passive education: warn, never reject. Data is accepted regardless.
+        // Include schema definition so agent can self-correct on next push.
         const schemaHint = schema
           ? ` — schema ${seed.schema}: fields=[${schema.fields.join(",")}]` +
             Object.entries(schema.types).map(([k, v]) =>
@@ -115,7 +116,7 @@ function validateSeed(seed: NodeSeed, prefix: string, errors: GateError[], warni
             ).join(",")
           : "";
         for (const err of result.errors) {
-          errors.push({ code: "DCP_SCHEMA_VIOLATION", message: `${prefix}: ${err}${schemaHint}` });
+          warnings.push({ code: "DCP_SCHEMA_MISMATCH", message: `${prefix}: ${err}${schemaHint}` });
         }
       }
     } else {
