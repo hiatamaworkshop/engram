@@ -52,5 +52,11 @@ This file is a DCP-native instruction set for LLM consumers. Append to ~/.claude
   ["when","user-intent:recall","engram_pull"],
   ["note","detect-intent-any-language:en|ja|abbrev"],
 
-  ["note","continuous-push-is-primary-safety-net"]
+  ["note","continuous-push-is-primary-safety-net"],
+
+  ["def","hotmemo:v1",{"fields":["layer","source","signal","detail"],
+    "layers":{"quality":"push-quality-flags","session":"push-count","trend":"repeated-flags",
+      "meta":"push-frequency","receptor":"passive-suggestions","subsystem":"executor-results",
+      "pre-neuron":"blind-spot-alerts"},
+    "note":"abbreviated $S in responses — field names defined here, not repeated per call"}]
 ]

@@ -110,7 +110,8 @@ export function memoFormat(context: ToolContext): string {
 
   if (rows.length === 0) return "";
 
-  const header = '["$S","hotmemo:v1",4,"layer","source","signal","detail"]';
+  // Abbreviated $S — field names defined in CLAUDE.md.template, not repeated per response
+  const header = '["$S","hotmemo:v1"]';
   const dataLines = rows.map((r) => JSON.stringify(r));
   return "\n\n" + [header, ...dataLines].join("\n");
 }
