@@ -1,0 +1,20 @@
+{
+  "$dcp": "schema",
+  "id": "hotmemo:v1",
+  "description": "Hot-memo layered session signal — abbreviated $S in tool responses, expand via GET /schemas/hotmemo:v1",
+  "fields": ["layer", "source", "signal", "detail"],
+  "fieldCount": 4,
+  "types": {
+    "layer": { "type": "string", "enum": ["quality", "session", "trend", "meta", "receptor", "subsystem", "pre-neuron"], "description": "Which hotmemo layer emitted this row" },
+    "source": { "type": "string", "description": "Origin within the layer (e.g. push, passive, action_logger, staleness-detector)" },
+    "signal": { "type": "string", "description": "Signal type or action (e.g. suggest, fire_signal, no-type-tag, !!:critical)" },
+    "detail": { "type": "string", "description": "Payload — tool name, message, count, or flag detail" }
+  },
+  "examples": [
+    ["quality", "push", "no-type-tag", "auth jwt migration fix"],
+    ["session", "push-count", "5", "this-session"],
+    ["receptor", "passive", "suggest", "engram_pull"],
+    ["subsystem", "action_logger", "fire_signal", "frustration_spike(0.8)"],
+    ["pre-neuron", "staleness-detector", "!!:critical", "path stale 3d"]
+  ]
+}

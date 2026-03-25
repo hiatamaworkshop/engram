@@ -54,9 +54,6 @@ This file is a DCP-native instruction set for LLM consumers. Append to ~/.claude
 
   ["note","continuous-push-is-primary-safety-net"],
 
-  ["def","hotmemo:v1",{"fields":["layer","source","signal","detail"],
-    "layers":{"quality":"push-quality-flags","session":"push-count","trend":"repeated-flags",
-      "meta":"push-frequency","receptor":"passive-suggestions","subsystem":"executor-results",
-      "pre-neuron":"blind-spot-alerts"},
-    "note":"abbreviated $S in responses — field names defined here, not repeated per call"}]
+  ["def","hotmemo:v1",{"fields":4,"ref":"GET /schemas/hotmemo:v1",
+    "note":"abbreviated $S in tool responses. layers: quality|session|trend|meta|receptor|subsystem|pre-neuron"}]
 ]
