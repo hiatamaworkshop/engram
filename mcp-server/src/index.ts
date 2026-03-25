@@ -212,6 +212,11 @@ server.tool(
         line += `\n⚠ DCP: ${result.dcpWarnings.join(" | ")}`;
       }
 
+      // Interactive Schema: embed hint in response for agent's next-turn context
+      if (result.schemaHint) {
+        line += `\n${result.schemaHint}`;
+      }
+
       return {
         content: [{ type: "text", text: line + memoFormat("push") }],
       };

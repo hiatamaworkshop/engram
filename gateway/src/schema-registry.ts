@@ -74,6 +74,76 @@ export function listSchemas(): string[] {
   return [...registry.keys()];
 }
 
+// ── Interactive Schema — abbreviated / expanded hints ────────────
+
+/**
+ * Generate a short hash from schema content for abbreviated reference.
+ * 4 hex chars (~65k space) — enough for schema identity, not security.
+ */
+function schemaHash(schema: DcpSchema): string {
+  const raw = schema.id + schema.fields.join(",");
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) {
+    h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+  }
+  return ((h >>> 0) & 0xffff).toString(16).padStart(4, "0");
+}
+
+/**
+ * Stage 0: Compliant push — minimal abbreviated reference.
+ * ~10 tokens in agent context. Peripheral vision only.
+ * e.g. "$S:knowledge:v1#a3f2 [expand:GET /schemas/knowledge:v1]"
+ */
+export function abbreviatedHint(schemaId: string): string | null {
+  const schema = registry.get(schemaId);
+  if (!schema) return null;
+  const hash = schemaHash(schema);
+  return `$S:${schemaId}#${hash} [expand:GET /schemas/${schemaId}]`;
+}
+
+/**
+ * Stage 1: Non-compliant push — abbreviated + field summary.
+ * Shows fields and key type info so agent can self-correct on next push.
+ * e.g. "$S:knowledge:v1#a3f2 [action(add|replace|...) domain detail confidence:0-1] [expand:GET /schemas/knowledge:v1]"
+ */
+export function expandedHint(schemaId: string): string | null {
+  const schema = registry.get(schemaId);
+  if (!schema) return null;
+  const hash = schemaHash(schema);
+
+  const fieldDescs = schema.fields.map((f) => {
+    const t = schema.types[f];
+    if (!t) return f;
+    if (t.enum) return `${f}(${t.enum.join("|")})`;
+    if (t.min !== undefined && t.max !== undefined) return `${f}:${t.min}-${t.max}`;
+    return f;
+  });
+
+  return `$S:${schemaId}#${hash} [${fieldDescs.join(" ")}] [expand:GET /schemas/${schemaId}]`;
+}
+
+/**
+ * Determine which hint to return based on push compliance.
+ * @param seeds - the pushed seeds
+ * @param defaultSchemaId - fallback schema ID (e.g. "knowledge:v1")
+ */
+export function determineSchemaHint(
+  seeds: Array<{ native?: unknown[]; schema?: string }>,
+  defaultSchemaId: string = "knowledge:v1",
+): string | null {
+  // Check if ALL seeds have valid native + schema
+  const allCompliant = seeds.every((s) => s.native && Array.isArray(s.native) && s.schema);
+
+  if (allCompliant) {
+    // Stage 0: abbreviated only — minimal cost
+    const schemaId = seeds[0].schema || defaultSchemaId;
+    return abbreviatedHint(schemaId);
+  }
+
+  // Stage 1: expanded — show fields so agent learns
+  return expandedHint(defaultSchemaId);
+}
+
 // ── Validation ──────────────────────────────────────────────────
 
 export function validateNative(

@@ -2,6 +2,7 @@ import type { IngestRequest, IngestResponse } from "../types.js";
 import { validateIngest } from "../gate/gate.js";
 import { autoGenerateTags } from "../gate/auto-tags.js";
 import { ingestNodes } from "../upper-layer/index.js";
+import { determineSchemaHint } from "../schema-registry.js";
 
 /**
  * POST /ingest — capsuleSeeds → validate → auto-tag → embed → Qdrant
@@ -52,11 +53,16 @@ export async function handleIngest(body: IngestRequest): Promise<IngestResponse>
   const { ingested } = await ingestNodes(body.capsuleSeeds, body.projectId, trigger, sessionId, userId);
 
   const dcpWarnings = gate.warnings?.map((w) => w.message);
+
+  // Interactive Schema: determine hint based on push compliance
+  const schemaHint = determineSchemaHint(body.capsuleSeeds) ?? undefined;
+
   return {
     status: "accepted",
     reason: `${ingested} nodes ingested.`,
     projectId: body.projectId,
     nodesIngested: ingested,
     ...(dcpWarnings?.length ? { dcpWarnings } : {}),
+    ...(schemaHint ? { schemaHint } : {}),
   };
 }

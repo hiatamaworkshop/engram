@@ -34,6 +34,7 @@ export interface IngestResponse {
   nodesIngested?: number;
   merged?: number;
   dcpWarnings?: string[];
+  schemaHint?: string;     // Interactive Schema: abbreviated or expanded hint
 }
 
 export interface StatusResponse {

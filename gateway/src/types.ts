@@ -97,6 +97,7 @@ export interface IngestResponse {
   nodesIngested?: number;
   merged?: number;
   dcpWarnings?: string[];   // DCP validation warnings (Phase 1: advisory)
+  schemaHint?: string;      // Interactive Schema: abbreviated or expanded hint for next push
 }
 
 export interface StatusResponse {
