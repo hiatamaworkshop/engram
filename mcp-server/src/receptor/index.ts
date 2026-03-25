@@ -18,7 +18,7 @@ import {
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
 import {
-  onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
+  onFireSignals, formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue,
   type ScoredMethod,
 } from "./passive.js";
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
@@ -66,7 +66,10 @@ export function onSignal(listener: SignalListener): void {
 _listeners.push(onFireSignals);
 
 // Re-export passive receptor API for hotmemo integration
-export { formatRecommendations, drainRecommendations, drainAutoQueue };
+export { formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue };
+
+// Re-export DCP formatters for hotmemo
+export { formatSubsystemDcp };
 
 // ---- Method executor (via service registry) ----
 
@@ -85,7 +88,7 @@ export {
 } from "./subsystem-fifo.js";
 import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
-import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
+import { formatSubsystemResults as _fmtSub, formatSubsystemDcp, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
 import { exportEnrichedCentroid, exportPersona, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";

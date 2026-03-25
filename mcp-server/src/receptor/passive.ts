@@ -377,3 +377,27 @@ export function formatRecommendations(): string {
   const unique = [...new Set(lines)];
   return `[receptor] ${unique.join(" | ")}`;
 }
+
+type DcpRow = [string, string, string, string];
+
+/**
+ * Drain pending recommendations as DCP rows for hotmemo:v1 schema.
+ * Consumes the pending buffer.
+ */
+export function drainRecommendationsDcp(): DcpRow[] {
+  if (_pending.length === 0) return [];
+
+  const seen = new Set<string>();
+  const rows: DcpRow[] = [];
+  for (const m of _pending) {
+    const signal = m.action.tool ? "suggest" : "notify";
+    const detail = m.action.message || m.action.tool || m.id;
+    const key = `${signal}:${detail}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push(["receptor", "passive", signal, detail]);
+    }
+  }
+  _pending = [];
+  return rows;
+}

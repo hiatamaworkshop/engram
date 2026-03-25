@@ -88,3 +88,22 @@ function formatLine(e: FifoEntry): string {
   const ts = new Date(e.ts).toISOString().replace("T", " ").slice(0, 19);
   return `${e.system} | ${e.fn} | ${ts} | ${e.message}`;
 }
+
+// ---- DCP Format ----
+
+type DcpRow = [string, string, string, string];
+
+/**
+ * Return unseen entries as DCP rows for hotmemo:v1 schema.
+ * [layer, source, signal, detail]
+ */
+export function formatSubsystemDcp(displayLimit = 3): DcpRow[] {
+  const unseen = _fifo.filter(e => e.shownAt === 0);
+  if (unseen.length === 0) return [];
+
+  const now = Date.now();
+  const shown = unseen.slice(-displayLimit);
+  for (const e of shown) e.shownAt = now;
+
+  return shown.map(e => ["subsystem", e.system, e.fn, e.message] as DcpRow);
+}
