@@ -31,6 +31,7 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
+import { formatRecallDcp, formatScanDcp } from "./dcp-format.js";
 import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
 import { startReceptorHttp, isReceptorPrimary, stopReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
@@ -116,6 +117,16 @@ server.tool(
         };
       }
 
+      // Record engram weights for persona loading weight distribution snapshot
+      recordEngramWeights(response.results, "pull");
+
+      // DCP compact output for agent consumers
+      if (queryType === "agent") {
+        return {
+          content: [{ type: "text", text: formatRecallDcp(response.results) + memoFormat("pull") }],
+        };
+      }
+
       const formatted = response.results.map((r, i) => {
         return [
           `[${i + 1}] ${r.summary}`,
@@ -129,9 +140,6 @@ server.tool(
           .filter(Boolean)
           .join("\n");
       });
-
-      // Record engram weights for persona loading weight distribution snapshot
-      recordEngramWeights(response.results, "pull");
 
       const scope = projectId ? ` (project: ${projectId})` : " (cross-project)";
       const header = `Found ${response.results.length} results for "${query}"${scope}:\n`;
@@ -357,8 +365,9 @@ server.tool(
     status: z.enum(["recent", "fixed"]).optional().describe("Filter by node status"),
     limit: z.number().min(1).max(30).default(10).describe("Max entries to return"),
     sort: z.enum(["recent", "weight"]).optional().describe("Sort order: 'recent' (newest first) or 'weight' (heaviest first)"),
+    format: z.enum(["human", "dcp"]).optional().describe("Output format: 'dcp' returns compact positional arrays. Default: human."),
   },
-  async ({ projectId, tag, status, limit, sort }) => {
+  async ({ projectId, tag, status, limit, sort, format }) => {
     const health = await checkHealth(ctx);
     if (!health.ok) {
       return {
@@ -382,6 +391,13 @@ server.tool(
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
         return {
           content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.\n\nHint: No knowledge stored yet. Use engram_push to add knowledge.` }],
+        };
+      }
+
+      // DCP compact output
+      if (format === "dcp") {
+        return {
+          content: [{ type: "text", text: formatScanDcp(result.entries) + memoFormat("ls") }],
         };
       }
 
