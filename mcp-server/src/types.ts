@@ -75,6 +75,10 @@ export interface NodeSeed {
   summary: string;
   tags: string[];
   content?: string;
+  // DCP native fields
+  native?: unknown[];
+  schema?: string;
+  index?: string;
 }
 
 // ============================================================

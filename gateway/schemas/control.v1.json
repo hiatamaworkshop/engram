@@ -1,0 +1,15 @@
+{
+  "$dcp": "schema",
+  "id": "control:v1",
+  "description": "Control message — inter-agent commands",
+  "fields": ["command", "target"],
+  "fieldCount": 2,
+  "types": {
+    "command": { "type": "string", "enum": ["pause", "resume", "flush", "schema-request"] },
+    "target": { "type": "string" }
+  },
+  "examples": [
+    ["pause", "receptor-B"],
+    ["schema-request", "ab12cd34"]
+  ]
+}

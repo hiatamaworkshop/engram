@@ -1,0 +1,18 @@
+{
+  "$dcp": "schema",
+  "id": "live-frag:v1",
+  "description": "Live Experience Fragment — streaming receptor state to Brain AI",
+  "fields": ["emotion", "state", "hotPath", "entropy", "ts", "projectId"],
+  "fieldCount": 6,
+  "types": {
+    "emotion": { "type": "array", "items": "number", "length": 5 },
+    "state": { "type": "string", "enum": ["deep_work", "exploring", "stuck", "idle", "delegating"] },
+    "hotPath": { "type": "string" },
+    "entropy": { "type": "number" },
+    "ts": { "type": "number" },
+    "projectId": { "type": "string" }
+  },
+  "examples": [
+    [[0.08, 0.35, 0.45, 0.12, 0.60], "exploring", "receptor/index.ts", 2.3, 1711234567, "engram"]
+  ]
+}

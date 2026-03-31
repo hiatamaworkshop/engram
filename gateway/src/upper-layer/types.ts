@@ -34,6 +34,11 @@ export interface UpperLayerPointPayload {
   weight: number;         // survival score (Digestor uses for promotion/expiry)
   ttl?: number;           // countdown in seconds — set by Digestor on first batch, decremented each tick
   ingestedAt: number;     // Unix ms timestamp — set on ingest, used for sort=recent
+  // DCP native fields
+  native?: unknown[];     // compact positional array (DCP payload)
+  schema?: string;        // schema ID e.g. "knowledge:v1"
+  index?: string;         // human-readable restore key
+  autoEncoded?: boolean;  // true if system converted from natural language (Phase 1 fallback)
 }
 
 export interface SearchOptions {

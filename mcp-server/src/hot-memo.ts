@@ -1,16 +1,24 @@
 // ============================================================
-// Hot Memo — Layered, conditional session awareness
+// Hot Memo — DCP-native layered session awareness
 // ============================================================
 // Each layer independently decides whether to speak.
 // If none speak, the memo is silent. Zero noise.
+//
+// DCP schema: hotmemo:v1
+//   ["$S","hotmemo:v1",4,"layer","source","signal","detail"]
+//   ["quality","push","no-type-tag","summary < 20 chars"]
+//   ["receptor","passive","suggest","engram_pull"]
+//   ["subsystem","action_logger","fire_signal","frustration_spike(0.8)"]
+//   ["pre-neuron","staleness-detector","stale","path"]
 
-import { formatRecommendations, drainRecommendations, formatSubsystemForHotmemo } from "./receptor/index.js";
-import { formatPreNeuronAlerts } from "./pre-neuron/index.js";
+import { drainRecommendationsDcp, formatSubsystemDcp } from "./receptor/index.js";
+import { formatPreNeuronDcp } from "./pre-neuron/index.js";
 
 const LAYER1_TAGS = new Set(["howto", "where", "why", "gotcha"]);
 const MAX_HISTORY = 10;
 
 type ToolContext = "push" | "pull" | "status" | "ls" | "flag";
+type DcpRow = [string, string, string, string];
 
 interface PushRecord {
   summary: string;
@@ -35,7 +43,7 @@ export function memoAdd(
     const tags = seed.tags ?? [];
 
     if (tags.length > 0 && !tags.some((t) => LAYER1_TAGS.has(t))) {
-      flags.push("no type tag");
+      flags.push("no-type-tag");
     }
     if (seed.summary.length < 20) {
       flags.push("brief");
@@ -50,63 +58,60 @@ export function memoAdd(
   }
 }
 
-/** Build contextual memo. Returns empty string if nothing to say. */
+/** Build DCP-native contextual memo. Returns empty string if nothing to say. */
 export function memoFormat(context: ToolContext): string {
   toolCallsSinceLastPush++;
 
-  const layers: string[] = [];
+  const rows: DcpRow[] = [];
 
   // Layer 1: System Core — immediate quality feedback on latest push
   if (context === "push" && history.length > 0) {
     const latest = history[history.length - 1];
-    if (latest.flags.length > 0) {
-      layers.push(`[quality] ${latest.flags.join(", ")}`);
+    for (const flag of latest.flags) {
+      rows.push(["quality", "push", flag, latest.summary]);
     }
   }
 
   // Layer 2: Data Status — session push count on status/ls
   if ((context === "status" || context === "ls") && history.length > 0) {
-    layers.push(`[session] ${history.length} pushes this session`);
+    rows.push(["session", "push-count", String(history.length), "this-session"]);
   }
 
   // Layer 3: Data Menial — trend detection across recent pushes (once per session)
   if (history.length >= 3 && !_trendShownThisSession) {
     const recent = history.slice(-3);
     const briefCount = recent.filter((p) => p.flags.includes("brief")).length;
-    const noTagCount = recent.filter((p) => p.flags.includes("no type tag")).length;
+    const noTagCount = recent.filter((p) => p.flags.includes("no-type-tag")).length;
     if (briefCount >= 2 || noTagCount >= 2) {
       const parts: string[] = [];
-      if (briefCount >= 2) parts.push("brief summaries");
-      if (noTagCount >= 2) parts.push("missing type tags");
-      layers.push(`[trend] recent pushes: ${parts.join(", ")}`);
+      if (briefCount >= 2) parts.push("brief");
+      if (noTagCount >= 2) parts.push("no-type-tag");
+      rows.push(["trend", "push-quality", parts.join(","), "recent-3"]);
       _trendShownThisSession = true;
     }
   }
 
   // Layer 4: Meta — push frequency nudge
   if (toolCallsSinceLastPush >= 20 && history.length > 0) {
-    layers.push(`[meta] no push in ${toolCallsSinceLastPush} tool calls`);
+    rows.push(["meta", "push-freq", String(toolCallsSinceLastPush), "no-push"]);
   }
 
-  // Layer 5: Receptor — passive receptor recommendations
-  const receptorLine = formatRecommendations();
-  if (receptorLine) {
-    layers.push(receptorLine);
-    drainRecommendations(); // consume after display
-  }
+  // Layer 5: Receptor — passive receptor recommendations (DCP rows)
+  const receptorRows = drainRecommendationsDcp();
+  rows.push(...receptorRows);
 
-  // Layer 6: Executor results — unified ring buffer (all executors + subsystems)
-  const subsystemLine = formatSubsystemForHotmemo();
-  if (subsystemLine) {
-    layers.push(subsystemLine);
-  }
+  // Layer 6: Executor results — unified ring buffer (DCP rows)
+  const subsystemRows = formatSubsystemDcp();
+  rows.push(...subsystemRows);
 
-  // Layer 7: Pre-neuron monitors — immune system alerts (staleness, blind spots)
-  const preNeuronLine = formatPreNeuronAlerts();
-  if (preNeuronLine) {
-    layers.push(preNeuronLine);
-  }
+  // Layer 7: Pre-neuron monitors — immune system alerts (DCP rows)
+  const preNeuronRows = formatPreNeuronDcp();
+  rows.push(...preNeuronRows);
 
-  if (layers.length === 0) return "";
-  return "\n\n" + layers.join("\n");
+  if (rows.length === 0) return "";
+
+  // Abbreviated $S — field names defined in CLAUDE.md.template, not repeated per response
+  const header = '["$S","hotmemo:v1"]';
+  const dataLines = rows.map((r) => JSON.stringify(r));
+  return "\n\n" + [header, ...dataLines].join("\n");
 }

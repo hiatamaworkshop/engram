@@ -54,6 +54,26 @@ export function getTotalAlertCount(): number {
   return alerts.length;
 }
 
+// ---- DCP Format ----
+
+type DcpRow = [string, string, string, string];
+
+/**
+ * Return unseen alerts as DCP rows for hotmemo:v1 schema.
+ * Severity encoded in signal field: "!!:stale", "!:warn", "info"
+ */
+export function formatPreNeuronDcp(limit = 3): DcpRow[] {
+  if (shownUpTo >= alerts.length) return [];
+
+  const unseen = alerts.slice(shownUpTo, shownUpTo + limit);
+  shownUpTo += unseen.length;
+
+  return unseen.map((a) => {
+    const tag = a.severity === "critical" ? "!!" : a.severity === "warn" ? "!" : "·";
+    return ["pre-neuron", a.source, `${tag}:${a.severity}`, a.message] as DcpRow;
+  });
+}
+
 /** Full snapshot for status display (does NOT consume alerts). */
 export function formatPreNeuronStatus(): string {
   if (alerts.length === 0) return "";

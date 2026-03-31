@@ -284,8 +284,6 @@ Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a
 | GET | `/scan/:projectId` | List nodes (?tag, ?status, ?sort) |
 | GET | `/status` | Store statistics |
 | GET | `/health` | Health check |
-| GET | `/schemas` | List all registered DCP schema IDs |
-| GET | `/schemas/:id` | Full schema definition by ID |
 
 ## Development
 

@@ -15,14 +15,27 @@
 // Design: docs/PERSONA_DESIGN.md
 
 import type { PersonaPayload } from "./sphere-shaper.js";
-import type { Persona } from "./persona-snapshot.js";
-import { getProfileHash } from "./persona-snapshot.js";
+import type { Persona, Snapshot } from "./persona-snapshot.js";
+import { getProfileHash, buildPersonaFromRawSnapshots } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
-import type { AgentState } from "./types.js";
+import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector, NormalizedAction } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ---- Types ----
+
+export interface SessionArcSummary {
+  pointCount: number;
+  durationMs: number;           // total work time span
+  peakSignal?: string;          // highest intensity signal label
+  peakIntensity?: number;
+  valenceBalance: number;       // +1 = all positive, -1 = all negative, 0 = balanced
+}
+
+export interface WeightSummary {
+  nodeCount: number;
+  topNodes: Array<{ nodeId: string; weight: number; summary: string }>;
+}
 
 export interface PriorResult {
   applied: boolean;
@@ -30,6 +43,8 @@ export interface PriorResult {
   dominantAxis?: string;
   dominantState?: AgentState;
   snapshotCount?: number;
+  sessionArc?: SessionArcSummary | null;
+  weightSummary?: WeightSummary | null;
 }
 
 export interface CompatResult {
@@ -46,6 +61,7 @@ const SPHERE_OUTPUT_DIR = path.join(
   "receptor-output",
 );
 const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
+const PERSONA_SNAPSHOTS_PATH = path.join(SPHERE_OUTPUT_DIR, "persona-snapshots.jsonl");
 
 // Maximum age of a persona to consider (7 days)
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -94,16 +110,46 @@ export function validatePersonaCompat(persona: Persona): CompatResult {
 
 // ---- 4. Load + Apply (session start) ----
 
+export interface ReadPriorResult {
+  persona: Persona | null;
+  source: string;
+}
+
 /**
- * Load the most recent persona from sphere-ready.jsonl and apply
- * it to the ambient estimator as a behavioral prior.
- *
- * Returns metadata about what was loaded (for logging/status).
+ * Phase 1: Read persona from disk (no side effects).
+ * Must be called BEFORE clear*() truncates JSONL files.
  */
-export function loadPrior(ambient: AmbientEstimator): PriorResult {
-  const persona = readLatestPersona();
+export function readPriorPersona(): ReadPriorResult {
+  // Primary path: finalized persona from sphere-ready.jsonl
+  let persona = readLatestPersona();
+  let source = "sphere-ready.jsonl";
+
+  // Degraded path: raw snapshots from persona-snapshots.jsonl
+  // (when finalizeSession didn't run — e.g. VSCode X-button kill)
   if (!persona) {
-    return { applied: false, source: "none" };
+    persona = rebuildPersonaFromSnapshots();
+    source = "persona-snapshots.jsonl (degraded)";
+  }
+
+  if (!persona) {
+    return { persona: null, source: "none" };
+  }
+
+  return { persona, source };
+}
+
+/**
+ * Phase 2: Validate + apply persona to ambient estimator.
+ * Must be called AFTER clear() so ambient is fresh.
+ */
+export function applyPriorPersona(
+  prior: ReadPriorResult,
+  ambient: AmbientEstimator,
+): PriorResult {
+  const { persona, source } = prior;
+
+  if (!persona) {
+    return { applied: false, source };
   }
 
   // Check age — stale personas are worse than no prior
@@ -134,16 +180,25 @@ export function loadPrior(ambient: AmbientEstimator): PriorResult {
   console.error(
     `[persona-prior] loaded: dominant=${persona.emotionProfile.dominantAxis} ` +
     `state=${dominantState} snaps=${persona.sessionMeta.snapshotCount} ` +
-    `age=${Math.round(age / 3600000)}h`
+    `age=${Math.round(age / 3600000)}h source=${source}`
   );
 
   return {
     applied: true,
-    source: "sphere-ready.jsonl",
+    source,
     dominantAxis: persona.emotionProfile.dominantAxis,
     dominantState,
     snapshotCount: persona.sessionMeta.snapshotCount,
   };
+}
+
+/**
+ * Legacy: combined read + apply (for lens swap and other callers).
+ * Only safe when files haven't been truncated yet.
+ */
+export function loadPrior(ambient: AmbientEstimator): PriorResult {
+  const prior = readPriorPersona();
+  return applyPriorPersona(prior, ambient);
 }
 
 // ---- 5. Lens Swap (mid-session) ----
@@ -221,6 +276,57 @@ function deriveDominantState(persona: Persona): AgentState {
   return dominantState;
 }
 
+/**
+ * Degraded path: rebuild Persona from raw persona-snapshots.jsonl.
+ * Used when finalizeSession() didn't run (e.g. process killed by VSCode X-button).
+ * Reads raw snapshots, applies same quality gates, builds persona.
+ */
+function rebuildPersonaFromSnapshots(): Persona | null {
+  try {
+    if (!fs.existsSync(PERSONA_SNAPSHOTS_PATH)) return null;
+
+    const content = fs.readFileSync(PERSONA_SNAPSHOTS_PATH, "utf-8").trim();
+    if (!content) return null;
+
+    const snapshots: Snapshot[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const parsed = JSON.parse(line) as Snapshot;
+        if (typeof parsed.ts === "number" && parsed.emotion) {
+          snapshots.push(parsed);
+        }
+      } catch {
+        // Malformed line — skip
+      }
+    }
+
+    if (snapshots.length === 0) return null;
+
+    // Read learnedDelta if available
+    let learnedDelta: Record<string, number> = {};
+    try {
+      const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
+      const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
+      learnedDelta = learned.delta;
+    } catch { /* no learned delta available */ }
+
+    const model = process.env.ENGRAM_MODEL || undefined;
+    const persona = buildPersonaFromRawSnapshots(snapshots, learnedDelta, undefined, model);
+
+    if (persona) {
+      console.error(
+        `[persona-prior] degraded rebuild: ${snapshots.length} raw snapshots → persona ` +
+        `dominant=${persona.emotionProfile.dominantAxis}`
+      );
+    }
+
+    return persona;
+  } catch (err) {
+    console.error("[persona-prior] degraded rebuild error:", err);
+    return null;
+  }
+}
+
 /** Read sphere-ready.jsonl and return the most recent persona. */
 function readLatestPersona(): Persona | null {
   try {
@@ -248,4 +354,435 @@ function readLatestPersona(): Persona | null {
     console.error("[persona-prior] read error:", err);
     return null;
   }
+}
+
+// ---- Session Point Loader (Phase 1: full view) ----
+
+const SESSION_POINTS_PATH = path.join(SPHERE_OUTPUT_DIR, "session-points.jsonl");
+const WEIGHT_SNAPSHOT_PATH = path.join(SPHERE_OUTPUT_DIR, "engram-weights.jsonl");
+
+export interface SessionPointWithGap {
+  point: SessionPoint;
+  gapMs: number;  // work time elapsed since previous point (0 for first)
+}
+
+/**
+ * Load all SessionPoints from the most recent session.
+ * Returns chronologically ordered points with inter-point time gaps.
+ * Returns null if no data exists.
+ */
+export function loadSessionPoints(): SessionPointWithGap[] | null {
+  try {
+    if (!fs.existsSync(SESSION_POINTS_PATH)) return null;
+
+    const content = fs.readFileSync(SESSION_POINTS_PATH, "utf-8").trim();
+    if (!content) return null;
+
+    const points: SessionPoint[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const parsed = JSON.parse(line) as SessionPoint;
+        if (typeof parsed.t === "number" && typeof parsed.label === "string") {
+          points.push(parsed);
+        }
+      } catch {
+        // Malformed line — skip
+      }
+    }
+
+    if (points.length === 0) return null;
+
+    // Sort by work time (should already be ordered, but defensive)
+    points.sort((a, b) => a.t - b.t);
+
+    // Compute inter-point gaps
+    const result: SessionPointWithGap[] = [];
+    for (let i = 0; i < points.length; i++) {
+      result.push({
+        point: points[i],
+        gapMs: i === 0 ? 0 : points[i].t - points[i - 1].t,
+      });
+    }
+
+    return result;
+  } catch (err) {
+    console.error("[persona-prior] session points read error:", err);
+    return null;
+  }
+}
+
+// ---- Engram Weight Snapshot Loader ----
+
+/**
+ * Load engram weight snapshot from the most recent session.
+ * Returns the weight distribution of knowledge referenced during the session.
+ * For persona showcase: this is "what the craftsman knew, and how much it mattered."
+ */
+export function loadWeightSnapshot(): EngramWeightEntry[] | null {
+  try {
+    if (!fs.existsSync(WEIGHT_SNAPSHOT_PATH)) return null;
+
+    const content = fs.readFileSync(WEIGHT_SNAPSHOT_PATH, "utf-8").trim();
+    if (!content) return null;
+
+    const entries: EngramWeightEntry[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const parsed = JSON.parse(line) as EngramWeightEntry;
+        if (typeof parsed.nodeId === "string" && typeof parsed.weight === "number") {
+          entries.push(parsed);
+        }
+      } catch {
+        // Malformed line — skip
+      }
+    }
+
+    return entries.length > 0 ? entries : null;
+  } catch (err) {
+    console.error("[persona-prior] weight snapshot read error:", err);
+    return null;
+  }
+}
+
+// ---- Heatmap Snapshot Loader (for Prior Block footer) ----
+
+const HEATMAP_SNAPSHOT_PATH = path.join(SPHERE_OUTPUT_DIR, "heatmap.json");
+
+export function loadHeatmapSnapshot(): Array<{ path: string; count: number }> | null {
+  try {
+    if (!fs.existsSync(HEATMAP_SNAPSHOT_PATH)) return null;
+    const content = fs.readFileSync(HEATMAP_SNAPSHOT_PATH, "utf-8").trim();
+    if (!content) return null;
+    const snapshot = JSON.parse(content) as { topPaths?: Array<{ path: string; count: number }> };
+    return snapshot.topPaths && snapshot.topPaths.length > 0 ? snapshot.topPaths : null;
+  } catch (err) {
+    console.error("[persona-prior] heatmap snapshot read error:", err);
+    return null;
+  }
+}
+
+// ---- Commander Counts Loader (for Prior Block footer) ----
+
+const COMMANDER_COUNTS_PATH = path.join(SPHERE_OUTPUT_DIR, "commander-counts.json");
+
+export function loadCommanderCounts(): Record<string, number> | null {
+  try {
+    if (!fs.existsSync(COMMANDER_COUNTS_PATH)) return null;
+    const content = fs.readFileSync(COMMANDER_COUNTS_PATH, "utf-8").trim();
+    if (!content) return null;
+    const counts = JSON.parse(content) as Record<string, number>;
+    const hasData = Object.values(counts).some(v => v > 0);
+    return hasData ? counts : null;
+  } catch (err) {
+    console.error("[persona-prior] commander counts read error:", err);
+    return null;
+  }
+}
+
+export function saveCommanderCounts(counts: Record<string, number>): void {
+  try {
+    fs.mkdirSync(SPHERE_OUTPUT_DIR, { recursive: true });
+    fs.writeFileSync(COMMANDER_COUNTS_PATH, JSON.stringify(counts) + "\n");
+  } catch (err) {
+    console.error("[persona-prior] commander counts write error:", err);
+  }
+}
+
+// ---- Summarizers (for PriorResult) ----
+
+export function summarizeSessionArc(points: SessionPointWithGap[]): SessionArcSummary {
+  const count = points.length;
+  const durationMs = count > 0 ? points[count - 1].point.t - points[0].point.t : 0;
+
+  // Find peak signal
+  let peakSignal: string | undefined;
+  let peakIntensity = 0;
+  let positiveCount = 0;
+  let negativeCount = 0;
+
+  for (const { point } of points) {
+    if (point.intensity > peakIntensity) {
+      peakIntensity = point.intensity;
+      peakSignal = point.label;
+    }
+    if (point.valence === 1) positiveCount++;
+    if (point.valence === -1) negativeCount++;
+  }
+
+  const total = positiveCount + negativeCount;
+  const valenceBalance = total > 0 ? (positiveCount - negativeCount) / total : 0;
+
+  return { pointCount: count, durationMs, peakSignal, peakIntensity, valenceBalance };
+}
+
+export function summarizeWeights(entries: EngramWeightEntry[]): WeightSummary {
+  // Top 5 by weight descending
+  const sorted = [...entries].sort((a, b) => b.weight - a.weight);
+  const topNodes = sorted.slice(0, 5).map(e => ({
+    nodeId: e.nodeId,
+    weight: e.weight,
+    summary: e.summary,
+  }));
+
+  return { nodeCount: entries.length, topNodes };
+}
+
+// ---- Prior Block Builder v2 (AI Native Format) ----
+
+/**
+ * Build a Prior Block — compact JSON array for AI consumption.
+ *
+ * Three-part structure separated by ["---"]:
+ *   Header (purpose)  → session duration, valence, initial emotion state
+ *   Arc    (journey)  → time-series with per-axis deltas + agentState + engram links
+ *   Footer (outcome)  → final emotion, stats, agentState distribution, engram weights
+ *
+ * Design: docs/PERSONA_LOADING_SYSTEM.md — AI Native Prior Format v2
+ */
+
+const PRIOR_BLOCK_MAX_POINTS = 200;
+const EMOTION_AXES = ["frustration", "seeking", "confidence", "fatigue", "flow"] as const;
+const AGENT_STATES: AgentState[] = ["stuck", "exploring", "deep_work", "idle", "delegating"];
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+type PriorHeader = ["H", number, number, number, number, number, number, number, string];
+type PriorSeparator = ["---"];
+type PriorArcPoint = ["A", number, number, string, number, number, number, number, number, number, string | null];
+type PriorFooter = ["F", number[], number[], Array<[string, number]>, Array<[string, number]>, Array<[string, number]>, Array<[string, number]>];
+type PriorElement = PriorHeader | PriorSeparator | PriorArcPoint | PriorFooter;
+type PriorBlock = PriorElement[];
+
+export interface PriorBlockContext {
+  hotPaths?: Array<{ path: string; count: number }>;
+  methodCounts?: Record<string, number>;
+}
+
+export function buildPriorBlock(
+  points: SessionPointWithGap[],
+  weights: EngramWeightEntry[] | null,
+  _priorResult: PriorResult,
+  ctx?: PriorBlockContext,
+): PriorBlock | null {
+  if (points.length === 0) return null;
+
+  // --- Header ---
+  const durationMs = points[points.length - 1].point.t - points[0].point.t;
+
+  let positiveCount = 0;
+  let negativeCount = 0;
+  for (const { point } of points) {
+    if (point.valence === 1) positiveCount++;
+    if (point.valence === -1) negativeCount++;
+  }
+  const total = positiveCount + negativeCount;
+  const valenceBalance = total > 0 ? r2((positiveCount - negativeCount) / total) : 0;
+
+  // Initial emotion: from first point's emotion vector, or zeros if unavailable
+  const firstEmotion = points[0].point.emotion;
+  const initEmo = firstEmotion
+    ? EMOTION_AXES.map(a => r2(firstEmotion[a]))
+    : [0, 0, 0, 0, 0];
+
+  // State flow: macro trajectory of agentState transitions (contrastive pair)
+  const stateFlow = deriveStateFlow(points);
+
+  const header: PriorHeader = ["H", durationMs, valenceBalance, ...initEmo as [number, number, number, number, number], stateFlow];
+
+  // --- Arc ---
+  let sampled = points;
+  if (points.length > PRIOR_BLOCK_MAX_POINTS) {
+    sampled = samplePoints(points, PRIOR_BLOCK_MAX_POINTS);
+  }
+
+  const arc: PriorArcPoint[] = [];
+  let prevEmotion: EmotionVector | null = null;
+
+  for (const { point, gapMs } of sampled) {
+    const state = point.agentState ?? "idle";
+    const emo = point.emotion;
+
+    // First point: absolute emotion values. Subsequent: delta from previous.
+    let emoValues: number[];
+    if (!prevEmotion || !emo) {
+      emoValues = emo ? EMOTION_AXES.map(a => r2(emo[a])) : [0, 0, 0, 0, 0];
+    } else {
+      emoValues = EMOTION_AXES.map(a => r2(emo[a] - prevEmotion![a]));
+    }
+
+    if (emo) prevEmotion = emo;
+
+    arc.push([
+      "A",
+      point.t,
+      gapMs,
+      state,
+      r2(point.intensity),
+      ...emoValues as [number, number, number, number, number],
+      point.link,
+    ]);
+  }
+
+  // --- Footer ---
+  const footer = buildFooter(points, weights, ctx);
+
+  return [header, ["---"], ...arc, ["---"], footer];
+}
+
+/**
+ * Build Footer: final emotion, stats, agentState distribution, engram weights,
+ * hot paths (heatmap), method ranking (commander).
+ */
+function buildFooter(
+  points: SessionPointWithGap[],
+  weights: EngramWeightEntry[] | null,
+  ctx?: PriorBlockContext,
+): PriorFooter {
+  const last = points[points.length - 1].point;
+
+  // F[0]: final emotion
+  const finalEmo = last.emotion
+    ? EMOTION_AXES.map(a => r2(last.emotion![a]))
+    : [0, 0, 0, 0, 0];
+
+  // F[1]: stats [totalEvents, activeMs, arcPoints, maxIntensity, meanIntensity]
+  const durationMs = points[points.length - 1].point.t - points[0].point.t;
+  let maxI = 0;
+  let sumI = 0;
+  for (const { point } of points) {
+    if (point.intensity > maxI) maxI = point.intensity;
+    sumI += point.intensity;
+  }
+  const stats = [
+    points.length,
+    durationMs,
+    points.length,
+    r2(maxI),
+    r2(sumI / points.length),
+  ];
+
+  // F[2]: agentState ratio — ranked descending, zero-ratio states omitted (negative anchor)
+  const stateCounts = new Map<string, number>();
+  for (const s of AGENT_STATES) stateCounts.set(s, 0);
+  for (const { point } of points) {
+    const s = point.agentState ?? "idle";
+    stateCounts.set(s, (stateCounts.get(s) ?? 0) + 1);
+  }
+  const stateRatio: Array<[string, number]> = [];
+  for (const s of AGENT_STATES) {
+    const ratio = r2((stateCounts.get(s) ?? 0) / points.length);
+    if (ratio > 0) stateRatio.push([s, ratio]);
+  }
+  stateRatio.sort((a, b) => b[1] - a[1]);
+
+  // F[3]: engram top weights
+  let engramTop: Array<[string, number]> = [];
+  if (weights && weights.length > 0) {
+    const sorted = [...weights].sort((a, b) => b.weight - a.weight);
+    engramTop = sorted.slice(0, 5).map(e => [e.summary, r2(e.weight)]);
+  }
+
+  // F[4]: hot paths — top file paths by access frequency (from heatmap)
+  let hotPaths: Array<[string, number]> = [];
+  if (ctx?.hotPaths && ctx.hotPaths.length > 0) {
+    hotPaths = ctx.hotPaths.slice(0, 10).map(p => [p.path, p.count]);
+  }
+
+  // F[5]: method ranking — action types ranked by count (from commander session snapshot)
+  let methodRank: Array<[string, number]> = [];
+  if (ctx?.methodCounts) {
+    const entries = Object.entries(ctx.methodCounts)
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+    methodRank = entries.map(([action, count]) => [action, count]);
+  }
+
+  return ["F", finalEmo, stats, stateRatio, engramTop, hotPaths, methodRank];
+}
+
+/**
+ * Sample points for large sessions.
+ * Strategy: keep high-intensity + delta-change points + even spacing.
+ */
+function samplePoints(
+  points: SessionPointWithGap[],
+  maxPoints: number,
+): SessionPointWithGap[] {
+  if (points.length <= maxPoints) return points;
+
+  const kept = new Set<number>([0, points.length - 1]);
+
+  // Score each point: intensity + agentState change bonus + emotion delta magnitude
+  const scores: Array<{ idx: number; score: number }> = [];
+  for (let i = 1; i < points.length - 1; i++) {
+    let score = points[i].point.intensity;
+
+    // agentState change bonus
+    if (points[i].point.agentState !== points[i - 1].point.agentState) {
+      score += 0.4;
+    }
+
+    // Emotion delta magnitude bonus (if available)
+    const curr = points[i].point.emotion;
+    const prev = points[i - 1].point.emotion;
+    if (curr && prev) {
+      let deltaMag = 0;
+      for (const a of EMOTION_AXES) deltaMag += Math.abs(curr[a] - prev[a]);
+      score += deltaMag * 0.5;
+    }
+
+    scores.push({ idx: i, score });
+  }
+
+  // Take top scorers (60%)
+  const highDelta = Math.floor(maxPoints * 0.6);
+  scores.sort((a, b) => b.score - a.score);
+  for (let i = 0; i < Math.min(highDelta, scores.length); i++) {
+    kept.add(scores[i].idx);
+  }
+
+  // Fill remaining with even spacing
+  const remaining = maxPoints - kept.size;
+  if (remaining > 0) {
+    const step = points.length / remaining;
+    for (let i = 0; i < remaining; i++) {
+      kept.add(Math.round(i * step));
+    }
+  }
+
+  const sortedIndices = [...kept].sort((a, b) => a - b).slice(0, maxPoints);
+  return sortedIndices.map(i => points[i]);
+}
+
+/** Manifest: declares data intent before schema. */
+const PRIOR_BLOCK_MANIFEST =
+  "[prior-block: prior session experience. use as context for continuity.]";
+
+/** Derive macro state trajectory: deduplicated consecutive agentState transitions. */
+function deriveStateFlow(points: SessionPointWithGap[]): string {
+  const states: string[] = [];
+  let prev = "";
+  for (const { point } of points) {
+    const s = point.agentState ?? "idle";
+    if (s !== prev) {
+      states.push(s);
+      prev = s;
+    }
+  }
+  return states.join("→");
+}
+
+/** Inline schema v2 — travels with the data. */
+const PRIOR_BLOCK_SCHEMA =
+  "[schema: " +
+  "H=header(durationMs,valenceBalance,frust,seek,conf,fatigue,flow,stateFlow) " +
+  "A=arc(t,gapMs,agentState,intensity,dFrust,dSeek,dConf,dFatig,dFlow,engramId?) " +
+  "F=footer(finalEmotion[5],stats[events,activeMs,arcPts,maxI,meanI],stateRatio[...[state,ratio]desc],engramTop[...[summary,weight]],hotPaths[...[path,count]desc],methodRank[...[action,count]desc]) " +
+  "---=separator]";
+
+/**
+ * Format Prior Block as a compact string for tool response embedding.
+ * Includes inline schema header so the receiving agent can interpret the data.
+ */
+export function formatPriorBlock(block: PriorBlock): string {
+  return `${PRIOR_BLOCK_MANIFEST}\n${PRIOR_BLOCK_SCHEMA}\n${JSON.stringify(block)}`;
 }

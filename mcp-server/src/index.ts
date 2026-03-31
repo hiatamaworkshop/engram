@@ -31,8 +31,9 @@ import {
   checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat } from "./hot-memo.js";
-import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink } from "./receptor/index.js";
-import { startReceptorHttp } from "./receptor/http.js";
+import { formatRecallDcp, formatScanDcp } from "./dcp-format.js";
+import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
+import { startReceptorHttp, isReceptorPrimary, stopReceptorHttp } from "./receptor/http.js";
 import { closeAllMcpClients } from "./receptor/mcp-executor.js";
 
 const ctx = loadContext();
@@ -57,8 +58,9 @@ server.tool(
     limit: z.number().min(1).max(30).default(5).describe("Max results to return"),
     minWeight: z.number().optional().describe("Only return nodes with weight >= this value (higher = more trusted)"),
     status: z.enum(["recent", "fixed"]).optional().describe("Only return nodes with this status"),
+    queryType: z.enum(["human", "agent"]).optional().describe("DCP: 'agent' returns native payload only (compact), 'human' returns full natural language. Default: human."),
   },
-  async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status }) => {
+  async ({ query, entryId, crossProject, projectId: explicitProjectId, limit, minWeight, status, queryType }) => {
     const health = await checkHealth(ctx);
     if (!health.ok) {
       return {
@@ -96,7 +98,7 @@ server.tool(
         };
       }
 
-      const response = await recallNodes(ctx, query, projectId, limit, minWeight, status);
+      const response = await recallNodes(ctx, query, projectId, limit, minWeight, status, queryType);
 
       if (response.results.length === 0) {
         const scope = projectId ? ` in project:${projectId}` : "";
@@ -115,10 +117,22 @@ server.tool(
         };
       }
 
+      // Record engram weights for persona loading weight distribution snapshot
+      recordEngramWeights(response.results, "pull");
+
+      // DCP compact output for agent consumers
+      if (queryType === "agent") {
+        return {
+          content: [{ type: "text", text: formatRecallDcp(response.results) + memoFormat("pull") }],
+        };
+      }
+
       const formatted = response.results.map((r, i) => {
         return [
           `[${i + 1}] ${r.summary}`,
           r.content ? `    ${r.content}` : null,
+          r.native ? `    native: ${JSON.stringify(r.native)}` : null,
+          r.schema ? `    schema: ${r.schema}` : null,
           `    hits=${r.hitCount} weight=${r.weight} status=${r.status} relevance=${r.relevance.toFixed(3)}`,
           `    tags: ${r.tags.join(", ") || "(none)"}`,
           `    id: ${r.id}`,
@@ -150,11 +164,15 @@ const nodeSeedSchema = z.object({
   summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
   tags: z.array(z.string()).min(0).max(5).default([]).describe("0-5 lowercase hyphenated tags. Auto-generated from summary if empty."),
   content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
+  // DCP native fields (recommended — see DATA_COST_PROTOCOL.md)
+  native: z.array(z.unknown()).optional().describe("DCP compact positional array. Recommended for AI-to-AI efficiency. e.g. [\"fix\",\"docker\",\"port conflict\",0.9]"),
+  schema: z.string().optional().describe("DCP schema ID. e.g. \"knowledge:v1\". Required when native is provided."),
+  index: z.string().optional().describe("Human-readable restore key for search + reverse translation. e.g. \"docker port-conflict fix\""),
 });
 
 server.tool(
   "engram_push",
-  "Submit 1-8 knowledge seeds. 1 seed = 1 topic. See CLAUDE.md for push guidelines.",
+  `Submit 1-8 knowledge seeds. 1 seed = 1 topic. DCP native format recommended (include native + schema fields). Primary schema: knowledge:v1 → [action:string(add|replace|remove|fix|discover|configure|gotcha), domain:string, detail:string|object, confidence:number(0-1)]. Example: native:["fix","docker","port 3100 conflict",0.9], schema:"knowledge:v1". Other schemas available via gateway GET /schemas.`,
   {
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
@@ -192,7 +210,20 @@ server.tool(
 
       memoAdd(capsuleSeeds as Array<{ summary: string; tags?: string[] }>);
 
-      const line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
+      // Link session points to this push event
+      setLastPushNodeId(resolvedSessionId);
+
+      let line = `Ingest ${result.status}: ${result.nodesIngested ?? 0} nodes stored for project:${result.projectId}.`;
+
+      // Surface DCP warnings from gateway validator
+      if (result.dcpWarnings?.length) {
+        line += `\n⚠ DCP: ${result.dcpWarnings.join(" | ")}`;
+      }
+
+      // Interactive Schema: embed hint in response for agent's next-turn context
+      if (result.schemaHint) {
+        line += `\n${result.schemaHint}`;
+      }
 
       return {
         content: [{ type: "text", text: line + memoFormat("push") }],
@@ -228,7 +259,8 @@ server.tool(
     try {
       const status = await getStatus(ctx, projectId);
 
-      const lines: string[] = [`Engram Status (user: ${ctx.userId})`];
+      const instanceMode = isReceptorPrimary() ? "primary" : "secondary (receptor disabled)";
+      const lines: string[] = [`Engram Status (user: ${ctx.userId}, instance: ${instanceMode})`];
 
       if (status.store) {
         const s = status.store;
@@ -333,8 +365,9 @@ server.tool(
     status: z.enum(["recent", "fixed"]).optional().describe("Filter by node status"),
     limit: z.number().min(1).max(30).default(10).describe("Max entries to return"),
     sort: z.enum(["recent", "weight"]).optional().describe("Sort order: 'recent' (newest first) or 'weight' (heaviest first)"),
+    format: z.enum(["human", "dcp"]).optional().describe("Output format: 'dcp' returns compact positional arrays. Default: human."),
   },
-  async ({ projectId, tag, status, limit, sort }) => {
+  async ({ projectId, tag, status, limit, sort, format }) => {
     const health = await checkHealth(ctx);
     if (!health.ok) {
       return {
@@ -358,6 +391,13 @@ server.tool(
         const filters = [tag && `tag=${tag}`, status && `status=${status}`].filter(Boolean).join(", ");
         return {
           content: [{ type: "text", text: `No entries for project:${resolvedProjectId}${filters ? ` (${filters})` : ""}.\n\nHint: No knowledge stored yet. Use engram_push to add knowledge.` }],
+        };
+      }
+
+      // DCP compact output
+      if (format === "dcp") {
+        return {
+          content: [{ type: "text", text: formatScanDcp(result.entries) + memoFormat("ls") }],
         };
       }
 
@@ -391,13 +431,33 @@ server.tool(
   {
     action: z.enum(["start", "stop", "status"]).optional()
       .describe("start=begin monitoring, stop=end+summary, omit or status=show current state"),
+    learn: z.boolean().optional()
+      .describe("Enable learn mode — auto-calibrate receptor sensitivity from session fire patterns. Only applies on start."),
+    persona: z.boolean().optional()
+      .describe("Enable persona loading — apply prior session's Persona (body calibration) on start, export on stop. Only applies on start."),
+    priorBlock: z.boolean().optional()
+      .describe("Enable Prior Block — inject prior session's experience arc into start response, include in Experience Package on stop. Only applies on start."),
     event: z.object({
       tool_name: z.string(),
       tool_input: z.record(z.unknown()).optional(),
       exit_code: z.number().optional(),
     }).optional().describe("[Internal] Hook event from Claude Code. Do not set manually."),
   },
-  async ({ action, event }) => {
+  async ({ action, learn, persona, priorBlock, event }) => {
+    // Secondary instance: receptor is managed by the primary instance
+    if (!isReceptorPrimary()) {
+      return {
+        content: [{
+          type: "text",
+          text: "Receptor unavailable: this is a secondary engram instance.\n" +
+            "Another instance already owns the receptor (port " +
+            (process.env.RECEPTOR_PORT ?? "3101") + ").\n\n" +
+            "Functional: engram_pull, engram_push, engram_flag, engram_ls, engram_status\n" +
+            "Disabled:   engram_watch (receptor, session points, weight snapshots, persona)",
+        }],
+      };
+    }
+
     // Ingest event if provided
     if (event) {
       ingestEvent(event);
@@ -405,7 +465,8 @@ server.tool(
 
     // Start/stop
     if (action === "start" || action === "stop") {
-      const result = setWatch(action === "start");
+      const isStart = action === "start";
+      const result = setWatch(isStart, isStart ? { learn, persona, priorBlock } : undefined);
       return {
         content: [{ type: "text", text: result.message }],
       };
@@ -483,10 +544,19 @@ async function main() {
   console.error(`[engram] MCP v2 running (user=${ctx.userId}, gateway=${ctx.gatewayUrl}, project=${ctx.defaultProjectId ?? "(auto-detect)"})`);
 
   // Start receptor HTTP listener (receives PostToolUse hook events)
-  startReceptorHttp();
+  // If port is already taken, another instance owns the receptor — this one becomes secondary.
+  const { primary } = await startReceptorHttp();
 
-  // Auto-start receptor watch
-  setWatch(true);
+  if (primary) {
+    // Auto-start receptor watch (only primary instance)
+    setWatch(true, { learn: true, persona: true, priorBlock: true });
+  } else {
+    console.error(
+      `[engram] Secondary instance: MCP tools (pull/push/flag/ls/status) are fully functional. ` +
+      `Receptor watch, session points, weight snapshots, and persona loading are DISABLED ` +
+      `(managed by the primary instance on port ${process.env.RECEPTOR_PORT ?? "3101"}).`
+    );
+  }
 
   // Register executors — receptor auto queue dispatches via service registry
   registerExecutor("engram_pull", {
@@ -503,6 +573,9 @@ async function main() {
       const response = await recallNodes(ctx, query, projectId, 3);
 
       if (response.results.length > 0) {
+        // Record weights from auto pull for persona loading weight snapshot
+        recordEngramWeights(response.results, "auto_pull");
+
         const lines = response.results.map((r, i) =>
           `  ${i + 1}. ${r.summary} (w=${r.weight}, hits=${r.hitCount})`
         );
@@ -564,6 +637,12 @@ async function main() {
 
   // Cleanup on process exit
   const cleanup = () => {
+    // Stop receptor watch — triggers persona finalize, session-point flush, weight snapshot
+    // Only primary instance owns the receptor; secondary skips to avoid clobbering data.
+    if (isReceptorPrimary()) {
+      setWatch(false);
+      stopReceptorHttp(); // release port + remove discovery file
+    }
     closeAllMcpClients().catch(() => {});
     if (ctx.defaultProjectId) {
       deactivateProject(ctx, ctx.defaultProjectId).catch(() => {});

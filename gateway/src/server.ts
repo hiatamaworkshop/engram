@@ -10,10 +10,14 @@ import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, get
 import type { ExpiredNodeInfo } from "./digestor.js";
 import { handleMcpRequest } from "./mcp-endpoint.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
+import { loadSchemas, getSchema, listSchemas } from "./schema-registry.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
 const startTime = Date.now();
+
+// ---- DCP Schema Registry ----
+loadSchemas();
 
 // ---- UpperLayer init (Qdrant + embedding) ----
 initUpperLayer(cfg.upperLayer).catch((err) => {
@@ -172,6 +176,25 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // GET /schemas — list all schema IDs
+  if (method === "GET" && url === "/schemas") {
+    sendJson(res, 200, { schemas: listSchemas() });
+    return;
+  }
+
+  // GET /schemas/:id — full schema definition
+  const schemaMatch = method === "GET" && url.match(/^\/schemas\/([^/?]+)/);
+  if (schemaMatch) {
+    const id = decodeURIComponent(schemaMatch[1]);
+    const schema = getSchema(id);
+    if (schema) {
+      sendJson(res, 200, schema);
+    } else {
+      sendJson(res, 404, { error: `schema not found: ${id}`, available: listSchemas() });
     }
     return;
   }

@@ -15,6 +15,10 @@ export interface RecallResult {
   weight: number;
   status: NodeStatus;
   content?: string;
+  // DCP native fields
+  native?: unknown[];
+  schema?: string;
+  index?: string;
 }
 
 export interface RecallResponse {
@@ -29,6 +33,8 @@ export interface IngestResponse {
   projectId?: string;
   nodesIngested?: number;
   merged?: number;
+  dcpWarnings?: string[];
+  schemaHint?: string;     // Interactive Schema: abbreviated or expanded hint
 }
 
 export interface StatusResponse {
@@ -63,6 +69,52 @@ export interface FeedbackResponse {
 export interface ScanResponse {
   entries: ScanEntry[];
   total: number;
+}
+
+// ---- Schema fetching (for tool descriptions) ----
+
+export interface GatewaySchema {
+  $dcp: "schema";
+  id: string;
+  description: string;
+  fields: string[];
+  fieldCount: number;
+  types: Record<string, { type: string | string[]; enum?: (string | number)[] }>;
+  examples?: unknown[][];
+}
+
+export async function fetchSchemas(gatewayUrl: string): Promise<GatewaySchema[]> {
+  try {
+    const listRes = await fetch(`${gatewayUrl}/schemas`);
+    if (!listRes.ok) return [];
+    const { schemas } = (await listRes.json()) as { schemas: string[] };
+
+    const results: GatewaySchema[] = [];
+    for (const id of schemas) {
+      try {
+        const res = await fetch(`${gatewayUrl}/schemas/${encodeURIComponent(id)}`);
+        if (res.ok) results.push((await res.json()) as GatewaySchema);
+      } catch { /* skip */ }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export function formatSchemaHint(schemas: GatewaySchema[]): string {
+  if (schemas.length === 0) return "";
+  const lines = schemas.map((s) => {
+    const fieldDefs = s.fields.map((f) => {
+      const t = s.types[f];
+      if (!t) return f;
+      const typeStr = Array.isArray(t.type) ? t.type.join("|") : t.type;
+      const enumStr = t.enum ? `(${t.enum.join("|")})` : "";
+      return `${f}:${typeStr}${enumStr}`;
+    });
+    return `  ${s.id} → [${fieldDefs.join(", ")}]`;
+  });
+  return `\nDCP schemas (use with native + schema fields):\n${lines.join("\n")}`;
 }
 
 // ---- Health (cached) ----
@@ -124,10 +176,12 @@ export async function recallNodes(
   limit = 10,
   minWeight?: number,
   status?: string,
+  queryType?: "human" | "agent",
 ): Promise<RecallResponse> {
   const body: Record<string, unknown> = { query, projectId, limit };
   if (minWeight !== undefined) body.minWeight = minWeight;
   if (status) body.status = status;
+  if (queryType) body.queryType = queryType;
   const res = await fetch(`${ctx.gatewayUrl}/recall`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

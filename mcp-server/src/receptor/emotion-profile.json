@@ -22,7 +22,9 @@
       "search.found":        { "seeking": 0.05 },
       "file_read":           { "seeking": -0.02 },
       "memory_read":         { "seeking": -0.02 },
-      "memory_write":        { "confidence": 0.03 }
+      "memory_write":        { "confidence": 0.03 },
+      "user_prompt":         { "fatigue": -0.02 },
+      "user_prompt.long":    { "seeking": 0.02, "confidence": 0.01 }
     },
     "pattern": {
       "trial_error":     { "frustration": 0.08 },

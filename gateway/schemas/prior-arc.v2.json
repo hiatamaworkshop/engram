@@ -1,0 +1,24 @@
+{
+  "$dcp": "schema",
+  "id": "prior-arc:v2",
+  "description": "Prior Block arc point — session experience time series with per-axis deltas",
+  "fields": ["type", "t", "gapMs", "agentState", "intensity", "dFrust", "dSeek", "dConf", "dFatig", "dFlow", "engramId"],
+  "fieldCount": 11,
+  "types": {
+    "type": { "type": "string", "enum": ["A"] },
+    "t": { "type": "number", "description": "cumulative work time ms" },
+    "gapMs": { "type": "number", "description": "gap since previous point" },
+    "agentState": { "type": "string", "enum": ["deep_work", "exploring", "stuck", "idle", "delegating"] },
+    "intensity": { "type": "number", "min": 0, "max": 1 },
+    "dFrust": { "type": "number" },
+    "dSeek": { "type": "number" },
+    "dConf": { "type": "number" },
+    "dFatig": { "type": "number" },
+    "dFlow": { "type": "number" },
+    "engramId": { "type": ["string", "null"] }
+  },
+  "examples": [
+    ["A", 1200, 300, "stuck", 0.42, 0.3, -0.1, 0.05, -0.2, 0.0, null],
+    ["A", 2400, 1200, "exploring", 0.28, -0.05, 0.35, 0.1, -0.1, 0.0, "abc123"]
+  ]
+}

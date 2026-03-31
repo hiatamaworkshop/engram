@@ -1,52 +1,59 @@
 ## Engram — Cross-session Memory
 
-You have engram MCP tools for persistent knowledge across sessions.
-Tool specifications (parameter formats, limits, tag rules) are defined in each tool's description (SSOT).
+Tool specs live in each tool's MCP description (SSOT). Architecture and setup: see README.md.
+This file is a DCP-native instruction set for LLM consumers. Append to ~/.claude/CLAUDE.md.
 
-### Tools (quick reference)
-| Tool | Alias | Purpose |
-|------|-------|---------|
-| `engram_pull` | "engram pull", "recall", "remember" | Semantic search or fetch by ID |
-| `engram_push` | "engram push", "memo", "remember this" | Submit 1-8 knowledge seeds |
-| `engram_flag` | "engram flag", "flag this", "outdated" | Negative weight signal |
-| `engram_ls` | "engram ls", "list" | List by tag/status (no embedding cost) |
-| `engram_status` | "engram status", "store health" | Node counts, project list, health |
+[engram: instruction set for engram MCP tools. consume as structured data.]
+[schema: def(name,spec) when(trigger,action,...params) never(action,...reason) seq(...steps) rank(...items) note(text)]
+[
+  ["def","engram_pull",{"triggers":["recall","remember"],"type":"search|fetch-by-id"}],
+  ["def","engram_push",{"triggers":["memo","remember-this"],"type":"submit","max":8}],
+  ["def","engram_flag",{"triggers":["flag","outdated"],"type":"negative-signal"}],
+  ["def","engram_ls",{"triggers":["list"],"type":"list-by-tag","note":"no-embedding-cost"}],
+  ["def","engram_status",{"triggers":["status","health"],"type":"node-counts+project-list"}],
+  ["def","engram_watch",{"triggers":["watch","receptor"],"type":"receptor-control"}],
 
-### Session Start
-1. `engram_status()` — check store health, see existing projects, determine projectId
-2. `engram_pull({ query: "<current task>", projectId })` — retrieve prior knowledge
-3. Use recalled knowledge to skip redundant searches
+  ["when","any-engram-call","pass","projectId","explicit"],
+  ["seq",
+    ["call","engram_status",{},"→projectId"],
+    ["call","engram_pull",{"query":"$task","projectId":"$projectId"}],
+    ["use","recalled-knowledge","skip-redundant-search"]],
+  ["never","create-projectId","if-exists-match"],
+  ["when","new-project","derive-projectId","from:repo-name|folder-name"],
+  ["when","no-project-context","use-projectId","general"],
+  ["never","projectId-from-username-or-os"],
+  ["when","new-project","engram_push",{"tags":["meta"],"include":["summary","stack","purpose"]}],
+  ["when","cross-stack-overlap","set","crossProject",true],
 
-### Continuous Push (primary strategy)
-- Push early and often — don't wait for session end
-- If recall returns outdated or wrong info: `engram_flag` immediately
+  ["when","milestone","engram_push","immediate"],
+  ["when","recall-outdated","engram_flag"],
+  ["rank",
+    ["error-resolved","immediate",["root-cause","fix","workaround","env-hacks","tool-gotchas","build-errors"]],
+    ["environment","high",["ports","docker","config-paths","startup"]],
+    ["milestone","normal",["feature-complete","design-why","file-paths"]],
+    ["manual","on-request","user-intent:remember|memo"]],
+  ["when","push","include",["env-gotchas","file-paths","grep-targets","build-cmds","error-fixes","design-why-only"]],
+  ["never","push-full-docs","put-in-docs/-push-pointer"],
+  ["never","push-in-progress-state","use-auto-memory"],
+  ["never","push-obvious-info"],
 
-#### Push priority (top = most valuable, push IMMEDIATELY)
-1. **`error-resolved`**: Push right after fixing an error. Root cause + fix + workaround.
-   - Environment hacks (bash escaping, Docker networking, port conflicts)
-   - Tool-specific gotchas (shell quirks, build tool edge cases)
-   - Build/config errors: root cause and fix steps
-2. **`environment`**: Ports, Docker setup, config file paths, startup procedures
-3. **`milestone`**: Feature completion, design decisions ("why"), file path discovery
-4. **`manual`**: User says "remember" / "memo" / "write report"
+  ["when","push","1-seed-1-topic"],
+  ["def","summary",{"chars":[10,150],"style":"keyword-rich","note":"only-embedded-field"}],
+  ["def","content",{"optional":true,"include":["root-cause","rationale","details"]}],
+  ["def","tags",{"layer1":["howto","where","why","gotcha"],"layer2":"domain-specific"}],
+  ["never","tag-with-projectId","redundant:scan-filters"],
+  ["never","generic-tags","use-layer-system"],
 
-#### What to push (concrete)
-- Environment gotchas and workarounds (**top priority** — more valuable than design notes)
-- File paths, grep targets, build commands
-- Error root causes and fix steps
-- Design decisions — the "why" only (keep short, don't push full docs)
+  ["def","fixed-nodes",{"creation":"organic-promotion-only","note":"pollution-resistance"}],
+  ["when","drift-sensed","engram_pull",{"status":"fixed"}],
+  ["when","contradiction-with-fixed","engram_flag","incorrect-node"],
 
-#### What NOT to push
-- Full design documents (put in docs/, push only a pointer to engram)
-- In-progress work state (session-specific, not cross-session)
-- Obvious info ("this project uses TypeScript")
+  ["when","user-intent:save","engram_push"],
+  ["when","user-intent:recall","engram_pull"],
+  ["note","detect-intent-any-language:en|ja|abbrev"],
 
-### projectId
-- Call `engram_status()` first to see existing projects
-- Match to an existing projectId — do NOT create duplicates
-- Outside any project (home directory): use `"general"`
-- For new projects: push a meta-tagged node with project summary and tech stack
+  ["note","continuous-push-is-primary-safety-net"],
 
-### Feedback
-- If recall returns outdated or wrong info: `engram_flag` immediately
-- Do NOT flag for positive feedback — recall hits increase weight automatically
+  ["def","hotmemo:v1",{"fields":4,"ref":"GET /schemas/hotmemo:v1",
+    "note":"abbreviated $S in tool responses. layers: quality|session|trend|meta|receptor|subsystem|pre-neuron"}]
+]

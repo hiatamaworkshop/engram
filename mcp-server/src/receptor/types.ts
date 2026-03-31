@@ -13,7 +13,8 @@ export type NormalizedAction =
   | "shell_exec"
   | "delegation"
   | "memory_read"
-  | "memory_write";
+  | "memory_write"
+  | "user_prompt";
 
 export interface NormalizedEvent {
   eventId: number;
@@ -21,6 +22,8 @@ export interface NormalizedEvent {
   path?: string;
   result?: "success" | "failure" | "empty";
   ts: number;
+  promptLength?: number;     // user_prompt only: character count
+  turnInterval?: number;     // user_prompt only: ms since last user prompt
 }
 
 // ---- Emotion vector (5-axis) ----
@@ -79,6 +82,32 @@ export interface FireSignal {
   emotion: Readonly<EmotionVector>;
   agentState: AgentState;
   pattern: PatternKind;
+}
+
+// ---- Session point (persona loading — experience trace) ----
+
+export interface SessionPoint {
+  t: number;                    // cumulative work time since session start (ms)
+  label: string;                // semantic label from FireSignalKind
+  intensity: number;            // 0.0–1.0 (clamped)
+  valence: 1 | 0 | -1;         // good / neutral / bad
+  freq: number;                 // recent activation frequency (normalized 0.0–1.0)
+  link: string | null;          // engram node ID | null
+  engramWeight?: number;        // weight of linked engram node at snapshot time
+  emotion?: EmotionVector;      // full 5-axis emotion state at fire time
+  agentState?: AgentState;      // behavioral context at fire time
+}
+
+// ---- Engram weight snapshot (knowledge weight distribution at session time) ----
+// Tracks engram node weights referenced during a session.
+// For persona showcase: "what knowledge mattered, and how much" defines the craftsman's world.
+
+export interface EngramWeightEntry {
+  nodeId: string;               // engram node ID
+  weight: number;               // weight at observation time
+  summary: string;              // human index (minimal, for identification)
+  ts: number;                   // when this weight was observed
+  source: "pull" | "auto_pull"; // how this node was referenced
 }
 
 // ---- Receptor state ----

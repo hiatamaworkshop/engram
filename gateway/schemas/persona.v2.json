@@ -1,0 +1,23 @@
+{
+  "$dcp": "schema",
+  "id": "persona:v2",
+  "description": "Persona distilled lens — behavioral fingerprint for cold-start calibration",
+  "fields": ["model", "profileHash", "dominantAxis", "meanEmotion", "fieldAdj", "learnedDelta", "patternDist", "stateDist", "elapsedMs", "snapshotCount", "confidenceAvg"],
+  "fieldCount": 11,
+  "types": {
+    "model": { "type": "string" },
+    "profileHash": { "type": "string" },
+    "dominantAxis": { "type": "string", "enum": ["frustration", "seeking", "confidence", "fatigue", "flow"] },
+    "meanEmotion": { "type": "array", "items": "number", "length": 5 },
+    "fieldAdj": { "type": "array", "items": "number", "length": 5 },
+    "learnedDelta": { "type": "object" },
+    "patternDist": { "type": "object" },
+    "stateDist": { "type": "object" },
+    "elapsedMs": { "type": "number" },
+    "snapshotCount": { "type": "number" },
+    "confidenceAvg": { "type": "number" }
+  },
+  "examples": [
+    ["claude-opus-4-6", "a3f8...", "seeking", [0.08, 0.35, 0.45, 0.12, 0.60], [0.0, 0.1, 0.0, -0.05, 0.15], {"file_edit": 0.1}, {"exploration": 0.4, "implementation": 0.35}, {"exploring": 0.5, "deep_work": 0.3}, 3420000, 12, 0.65]
+  ]
+}

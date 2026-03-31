@@ -1,4 +1,4 @@
-import type { RecallRequest, RecallResponse } from "../types.js";
+import type { RecallRequest, RecallResponse, RecallResult } from "../types.js";
 import { searchNodes, getNodeById } from "../upper-layer/index.js";
 
 /**
@@ -11,14 +11,14 @@ import { searchNodes, getNodeById } from "../upper-layer/index.js";
  * hitCount++ happens inside UpperLayer (fire-and-forget).
  */
 export async function handleRecall(body: RecallRequest): Promise<RecallResponse> {
-  const { query, entryId, projectId, limit = 10, minWeight, status } = body;
+  const { query, entryId, projectId, limit = 10, minWeight, status, queryType } = body;
 
   // ---- sense mode: single node by ID ----
   if (entryId) {
     try {
       const node = await getNodeById(entryId);
       if (node) {
-        return { results: [node], source: "engram" };
+        return { results: [maybeStripForAgent(node, queryType)], source: "engram" };
       }
     } catch (err) {
       console.warn(`[recall] getById failed: ${(err as Error).message}`);
@@ -33,7 +33,10 @@ export async function handleRecall(body: RecallRequest): Promise<RecallResponse>
 
   try {
     const results = await searchNodes({ query, projectId, limit, minWeight, status });
-    return { results, source: "engram" };
+    return {
+      results: results.map((r) => maybeStripForAgent(r, queryType)),
+      source: "engram",
+    };
   } catch (err) {
     return {
       results: [],
@@ -41,4 +44,22 @@ export async function handleRecall(body: RecallRequest): Promise<RecallResponse>
       message: `Recall failed: ${(err as Error).message}`,
     };
   }
+}
+
+/**
+ * For queryType "agent": if native exists, strip summary/content to reduce token cost.
+ * For "human" or unset: return full result (backward compatible).
+ */
+function maybeStripForAgent(
+  result: RecallResult,
+  queryType?: "human" | "agent",
+): RecallResult {
+  if (queryType !== "agent" || !result.native) return result;
+
+  // Agent mode with native: return native + index, omit verbose natural language
+  return {
+    ...result,
+    summary: result.index ?? result.summary,  // prefer index as compact summary
+    content: undefined,                        // strip natural language content
+  };
 }

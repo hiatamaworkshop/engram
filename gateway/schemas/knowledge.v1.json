@@ -1,0 +1,19 @@
+{
+  "$dcp": "schema",
+  "id": "knowledge:v1",
+  "description": "Engram knowledge node — the primary unit stored in Qdrant",
+  "fields": ["action", "domain", "detail", "confidence"],
+  "fieldCount": 4,
+  "types": {
+    "action": { "type": "string", "enum": ["add", "replace", "remove", "fix", "discover", "configure", "gotcha"] },
+    "domain": { "type": "string" },
+    "detail": { "type": ["string", "object"] },
+    "confidence": { "type": "number", "min": 0, "max": 1 }
+  },
+  "examples": [
+    ["fix", "docker", "port 3100 conflict with nginx", 0.9],
+    ["replace", "auth", {"from": "jwt", "to": "session"}, 0.94],
+    ["gotcha", "bash", "escape single quotes in heredoc", 0.85],
+    ["discover", "receptor", "emotion-profile.json path", 0.7]
+  ]
+}

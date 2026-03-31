@@ -18,11 +18,14 @@ import {
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
 import {
-  onFireSignals, formatRecommendations, drainRecommendations, drainAutoQueue,
+  onFireSignals, formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue,
   type ScoredMethod,
 } from "./passive.js";
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 import { formatPreNeuronStatus } from "../pre-neuron/index.js";
+import { stopReceptorHttp } from "./http.js";
+import { applyLearnedDelta } from "./learn.js";
+import { buildPackage, savePackage, loadPackage } from "./experience-package.js";
 
 // ---- Singleton state ----
 
@@ -33,6 +36,15 @@ let _lastEmotion: EmotionVector = { ...ZERO_EMOTION };
 let _lastSignals: FireSignal[] = [];
 let _lastEvent: NormalizedEvent | undefined;
 let _priorResult: PriorResult | null = null;
+let _learnMode = false;
+let _personaMode = false;
+let _priorBlockMode = false;
+
+export interface WatchOptions {
+  learn?: boolean;
+  persona?: boolean;
+  priorBlock?: boolean;
+}
 
 const heatmap = new PathHeatmap();
 const commander = new Commander();
@@ -54,7 +66,10 @@ export function onSignal(listener: SignalListener): void {
 _listeners.push(onFireSignals);
 
 // Re-export passive receptor API for hotmemo integration
-export { formatRecommendations, drainRecommendations, drainAutoQueue };
+export { formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue };
+
+// Re-export DCP formatters for hotmemo
+export { formatSubsystemDcp };
 
 // ---- Method executor (via service registry) ----
 
@@ -73,7 +88,7 @@ export {
 } from "./subsystem-fifo.js";
 import { registerExecutor as _regExec, resolveAndExecute } from "./registry.js";
 import { routeOutput as _routeOut, type OutputConfig } from "./output-router.js";
-import { formatSubsystemResults as _fmtSub, clearSubsystem } from "./subsystem-fifo.js";
+import { formatSubsystemResults as _fmtSub, formatSubsystemDcp, clearSubsystem } from "./subsystem-fifo.js";
 import { recordAction, clearActionLogger, type ActionSnapshot } from "./action-logger.js";
 import { buildQuery, buildEnrichedCentroid, executeSearch, formatResults, clearFutureProbe, type ProbeContext } from "./future-probe.js";
 import { exportEnrichedCentroid, exportPersona, setProjectMeta, getProjectMeta } from "./sphere-shaper.js";
@@ -81,8 +96,20 @@ import {
   captureSnapshot as personaCaptureSnapshot,
   finalizeSession as personaFinalizeSession,
   clearPersonaState, snapshotCount as personaSnapshotCount,
+  getSnapshots as personaGetSnapshots,
 } from "./persona-snapshot.js";
-import { loadPrior, applyLens, validatePersonaCompat, type PriorResult, type SwapResult, type CompatResult } from "./persona-prior.js";
+import {
+  loadPrior, readPriorPersona, applyPriorPersona, applyLens, validatePersonaCompat,
+  loadSessionPoints, loadWeightSnapshot, summarizeSessionArc, summarizeWeights,
+  loadHeatmapSnapshot, loadCommanderCounts, saveCommanderCounts,
+  buildPriorBlock, formatPriorBlock,
+  type PriorResult, type SwapResult, type CompatResult,
+} from "./persona-prior.js";
+import {
+  updateWorkTime, recordSessionPoints, clearSessionPoints, stopSessionPoints,
+  sessionPointCount, setLastPushNodeId, getWorkTimeMs,
+  recordEngramWeights, weightEntryCount, flushWeightSnapshot, getDebugSnapshot,
+} from "./session-point.js";
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -309,16 +336,38 @@ export function swapLens(persona: import("./persona-snapshot.js").Persona): Swap
 // Re-export types for external callers
 export type { SwapResult, CompatResult };
 
+// Re-export session point API for engram push link tracking + weight recording + debug
+export { setLastPushNodeId, getWorkTimeMs, recordEngramWeights, flushWeightSnapshot, getDebugSnapshot };
+
 // ---- Public API ----
 
 /** Toggle watch mode. Returns new state. */
-export function setWatch(enabled: boolean): { watching: boolean; message: string } {
+export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boolean; message: string } {
   if (enabled && !_watching) {
     _watching = true;
+    _learnMode = opts?.learn ?? false;
+    _personaMode = opts?.persona ?? false;
+    _priorBlockMode = opts?.priorBlock ?? false;
     _startedAt = Date.now();
     _eventCount = 0;
     _lastEmotion = { ...ZERO_EMOTION };
     _lastSignals = [];
+    // Phase 1: Read all prior data BEFORE clear — files are truncated by clear*()
+    // Only load if persona or priorBlock mode is enabled
+    const wantPersona = _personaMode;
+    const wantPrior = _priorBlockMode;
+    const pkg = (wantPersona || wantPrior) ? loadPackage() : null;
+    const priorPersona = wantPersona
+      ? (pkg
+        ? { persona: pkg.persona, source: "experience-package.json" } as import("./persona-prior.js").ReadPriorResult
+        : readPriorPersona())
+      : { persona: null, source: "disabled" } as import("./persona-prior.js").ReadPriorResult;
+    const priorPoints = (wantPrior && !pkg) ? loadSessionPoints() : null;
+    const priorWeights = (wantPrior && !pkg) ? loadWeightSnapshot() : null;
+    const priorHotPaths = (wantPrior && !pkg) ? loadHeatmapSnapshot() : null;
+    const priorMethodCounts = (wantPrior && !pkg) ? loadCommanderCounts() : null;
+
+    // Phase 2: Clear all state + truncate JSONL files for new session
     heatmap.clear();
     commander.clear();
     ambient.clear();
@@ -329,39 +378,142 @@ export function setWatch(enabled: boolean): { watching: boolean; message: string
     clearActionLogger();
     clearFutureProbe();
     clearPersonaState();
+    clearSessionPoints();
     _lastHeatmapFlush = 0;
 
-    // Load prior persona — seed ambient baselines from previous session
-    _priorResult = loadPrior(ambient);
-    const priorMsg = _priorResult.applied
-      ? ` Prior loaded: ${_priorResult.dominantAxis}/${_priorResult.dominantState}.`
-      : "";
+    // Phase 3: Apply prior persona to fresh ambient
+    _priorResult = applyPriorPersona(priorPersona, ambient);
+    if (priorPoints) {
+      _priorResult.sessionArc = summarizeSessionArc(priorPoints);
+      console.error(
+        `[persona-prior] session arc: ${_priorResult.sessionArc.pointCount} points, ` +
+        `${Math.round(_priorResult.sessionArc.durationMs / 1000)}s, ` +
+        `peak=${_priorResult.sessionArc.peakSignal}(${_priorResult.sessionArc.peakIntensity?.toFixed(2)}), ` +
+        `valence=${_priorResult.sessionArc.valenceBalance.toFixed(2)}`
+      );
+    }
+    if (priorWeights) {
+      _priorResult.weightSummary = summarizeWeights(priorWeights);
+      const topSummaries = _priorResult.weightSummary.topNodes
+        .map(n => `${n.summary}(w=${n.weight.toFixed(1)})`)
+        .join(", ");
+      console.error(
+        `[persona-prior] knowledge: ${_priorResult.weightSummary.nodeCount} nodes referenced. top: ${topSummaries}`
+      );
+    }
 
-    return { watching: true, message: `Receptor watch started. Monitoring agent behavior.${priorMsg}` };
+    // Build Prior Block (AI Native Format) for agent consumption
+    // Only if priorBlock mode is enabled
+    let priorBlockMsg = "";
+    if (wantPrior && pkg) {
+      if (pkg.priorBlock && pkg.priorBlock.length > 0) {
+        const arcCount = pkg.priorBlock.filter(e => Array.isArray(e) && e[0] === "A").length;
+        // Cast: Package stores PriorBlock as unknown[][] for serialization; formatPriorBlock expects the internal type
+        priorBlockMsg = `\n${formatPriorBlock(pkg.priorBlock as Parameters<typeof formatPriorBlock>[0])}`;
+        console.error(`[experience-package] prior block loaded: ${arcCount} arc points`);
+      }
+    } else if (wantPrior && priorPoints) {
+      const block = buildPriorBlock(priorPoints, priorWeights, _priorResult, {
+        hotPaths: priorHotPaths ?? undefined,
+        methodCounts: priorMethodCounts ?? undefined,
+      });
+      if (block) {
+        const arcCount = block.filter(e => Array.isArray(e) && e[0] === "A").length;
+        priorBlockMsg = `\n${formatPriorBlock(block)}`;
+        console.error(`[persona-prior] prior block: ${arcCount} arc points`);
+      }
+    }
+
+    return { watching: true, message: `Receptor watch started.${priorBlockMsg}` };
   }
   if (!enabled && _watching) {
+    // Capture session data BEFORE stop (files are still intact)
+    const currentSessionPoints = loadSessionPoints();
+    const currentWeights = loadWeightSnapshot();
+    const currentHotPaths = heatmap.topPaths(10);
+    const currentMethodCounts = commander.sessionSnapshot().counts;
+
+    // Stop session point recording
+    stopSessionPoints();
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
+    // Save commander session counts for next session's Prior Block
+    saveCommanderCounts(currentMethodCounts);
     const elapsed = _startedAt ? Math.round((Date.now() - _startedAt) / 1000) : 0;
+
+    // Learn mode: auto-calibrate receptor sensitivity from session fire patterns
+    let learnMsg = "";
+    if (_learnMode) {
+      const elapsedMs = _startedAt ? Date.now() - _startedAt : 0;
+      const result = applyLearnedDelta(elapsedMs);
+      if (result) learnMsg = ` ${result}`;
+      _learnMode = false;
+    }
 
     // Persona snapshot: finalize session and conditionally export
     let personaMsg = "";
-    try {
-      const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
-      const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
-      const model = process.env.ENGRAM_MODEL || undefined;
-      const persona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
-      if (persona) {
-        exportPersona(persona).catch(e => console.error("[receptor] persona export error:", e));
-        personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
+    let finalizedPersona: import("./persona-snapshot.js").Persona | null = null;
+    if (_personaMode || _priorBlockMode) {
+      try {
+        const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
+        const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
+        const model = process.env.ENGRAM_MODEL || undefined;
+        finalizedPersona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
+        if (finalizedPersona && _personaMode) {
+          exportPersona(finalizedPersona).catch(e => console.error("[receptor] persona export error:", e));
+          personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;
+        }
+      } catch (err) {
+        console.error("[receptor] persona finalize error:", err);
       }
-    } catch (err) {
-      console.error("[receptor] persona finalize error:", err);
     }
 
-    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}`;
+    // Experience Package: unify Persona + Prior Block → local sink
+    let pkgMsg = "";
+    if ((_personaMode || _priorBlockMode) && finalizedPersona && currentSessionPoints) {
+      try {
+        const dummyPrior: PriorResult = {
+          applied: true,
+          source: "current-session",
+          dominantAxis: finalizedPersona.emotionProfile.dominantAxis,
+        };
+        const block = buildPriorBlock(currentSessionPoints, currentWeights, dummyPrior, {
+          hotPaths: currentHotPaths,
+          methodCounts: currentMethodCounts,
+        });
+        if (block) {
+          // Extract stateFlow and valenceBalance from Prior Block header
+          const header = block.find(e => Array.isArray(e) && e[0] === "H") as unknown[] | undefined;
+          const stateFlow = header ? String(header[8] ?? "") : "";
+          const valenceBalance = header ? Number(header[2] ?? 0) : 0;
+          // meanIntensity from footer stats
+          const footer = block.find(e => Array.isArray(e) && e[0] === "F") as unknown[] | undefined;
+          const stats = footer ? (footer[2] as number[]) : [];
+          const meanIntensity = stats[4] ?? 0;
+
+          const pkg = buildPackage(
+            finalizedPersona,
+            block,
+            stateFlow,
+            valenceBalance,
+            meanIntensity,
+            process.env.ENGRAM_PROJECT_ID || undefined,
+          );
+          savePackage(pkg);
+          pkgMsg = ` Package saved.`;
+        }
+      } catch (err) {
+        console.error("[receptor] experience package error:", err);
+      }
+    }
+
+    const msg = `Receptor watch stopped. ${_eventCount} events recorded in ${elapsed}s.${personaMsg}${pkgMsg}${learnMsg}`;
     _watching = false;
     _startedAt = null;
+
+    // Release HTTP port so another instance can claim primary
+    stopReceptorHttp();
+
     return { watching: false, message: msg };
   }
   return {
@@ -380,13 +532,20 @@ export function ingestEvent(raw: RawHookEvent): void {
   _eventCount++;
   _lastEvent = event;
 
+  // Track cumulative work time for SessionPoint recording
+  updateWorkTime(event.ts);
+
   // Feed to subsystems
-  heatmap.agentState = metaNeuron.state;
-  heatmap.record(event);
+  // Dialogue input: skip heatmap and staleness (no file path involved)
+  const isDialogue = event.action === "user_prompt";
+  if (!isDialogue) {
+    heatmap.agentState = metaNeuron.state;
+    heatmap.record(event);
+  }
   commander.record(event);
 
   // Pre-neuron monitor: staleness check (fire-and-forget, after record)
-  if (event.path && (event.action === "file_read" || event.action === "file_edit")) {
+  if (!isDialogue && event.path && (event.action === "file_read" || event.action === "file_edit")) {
     const normalizedPath = event.path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
     detectStaleness(normalizedPath, heatmap);
   }
@@ -434,6 +593,11 @@ export function ingestEvent(raw: RawHookEvent): void {
     personaCaptureSnapshot(_lastSignals, _lastEmotion, metaNeuron.state, shortSnap.pattern, ambient, heatmap.entropy());
   }
 
+  // SessionPoint: record ALL signals (good/bad/neutral) for experience trace
+  if (_lastSignals.length > 0) {
+    recordSessionPoints(_lastSignals);
+  }
+
   // Notify listeners (connection targets)
   if (_lastSignals.length > 0) {
     for (const listener of _listeners) {
@@ -467,6 +631,10 @@ export function getState(): ReceptorState {
   };
 }
 
+export function getPriorResult(): PriorResult | null {
+  return _priorResult;
+}
+
 // ---- Formatting helpers ----
 
 /** ASCII bar: ▓ filled, ░ empty. width = max chars for the bar portion. */
@@ -493,6 +661,7 @@ function fmtCounts(snap: { counts: Record<string, number>; total: number }): str
     ["delegation", "Ag"],
     ["memory_read", "Mr"],
     ["memory_write", "Mw"],
+    ["user_prompt", "Dl"],
   ];
   const parts: string[] = [];
   for (const [key, label] of labels) {
@@ -609,8 +778,12 @@ export function formatState(): string {
   // ---- C: Meta neuron ----
   lines.push("");
   const pSnaps = personaSnapshotCount();
-  const personaStr = pSnaps > 0 ? `  persona:${pSnaps}/${10}` : "";
-  lines.push(`[C] ${metaNeuron.format()}${personaStr}`);
+  const spCount = sessionPointCount();
+  const wCount = weightEntryCount();
+  const personaStr = pSnaps > 0 ? `  persona:${pSnaps}` : "";
+  const spStr = spCount > 0 ? `  sp:${spCount}` : "";
+  const wStr = wCount > 0 ? `  ew:${wCount}` : "";
+  lines.push(`[C] ${metaNeuron.format()}${personaStr}${spStr}${wStr}`);
 
   // Field adjustments from C (show only non-zero)
   const fieldParts: string[] = [];

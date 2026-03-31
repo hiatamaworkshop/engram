@@ -118,6 +118,11 @@ export function computeImpulse(
     if (action === "search" && result !== "empty" && result !== "failure") {
       applyImpulse(vec, EVENT_IMPULSE["search.found"]);
     }
+
+    // Dialogue: long prompts (>100 chars) get additional impulse
+    if (action === "user_prompt" && lastEvent.promptLength && lastEvent.promptLength > 100) {
+      applyImpulse(vec, EVENT_IMPULSE["user_prompt.long"]);
+    }
   }
 
   // ---- Pattern-driven impulses ----

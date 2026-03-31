@@ -145,6 +145,10 @@ export async function ingestNodes(
       hitCount: 0,
       weight: 0,
       ingestedAt: now,
+      // DCP native fields — pass through if present
+      ...(node.native ? { native: node.native } : {}),
+      ...(node.schema ? { schema: node.schema } : {}),
+      ...(node.index ? { index: node.index } : {}),
     } satisfies UpperLayerPointPayload,
   }));
 
@@ -205,6 +209,10 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
     weight: round2((hit.payload.weight ?? 0) + RECALL_WEIGHT_BUMP),
     status: hit.payload.status ?? "recent",
     content: hit.payload.content || undefined,
+    // DCP native fields
+    ...(hit.payload.native ? { native: hit.payload.native } : {}),
+    ...(hit.payload.schema ? { schema: hit.payload.schema } : {}),
+    ...(hit.payload.index ? { index: hit.payload.index } : {}),
   }));
 }
 
@@ -274,6 +282,10 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
     weight: round2((point.payload.weight ?? 0) + FOCUSED_WEIGHT_BUMP),
     status: (point.payload.status as NodeStatus) ?? "recent",
     content: point.payload.content || undefined,
+    // DCP native fields
+    ...(point.payload.native ? { native: point.payload.native } : {}),
+    ...(point.payload.schema ? { schema: point.payload.schema } : {}),
+    ...(point.payload.index ? { index: point.payload.index } : {}),
   };
 }
 
