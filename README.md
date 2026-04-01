@@ -140,7 +140,7 @@ Engram works with any MCP-compatible client. Only the registration format differ
 
 ## Data Cost Protocol (DCP)
 
-Engram recommends **DCP-native format** for `engram_push`. Natural language summaries are accepted but discouraged — the gateway validator will warn when native fields are missing.
+Engram recommends **DCP-native format** for `engram_push`. Natural language summaries are accepted but discouraged — the gateway validator will warn when native fields are missing. See [dcp-docs](https://github.com/hiatamaworkshop/dcp-docs).
 
 ```
 Natural language push (legacy):
