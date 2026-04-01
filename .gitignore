@@ -13,3 +13,6 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Docs
+docs/

@@ -155,7 +155,7 @@ DCP-native push (recommended):
 
 Why: AI-to-AI communication is 90%+ of engram traffic. Natural language adds token cost, context pollution, and translation error accumulation for no benefit when the consumer is an LLM. DCP cuts total system cost by an order of magnitude.
 
-The gateway holds a schema registry (`gateway/schemas/`). Schema versioning replaces field extension — new schema IDs, never variable-length fields. See [DATA_COST_PROTOCOL.md](docs/DATA_COST_PROTOCOL.md).
+The gateway holds a schema registry (`gateway/schemas/`). Schema versioning replaces field extension — new schema IDs, never variable-length fields.
 
 ## Receptor
 
@@ -198,25 +198,16 @@ centroid_new ─── centroid_old
 
 No linear extrapolation in embedding space — non-linearity makes projected positions unreliable. Instead, search at the current centroid and let delta direction + emotion state filter the results. All computation is pure math: cosine similarity, L2 norms, EMA thresholds. Zero LLM inference.
 
-### Shadow Index — Blind Spot Detection
-
-Pre-neuron monitor that tracks which knowledge areas the agent hasn't revisited. Multi-index HeatNodes with staleness detection surface "you haven't looked at X in a while" alerts via Hot Memo. See [SHADOW_INDEX_DESIGN.md](docs/SHADOW_INDEX_DESIGN.md).
 
 ### Persona System — Perceptual Lens Distillation
 
-Successful sessions export a Persona: a statistical fingerprint of emotion baselines, field adjustments, and pattern distributions. On next session start, the receptor loads the prior persona to calibrate from — no cold start. Personas are model-aware (`origin.model`) and profile-versioned (`origin.profileHash`). See [PERSONA_DESIGN.md](docs/PERSONA_DESIGN.md).
+Successful sessions export a Persona: a statistical fingerprint of emotion baselines, field adjustments, and pattern distributions. On next session start, the receptor loads the prior persona to calibrate from — no cold start. Personas are model-aware (`origin.model`) and profile-versioned (`origin.profileHash`).
 
 ### Prior Block — Experience Arc Injection
 
-On session start, the Prior Block injects the previous session's behavioral arc: emotion trajectory, hot paths, method rankings, and learned deltas. The agent starts with context about where it left off — not just calibration (Persona), but narrative continuity. Combined with Persona as an Experience Package. See [PERSONA_LOADING_SYSTEM.md](docs/PERSONA_LOADING_SYSTEM.md).
+On session start, the Prior Block injects the previous session's behavioral arc: emotion trajectory, hot paths, method rankings, and learned deltas. The agent starts with context about where it left off — not just calibration (Persona), but narrative continuity. Combined with Persona as an Experience Package.
 
-### Learn Mode — Adaptive Sensitivity Tuning
 
-Opt-in mode (`engram_watch start` with `learn: true`) that records which receptor signals actually fire during a session and adjusts thresholds accordingly. Frequency-based calibration — signals that fire too often get dampened, signals that never fire get sensitized. Export as `learnedDelta` in the Persona.
-
-### Sphere Shaping — Data Export Pipeline
-
-Experience capsules (behavioral patterns + emotion averages + linked knowledge) are exported to the [Sphere](https://github.com/hiatamaworkshop) federation pipeline. Individual experience, metabolically filtered, becomes collective intelligence. See [SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md).
 
 ## Node Lifecycle
 
@@ -254,7 +245,7 @@ The Digestor adapts to project activity. Node density (nodes/hour) derived from 
 | ~3 nodes/h | 1.0× base | Baseline |
 | > 10 nodes/h | 2.0–3.0× base | Cull information flood |
 
-Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a sink for visibility. See [METABOLISM_EVOLUTION.md](docs/METABOLISM_EVOLUTION.md).
+Inactive projects hibernate (TTL frozen). Expired/demoted nodes are emitted to a sink for visibility.
 
 ## Configuration
 
@@ -315,7 +306,7 @@ If it reaches `fixed` status through natural use, it persists — but even fixed
 Forgetting is the feature. Other tools accumulate everything forever. Engram lets unused knowledge die. And beyond memory, engram observes behavior, predicts needs, and shapes experience into reusable knowledge — other memory servers are just key-value stores with extra steps.
 
 **What is Sphere federation?**
-Sphere is a global knowledge ecosystem. Engram's metabolically-filtered, anonymized behavioral data can feed into Sphere, where it becomes collective intelligence accessible to all agents. See [SPHERE_FEDERATION.md](docs/SPHERE_FEDERATION.md).
+Future design. Sphere is a global knowledge ecosystem. Engram's metabolically-filtered, anonymized behavioral data would feed into Sphere, where it becomes collective intelligence accessible to all agents. Optional functionality.
 
 ## License
 
