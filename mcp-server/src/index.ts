@@ -549,8 +549,7 @@ async function main() {
   const { primary } = await startReceptorHttp();
 
   if (primary) {
-    // Auto-start receptor watch (only primary instance)
-    setWatch(true, { learn: true, persona: true, priorBlock: true });
+    // Receptor HTTP server is bound (port reserved); watch is opt-in via engram_watch start.
   } else {
     console.error(
       `[engram] Secondary instance: MCP tools (pull/push/flag/ls/status) are fully functional. ` +

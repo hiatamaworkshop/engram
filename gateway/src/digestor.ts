@@ -51,12 +51,12 @@ export interface DigestorConfig {
 
 export const DEFAULT_DIGESTOR_CONFIG: DigestorConfig = {
   intervalMs: 600_000,         // 10 minutes
-  promotionThreshold: 3,
-  promotionHitCount: 5,
+  promotionThreshold: 2,
+  promotionHitCount: 3,
   decayPerBatch: 0.1,
   ttlSeconds: 21_600,          // 6 hours
   idleThresholdMs: 1_800_000,  // 30 minutes
-  fixedHalfLifeDays: 60,       // ~100 days to demotion from weight=3
+  fixedHalfLifeDays: 60,       // ~100 days to demotion from weight=2
   fixedDemotionThreshold: 1.0,
   qdrantUrl: "http://localhost:6333",
   collection: "engram",

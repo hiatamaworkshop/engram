@@ -35,7 +35,7 @@ let initialized = false;
 let retrying = false;
 
 /** Weight added per search hit — throttled to once per batch window in queueBump.
- *  Net per batch: +0.35 - 0.1 decay = +0.25 → promotion in ~12 batches (2h). */
+ *  Net per batch: +0.35 - 0.1 decay = +0.25 → promotion (weight≥2) in ~8 batches (~80min). */
 const RECALL_WEIGHT_BUMP = 0.35;
 
 /** Weight added per focused recall (entryId fetch) — throttled to once per batch window. */
