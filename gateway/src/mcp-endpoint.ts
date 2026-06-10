@@ -140,6 +140,7 @@ Set crossProject=true to search across ALL projects.`,
           return { content: [{ type: "text" as const, text: `Ingest rejected: ${result.reason}` }], isError: true };
         }
         const lines = [`Ingest accepted: ${result.nodesIngested} nodes stored for project:${projectId}.`];
+        if (result.merged) lines.push(`${result.merged} merged into existing nodes (similarity ≥ 0.92).`);
         if (result.dcpWarnings?.length) lines.push(`Warnings: ${result.dcpWarnings.join(", ")}`);
         if (result.schemaHint) lines.push(result.schemaHint);
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };

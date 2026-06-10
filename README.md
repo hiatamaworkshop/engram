@@ -84,6 +84,8 @@ Hooks forward agent events to the Receptor for real-time behavior monitoring. Co
 ```bash
 mkdir -p ~/.claude/hooks
 cp hooks/engram-receptor-hook.sh hooks/engram-turn-hook.sh ~/.claude/hooks/
+# Optional: git commit hook and session recall on startup
+cp hooks/engram-git-commit.sh hooks/engram-session-recall.sh ~/.claude/hooks/
 ```
 
 ```jsonc
@@ -96,6 +98,10 @@ cp hooks/engram-receptor-hook.sh hooks/engram-turn-hook.sh ~/.claude/hooks/
     "PostToolUse": [{
       "matcher": ".*",
       "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/engram-receptor-hook.sh", "timeout": 2 }]
+    }],
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{ "type": "command", "command": "ENGRAM_TURN_TYPE=stop bash ~/.claude/hooks/engram-turn-hook.sh", "timeout": 2 }]
     }]
   }
 }
@@ -169,7 +175,7 @@ Hook events → [A] Flow Gate → [B] Activity Metrics → [C] State Classifier 
 - **Activity Metrics**: Tracks agent cognitive load from tool usage patterns — frustration, seeking (curiosity/desperation), confidence, fatigue, flow. Five-axis emotion vector, all computed without LLM inference. Emits signals when metrics exceed adaptive thresholds.
 - **State Classifier**: Infers agent state (`exploring` / `deep_work` / `stuck` / `idle`) and adjusts metric thresholds based on context.
 
-Emitted signals trigger actions defined in `receptor-rules.json`. Actions are either `auto` (executed immediately — e.g., proactive knowledge recall) or `notify` (surfaced via Hot Memo as suggestions).
+Emitted signals trigger actions defined in `receptor-rules.json`. Actions are `auto` (executed immediately — e.g., proactive knowledge recall), `notify` (surfaced via Hot Memo as suggestions), or `background` (fire-and-forget side effects).
 
 ### Future Probe — Predictive Knowledge Supply
 
@@ -231,8 +237,8 @@ engram_push → [recent, weight:0, TTL:6h]
 ```
 
 - **Promotion**: weight >= 3 AND hitCount >= 5 → `fixed`
-- **Expiry**: TTL <= 0 AND weight <= 0 → deleted
-- **Soft demotion**: fixed nodes decay with a 60-day half-life. Below threshold → back to `recent` with fresh TTL. Recall resets the clock.
+- **Expiry**: TTL <= 0 AND weight < 1.5 → deleted
+- **Soft demotion**: fixed nodes decay with a 60-day half-life. Below threshold → back to `recent` with fresh TTL. Recall bumps weight (+0.35/batch window), keeping the node alive.
 - **Flag**: Immediate demotion (urgent removal)
 
 ### Density-Based Dynamic Metabolism

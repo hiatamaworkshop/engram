@@ -50,18 +50,22 @@ export async function handleIngest(body: IngestRequest): Promise<IngestResponse>
   const userId = body.userId;
   console.log(`[gateway] ingest -> qdrant: project=${body.projectId} trigger=${trigger} seeds=${body.capsuleSeeds.length}${userId ? ` user=${userId}` : ""}`);
 
-  const { ingested } = await ingestNodes(body.capsuleSeeds, body.projectId, trigger, sessionId, userId);
+  const { ingested, deduped } = await ingestNodes(body.capsuleSeeds, body.projectId, trigger, sessionId, userId);
 
   const dcpWarnings = gate.warnings?.map((w) => w.message);
 
   // Interactive Schema: determine hint based on push compliance
   const schemaHint = determineSchemaHint(body.capsuleSeeds) ?? undefined;
 
+  const reasonParts = [`${ingested} nodes ingested.`];
+  if (deduped > 0) reasonParts.push(`${deduped} merged into existing nodes (similarity ≥ 0.92).`);
+
   return {
     status: "accepted",
-    reason: `${ingested} nodes ingested.`,
+    reason: reasonParts.join(" "),
     projectId: body.projectId,
     nodesIngested: ingested,
+    ...(deduped > 0 ? { merged: deduped } : {}),
     ...(dcpWarnings?.length ? { dcpWarnings } : {}),
     ...(schemaHint ? { schemaHint } : {}),
   };

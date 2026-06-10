@@ -1,6 +1,6 @@
 # Hot Load — 局所アクティベーションによる予測的知識供給
 
-> 2026-03-16 設計構想。未実装。
+> 2026-03-16 設計構想。Phase 1–2 相当は `future-probe.ts` として実装済み（centroid 探索・delta alignment・emotion proximity・tag heuristics）。
 >
 > **更新 (2026-03-17)**: EmotionVector は 5 軸 (hunger→seeking に統合)。
 > Future Probe は centroid 近傍検索 + Facade DNS ルーティングモデルに移行。

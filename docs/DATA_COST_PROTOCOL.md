@@ -656,17 +656,20 @@ engram_push 受信
   ├── native フィールドあり？
   │   ├── YES → スキーマ準拠チェック
   │   │         ├── field_count 一致 → 保存
-  │   │         └── 不一致 → 拒否 + エラー詳細返却
+  │   │         └── 不一致 → 警告返却 (Phase 1: 拒否せず保存)
+  │   │                       (Phase 2: 拒否 + エラー詳細返却)
   │   │
   │   └── NO (自然言語のみ)
-  │         → 警告返却: "DCP format expected"
-  │         → (Phase 1) デフォルト変換して保存 + "auto-encoded" フラグ
+  │         → 警告返却: "DCP format recommended"
+  │         → (Phase 1 現在) そのまま保存 ← 実装はここ
   │         → (Phase 2) 拒否
   │
-  └── スキーマ ID/hash あり？
+  └── スキーマ ID あり？
       ├── 既知 → field_count 照合
-      └── 未知 → 新規登録 or 拒否 (設定次第)
+      └── 未知 → 警告返却 (Phase 1: 保存)
 ```
+
+> **現在は Phase 1**: 検証はすべて warn のみ。reject・auto-encode・hash 照合は Phase 2 以降。
 
 ### push API の進化
 
@@ -705,8 +708,8 @@ Phase 3 — native 必須 + スキーマ参照
 decoder に設計判断はない。人間が見る時だけ動く薄い変換:
 
 ```
-pull (queryType 省略 or "agent") → native そのまま返却
-pull (queryType: "human")        → decoder(native + index) → 自然言語
+pull (queryType 省略 or "human") → summary + content を返却 (デフォルト)
+pull (queryType: "agent")        → native そのまま返却
 ```
 
 現状の summary フィールドが既にこの役割を果たしている。native 化が進めば summary は index に置き換わり、decoder は index + native からテンプレート展開する。

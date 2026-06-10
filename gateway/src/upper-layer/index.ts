@@ -113,53 +113,85 @@ function scheduleRetry(): void {
 
 // ---- Ingest ----
 
+const DEDUP_THRESHOLD = 0.92;
+
 export async function ingestNodes(
   nodes: NodeSeed[],
   projectId: string,
   trigger = "session-end",
   sessionId = "unknown",
   userId?: string,
-): Promise<{ ingested: number }> {
-  if (!initialized || nodes.length === 0) return { ingested: 0 };
+): Promise<{ ingested: number; deduped: number }> {
+  if (!initialized || nodes.length === 0) return { ingested: 0, deduped: 0 };
 
   const texts = nodes.map((n) => n.summary || "");
 
   // Batch embed
   const vectors = await embedTexts(texts);
 
-  // Build points
+  // Dedup: for each node, check if a near-identical node already exists in this project
+  const projectFilter = { must: [{ key: "projectId", match: { value: projectId } }] };
+  const newPoints: Array<{ id: string; vector: number[]; payload: UpperLayerPointPayload }> = [];
   const now = Date.now();
-  const points = nodes.map((node, i) => ({
-    id: randomUUID(),
-    vector: vectors[i],
-    payload: {
-      summary: node.summary,
-      tags: node.tags,
-      content: node.content ?? "",
-      projectId,
-      source: "mcp-ingest",
-      trigger,
-      sessionId,
-      ...(userId ? { userId } : {}),
-      status: "recent" as NodeStatus,
-      hitCount: 0,
-      weight: 0,
-      ingestedAt: now,
-      // DCP native fields — pass through if present
-      ...(node.native ? { native: node.native } : {}),
-      ...(node.schema ? { schema: node.schema } : {}),
-      ...(node.index ? { index: node.index } : {}),
-    } satisfies UpperLayerPointPayload,
-  }));
+  let deduped = 0;
 
-  // Upsert
-  await upsertPoints(config.qdrantUrl, config.collection, points);
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const vector = vectors[i];
 
-  console.log(
-    `[upper-layer] ingested: project=${projectId} nodes=${nodes.length}`,
-  );
+    const hits = await searchPoints(config.qdrantUrl, config.collection, vector, projectFilter, 1);
+    const top = hits[0];
 
-  return { ingested: nodes.length };
+    if (top && top.score >= DEDUP_THRESHOLD) {
+      // Merge into existing node: union tags, prefer new content/DCP if provided
+      const existing = top.payload;
+      const mergedTags = Array.from(new Set([...(existing.tags ?? []), ...(node.tags ?? [])]));
+      const patch: Partial<UpperLayerPointPayload> = {
+        tags: mergedTags,
+        hitCount: (existing.hitCount ?? 0) + 1,
+        ...(node.content ? { content: node.content } : {}),
+        ...(node.native ? { native: node.native } : {}),
+        ...(node.schema ? { schema: node.schema } : {}),
+        ...(node.index ? { index: node.index } : {}),
+      };
+      await setPayload(config.qdrantUrl, config.collection, [top.id], patch);
+      deduped++;
+    } else {
+      newPoints.push({
+        id: randomUUID(),
+        vector,
+        payload: {
+          summary: node.summary,
+          tags: node.tags,
+          content: node.content ?? "",
+          projectId,
+          source: "mcp-ingest",
+          trigger,
+          sessionId,
+          ...(userId ? { userId } : {}),
+          status: "recent" as NodeStatus,
+          hitCount: 0,
+          weight: 0,
+          ingestedAt: now,
+          ...(node.native ? { native: node.native } : {}),
+          ...(node.schema ? { schema: node.schema } : {}),
+          ...(node.index ? { index: node.index } : {}),
+        } satisfies UpperLayerPointPayload,
+      });
+    }
+  }
+
+  if (newPoints.length > 0) {
+    await upsertPoints(config.qdrantUrl, config.collection, newPoints);
+  }
+
+  if (deduped > 0) {
+    console.log(`[upper-layer] ingested: project=${projectId} new=${newPoints.length} deduped=${deduped}`);
+  } else {
+    console.log(`[upper-layer] ingested: project=${projectId} nodes=${newPoints.length}`);
+  }
+
+  return { ingested: newPoints.length, deduped };
 }
 
 // ---- Search ----

@@ -1,6 +1,6 @@
 # Sphere Federation — engram ↔ Sphere 双方向接続
 
-> 2026-03-16 構想メモ。sphere-shaper 実装済み、Sphere HTTP 配線は未実装。
+> 2026-03-16 構想メモ。sphere-shaper 実装済み、Facade HTTP 配線実装済み（2026-03-18）。
 >
 > **更新 (2026-03-17)**: Facade DNS ルーティングモデル追加。ProjectMeta (techStack/domain) で
 > Sphere 自動振り分け。SpherePayload v2。score_threshold 0.5→0.35。seeking 軸統合反映。

@@ -122,7 +122,7 @@ try {
   setProjectMeta({
     techStack: raw.techStack ?? [],
     domain: raw.domain ?? [],
-    facadeUrl: raw.facadeUrl,
+    facadeUrl: process.env.ENGRAM_FACADE_URL ?? raw.facadeUrl,
   });
 } catch {
   // No project-meta.json — Sphere payloads will omit routing metadata

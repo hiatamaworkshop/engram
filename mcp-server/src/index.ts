@@ -10,6 +10,7 @@
 //   engram_status  — statistics
 //   engram_flag    — negative weight signal
 //   engram_ls      — lightweight listing
+//   engram_watch   — receptor control (start/stop/status)
 // Resources:
 //   engram://scan/{projectId} — lightweight listing
 //
