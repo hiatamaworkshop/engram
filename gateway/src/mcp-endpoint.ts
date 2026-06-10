@@ -16,7 +16,6 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 import {
-  ingestNodes,
   searchNodes,
   listNodes,
   getNodeById,
@@ -26,6 +25,7 @@ import {
   listProjects,
 } from "./upper-layer/index.js";
 import { touchProject } from "./digestor.js";
+import { handleIngest } from "./handlers/ingest.js";
 
 // ---- MCP Server instance ----
 
@@ -112,6 +112,9 @@ Set crossProject=true to search across ALL projects.`,
     summary: z.string().min(10).max(200),
     tags: z.array(z.string()).min(0).max(5).default([]),
     content: z.string().optional(),
+    native: z.array(z.unknown()).optional(),
+    schema: z.string().optional(),
+    index: z.string().optional(),
   });
 
   server.tool(
@@ -127,17 +130,19 @@ Set crossProject=true to search across ALL projects.`,
     async ({ capsuleSeeds, projectId, trigger, sessionId }) => {
       try {
         touchProject(projectId);
-        const result = await ingestNodes(
-          capsuleSeeds.map(s => ({
-            summary: s.summary,
-            tags: s.tags ?? [],
-            content: s.content,
-          })),
+        const result = await handleIngest({
+          capsuleSeeds: capsuleSeeds as import("./types.js").NodeSeed[],
           projectId,
           trigger,
-          sessionId || randomUUID(),
-        );
-        return { content: [{ type: "text" as const, text: `Ingest accepted: ${result.ingested} nodes stored for project:${projectId}.` }] };
+          sessionId: sessionId || randomUUID(),
+        });
+        if (result.status === "rejected") {
+          return { content: [{ type: "text" as const, text: `Ingest rejected: ${result.reason}` }], isError: true };
+        }
+        const lines = [`Ingest accepted: ${result.nodesIngested} nodes stored for project:${projectId}.`];
+        if (result.dcpWarnings?.length) lines.push(`Warnings: ${result.dcpWarnings.join(", ")}`);
+        if (result.schemaHint) lines.push(result.schemaHint);
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: `Ingest failed: ${(err as Error).message}` }], isError: true };
       }

@@ -25,6 +25,7 @@
 
 import {
   scrollPoints,
+  scrollAllPoints,
   setPayload,
   deletePoints,
   getPointById,
@@ -274,8 +275,8 @@ function fixedDecayFactor(): number {
 // ---- Project batch: two-pass (recent + fixed) ----
 
 async function runProjectBatch(projectId: string): Promise<void> {
-  // Scroll ALL project nodes (recent + fixed) in one query
-  const allPoints = await scrollPoints(
+  // Scroll ALL project nodes (recent + fixed), paginating past the 500-point limit
+  const allPoints = await scrollAllPoints(
     config.qdrantUrl,
     config.collection,
     {
@@ -283,7 +284,6 @@ async function runProjectBatch(projectId: string): Promise<void> {
         { key: "projectId", match: { value: projectId } },
       ],
     },
-    500,
   );
 
   if (allPoints.length === 0) return;
@@ -488,7 +488,7 @@ async function refreshGlobalCache(): Promise<void> {
   } catch { /* non-fatal */ }
 
   try {
-    const points = await scrollPoints(config.qdrantUrl, config.collection, {}, 1000);
+    const points = await scrollAllPoints(config.qdrantUrl, config.collection, {});
     const counts = new Map<string, number>();
     for (const p of points) {
       const pid = (p.payload as UpperLayerPointPayload).projectId;

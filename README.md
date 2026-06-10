@@ -148,7 +148,7 @@ Natural language push (legacy):
   → accepted with warning: "DCP format recommended"
 
 DCP-native push (recommended):
-  { native: ["replace","auth",{"from":"jwt","to":"session"}], schema: "action:v1",
+  { native: ["replace","auth","jwt→session migration",0.9], schema: "knowledge:v1",
     index: "auth jwt→session", tags: [...] }
   → stored as-is. AI consumers receive native directly. Humans get decoded on request.
 ```

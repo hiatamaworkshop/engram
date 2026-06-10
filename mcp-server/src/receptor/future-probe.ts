@@ -454,7 +454,7 @@ export async function executeSearch(query: ProbeQuery, projectId?: string): Prom
   for (const r of actionResults) {
     results.push({
       id: r.id,
-      score: applyPostFilter(r.score, r.payload, query),
+      score: applyPostFilter(r.score, r.payload, query, r.vector),
       summary: r.payload.text || `[${r.payload.state}] entropy=${r.payload.entropy}`,
       source: "action_log",
     });
@@ -467,7 +467,7 @@ export async function executeSearch(query: ProbeQuery, projectId?: string): Prom
   for (const r of engramResults) {
     results.push({
       id: r.id,
-      score: applyPostFilter(r.score, r.payload, query),
+      score: applyPostFilter(r.score, r.payload, query, r.vector),
       summary: r.payload.summary || "(no summary)",
       tags: r.payload.tags,
       source: "engram",
@@ -566,7 +566,7 @@ async function searchQdrantWithThreshold(
   limit: number,
   scoreThreshold: number,
   projectId?: string,
-): Promise<Array<{ id: string; score: number; payload: Record<string, any> }>> {
+): Promise<Array<{ id: string; score: number; vector?: number[]; payload: Record<string, any> }>> {
   try {
     const filter = projectId
       ? { must: [{ key: "projectId", match: { value: projectId } }] }
@@ -609,13 +609,14 @@ function applyPostFilter(
   cosineScore: number,
   payload: Record<string, any>,
   query: ProbeQuery,
+  vector?: number[],
 ): number {
   let weight = 1.0;
 
   // --- Layer 1: Delta alignment ---
-  // If candidate has a vector, compute its implied delta relative to query centroid
-  if (payload.vector && query.delta) {
-    const candidateOffset = vecSub(payload.vector, query.vector);
+  // vector is top-level on Qdrant result, not inside payload
+  if (vector && query.delta) {
+    const candidateOffset = vecSub(vector, query.vector);
     const deltaCos = cosineSim(candidateOffset, query.delta);
     if (deltaCos > 0.3) {
       weight *= 1.2;   // same direction bonus

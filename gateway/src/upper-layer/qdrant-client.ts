@@ -145,6 +145,45 @@ export async function scrollPoints(
   return data.result.points;
 }
 
+export async function scrollAllPoints(
+  url: string,
+  collection: string,
+  filter: Record<string, unknown>,
+  pageSize = 500,
+): Promise<Array<{ id: string; payload: UpperLayerPointPayload }>> {
+  const all: Array<{ id: string; payload: UpperLayerPointPayload }> = [];
+  let offset: string | number | null = null;
+
+  for (;;) {
+    const body: Record<string, unknown> = { filter, limit: pageSize, with_payload: true };
+    if (offset !== null) body.offset = offset;
+
+    const res = await fetch(`${url}/collections/${collection}/points/scroll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Qdrant scroll failed (${res.status}): ${text}`);
+    }
+
+    const data = (await res.json()) as {
+      result: {
+        points: Array<{ id: string; payload: UpperLayerPointPayload }>;
+        next_page_offset: string | number | null;
+      };
+    };
+
+    all.push(...data.result.points);
+    if (!data.result.next_page_offset) break;
+    offset = data.result.next_page_offset;
+  }
+
+  return all;
+}
+
 export async function deletePoints(
   url: string,
   collection: string,

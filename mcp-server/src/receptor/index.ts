@@ -511,8 +511,9 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
     _watching = false;
     _startedAt = null;
 
-    // Release HTTP port so another instance can claim primary
-    stopReceptorHttp();
+    // HTTP server stays bound — port is released only on process exit.
+    // ingestEvent() returns early when !_watching, so events are silently dropped
+    // while stopped without affecting the discovery file or primary status.
 
     return { watching: false, message: msg };
   }
