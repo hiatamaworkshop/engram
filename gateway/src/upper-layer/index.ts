@@ -228,8 +228,9 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
   const hits = rawHits.filter((hit) => hit.score >= minRelevance);
 
   // Queue hit bumps — Digestor flushes at next batch tick
+  // (mycelium "read": appeared in recall results — weak usage signal)
   for (const hit of hits) {
-    queueBump(hit.id, 1, RECALL_WEIGHT_BUMP);
+    queueBump(hit.id, 1, RECALL_WEIGHT_BUMP, "read");
   }
 
   return hits.map((hit) => ({
@@ -303,7 +304,8 @@ export async function getNodeById(entryId: string): Promise<RecallResult | null>
   if (!point) return null;
 
   // Queue focused bump — Digestor flushes at next batch tick
-  queueBump(point.id, 1, FOCUSED_WEIGHT_BUMP);
+  // (mycelium "hit": deliberate fetch by id — strong usage signal)
+  queueBump(point.id, 1, FOCUSED_WEIGHT_BUMP, "hit");
 
   return {
     id: point.id,

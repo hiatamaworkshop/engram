@@ -26,6 +26,21 @@ export function loadConfig(): GatewayConfig {
     file.upperLayer.qdrantUrl = process.env.QDRANT_URL;
   }
 
+  // Collection — env override (Docker / secondary instances)
+  if (process.env.QDRANT_COLLECTION) {
+    if (!file.upperLayer) file.upperLayer = {};
+    file.upperLayer.collection = process.env.QDRANT_COLLECTION;
+  }
+
+  // Digestor batch interval — env override (dev / verification)
+  if (process.env.DIGESTOR_INTERVAL_MS) {
+    const ms = parseInt(process.env.DIGESTOR_INTERVAL_MS, 10);
+    if (Number.isFinite(ms) && ms >= 1000) {
+      if (!file.digestor) file.digestor = {};
+      file.digestor.intervalMs = ms;
+    }
+  }
+
   _config = file;
   return _config;
 }

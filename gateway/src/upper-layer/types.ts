@@ -20,6 +20,24 @@ export const DEFAULT_UPPER_LAYER_CONFIG: UpperLayerConfig = {
   maxDistance: 0.8,
 };
 
+/**
+ * Usage-side fuel signal for the mycelium filter (fuel loop F2).
+ * Read by mycelium_universal's nutrition-resolver as an additive bias
+ * on initial node conditions — absence means no-op on that side.
+ */
+export interface MyceliumMetrics {
+  /** Count of past mycelium runs this point survived as pure or merged. */
+  survived: number;
+  /** Classification from the most recent mycelium run. */
+  lastClass: "pure" | "merged" | "loner" | "redundant" | "dead";
+  /** Focused accesses (getNodeById) — strong usage signal. EMA-decayed. */
+  hits: number;
+  /** Recall search appearances — weak usage signal. EMA-decayed. */
+  reads: number;
+  /** Epoch ms of last metrics update — EMA decay reference point. */
+  updatedAt: number;
+}
+
 export interface UpperLayerPointPayload {
   summary: string;
   tags: string[];
@@ -39,6 +57,8 @@ export interface UpperLayerPointPayload {
   schema?: string;        // schema ID e.g. "knowledge:v1"
   index?: string;         // human-readable restore key
   autoEncoded?: boolean;  // true if system converted from natural language (Phase 1 fallback)
+  // Fuel loop (mycelium F2)
+  myceliumMetrics?: MyceliumMetrics;
 }
 
 export interface SearchOptions {

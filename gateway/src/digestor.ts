@@ -33,6 +33,7 @@ import {
 } from "./upper-layer/qdrant-client.js";
 import type { UpperLayerPointPayload } from "./upper-layer/types.js";
 import type { NodeStatus } from "./types.js";
+import { decayedUsage } from "./mycelium-metrics.js";
 
 // ---- Config ----
 
@@ -87,8 +88,9 @@ const activeProjects = new Map<string, number>(); // projectId → lastActivityM
 let timer: ReturnType<typeof setInterval> | null = null;
 let config: DigestorConfig = { ...DEFAULT_DIGESTOR_CONFIG };
 
-/** Pending hit/weight bumps — accumulated between batch ticks, flushed at batch start. */
-const pendingBumps = new Map<string, { hitDelta: number; weightDelta: number }>();
+/** Pending hit/weight bumps — accumulated between batch ticks, flushed at batch start.
+ *  mycHits/mycReads mirror usage into payload.myceliumMetrics (fuel loop F2). */
+const pendingBumps = new Map<string, { hitDelta: number; weightDelta: number; mycHits: number; mycReads: number }>();
 
 /** Cached node counts per project (+ "__global__" key for all). */
 const countsCache = new Map<string, { total: number; recent: number; fixed: number; updatedAt: number }>();
@@ -161,14 +163,19 @@ export function stopDigestor(): void {
 
 // ---- Bump queue (replaces fire-and-forget setPayload per recall) ----
 
-/** Queue a hit/weight bump — throttled: weight only bumped once per batch window per node. */
-export function queueBump(pointId: string, hitDelta: number, weightDelta: number): void {
+/** Queue a hit/weight bump — throttled: weight only bumped once per batch window per node.
+ *  `usage` mirrors the access into myceliumMetrics: "hit" = focused fetch, "read" = recall appearance. */
+export function queueBump(pointId: string, hitDelta: number, weightDelta: number, usage?: "hit" | "read"): void {
+  const mycHits = usage === "hit" ? 1 : 0;
+  const mycReads = usage === "read" ? 1 : 0;
   const existing = pendingBumps.get(pointId);
   if (existing) {
     // hitCount always accumulates, but weight is throttled (first bump wins)
     existing.hitDelta += hitDelta;
+    existing.mycHits += mycHits;
+    existing.mycReads += mycReads;
   } else {
-    pendingBumps.set(pointId, { hitDelta, weightDelta });
+    pendingBumps.set(pointId, { hitDelta, weightDelta, mycHits, mycReads });
   }
 }
 
@@ -449,20 +456,23 @@ async function flushPendingBumps(): Promise<void> {
   pendingBumps.clear();
 
   let flushed = 0;
-  for (const [pointId, { hitDelta, weightDelta }] of bumps) {
+  for (const [pointId, { hitDelta, weightDelta, mycHits, mycReads }] of bumps) {
     try {
       const point = await getPointById(config.qdrantUrl, config.collection, pointId);
       if (!point) continue;
 
-      await setPayload(
-        config.qdrantUrl,
-        config.collection,
-        [pointId],
-        {
-          hitCount: (point.payload.hitCount ?? 0) + hitDelta,
-          weight: round2((point.payload.weight ?? 0) + weightDelta),
-        } as Partial<UpperLayerPointPayload>,
-      );
+      const payload = point.payload as UpperLayerPointPayload;
+      const update: Partial<UpperLayerPointPayload> = {
+        hitCount: (payload.hitCount ?? 0) + hitDelta,
+        weight: round2((payload.weight ?? 0) + weightDelta),
+      };
+      // Fuel loop F2: mirror usage into myceliumMetrics only if the point
+      // already carries metrics (i.e. mycelium has seen it) — otherwise the
+      // no-op contract on the mycelium side stays intact for untouched nodes.
+      if (payload.myceliumMetrics && (mycHits > 0 || mycReads > 0)) {
+        update.myceliumMetrics = decayedUsage(payload.myceliumMetrics, mycHits, mycReads);
+      }
+      await setPayload(config.qdrantUrl, config.collection, [pointId], update);
       flushed++;
     } catch (err) {
       console.warn(`[digestor] bump flush failed for ${pointId}: ${(err as Error).message}`);

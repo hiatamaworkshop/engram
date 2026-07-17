@@ -7,6 +7,7 @@
 import { registerExecutor } from "./registry.js";
 import { callMcpTool, type McpServerDef } from "./mcp-executor.js";
 import { routeOutput, type OutputConfig } from "./output-router.js";
+import { processMyceliumResult } from "./mycelium-sink.js";
 import services from "./executor-services.json" with { type: "json" };
 
 // ---- Types (JSON schema) ----
@@ -16,6 +17,17 @@ interface ServiceDef {
   type: "mcp" | "shell" | "http";
   server?: McpServerDef;
 }
+
+// ---- Post-processors ----
+// Optional per-tool hook: receives the raw result, may perform side
+// effects (e.g. gateway write-back) and return a replacement string
+// for output routing. Returning null keeps the original result.
+
+type PostProcessor = (raw: string) => Promise<string | null>;
+
+const postProcessors: Record<string, PostProcessor> = {
+  mycelium_filter: processMyceliumResult,
+};
 
 // ---- Loader ----
 
@@ -44,7 +56,17 @@ export function loadExternalServices(): void {
               args.query = pathSegments.join(" ");
             }
 
-            const result = await callMcpTool(serverDef, toolName, args);
+            let result = await callMcpTool(serverDef, toolName, args);
+
+            const postProcess = postProcessors[toolName];
+            if (result && postProcess) {
+              try {
+                const replaced = await postProcess(result);
+                if (replaced !== null) result = replaced;
+              } catch (err) {
+                console.error(`[service-loader] ${toolName} post-process failed:`, err);
+              }
+            }
 
             if (result) {
               routeOutput({

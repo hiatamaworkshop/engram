@@ -9,6 +9,7 @@ import { initUpperLayer, checkUpperLayerHealth, getUpperLayerStats, embedForExte
 import { startDigestor, stopDigestor, addActiveProject, removeActiveProject, getActiveProjects, updateTtl, getTtlSeconds, touchProject, setExpireHandler } from "./digestor.js";
 import type { ExpiredNodeInfo } from "./digestor.js";
 import { handleMcpRequest } from "./mcp-endpoint.js";
+import { applyMyceliumReport, type MyceliumReportEntry } from "./mycelium-metrics.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 import { loadSchemas, getSchema, listSchemas } from "./schema-registry.js";
 
@@ -147,6 +148,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // POST /mycelium/report — fuel loop F2 write-back (receptor sink)
+  if (method === "POST" && url === "/mycelium/report") {
+    try {
+      const body = (await readBody(req)) as { entries?: MyceliumReportEntry[] };
+      if (!Array.isArray(body.entries)) {
+        sendJson(res, 400, { error: "entries array is required" });
+        return;
+      }
+      const qdrantUrl = cfg.upperLayer?.qdrantUrl ?? "http://localhost:6333";
+      const collection = cfg.upperLayer?.collection ?? "engram";
+      const updated = await applyMyceliumReport(qdrantUrl, collection, body.entries);
+      sendJson(res, 200, { status: "applied", updated, received: body.entries.length });
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
   // GET /status
   if (method === "GET" && url.startsWith("/status")) {
     try {
@@ -232,6 +251,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         "POST /embed": "Raw text embedding (384d vector)",
         "POST /feedback": "Submit weight signal (outdated, incorrect, superseded, merged)",
         "POST /activate": "Add project to Digestor scope",
+        "POST /mycelium/report": "Fuel loop write-back (myceliumMetrics from filter run)",
         "POST /deactivate": "Remove project from Digestor scope",
         "POST|GET /mcp": "Streamable HTTP MCP endpoint (5 tools, for remote clients)",
         "GET  /scan/:projectId": "Lightweight listing (?limit=10&tag=xxx&status=recent|fixed)",

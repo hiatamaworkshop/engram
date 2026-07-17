@@ -32,8 +32,8 @@
         "args": {
           "sourceQdrantUrl": "http://localhost:6333",
           "collections": "engram",
-          "runs": 3,
-          "format": "summary"
+          "consensusRuns": 3,
+          "viewFormat": ""
         },
         "output": { "targets": ["subsystem", "file", "log"], "format": "summary", "maxLength": 300 }
       }
