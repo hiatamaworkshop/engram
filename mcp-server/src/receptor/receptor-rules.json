@@ -33,7 +33,9 @@
           "sourceQdrantUrl": "http://localhost:6333",
           "collections": "engram",
           "consensusRuns": 3,
-          "viewFormat": ""
+          "filterHardness": "mid",
+          "viewFormat": "",
+          "excludeTags": "mycelium-filtered"
         },
         "output": { "targets": ["subsystem", "file", "log"], "format": "summary", "maxLength": 300 }
       }
