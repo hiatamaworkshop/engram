@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "mcp__engram__engram_pull",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(ls -d */)",
+      "Read(//c/Users/kazuh/Desktop/Various/programming/DockerFiles/dcp-docs/docs/research/**)",
+      "Read(//c/Users/kazuh/Desktop/Various/programming/DockerFiles/dcp-gateway/**)",
+      "Bash(node dist/tests/mock-mcp-server.js)"
     ]
   }
 }
