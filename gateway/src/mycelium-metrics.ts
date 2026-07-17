@@ -37,6 +37,14 @@ const HALFLIFE_MS = HALFLIFE_DAYS * 86_400_000;
 const SURVIVOR_CLASSES = new Set(["pure", "merged"]);
 const VALID_CLASSES = new Set(["pure", "merged", "loner", "redundant", "dead"]);
 
+// Echo-chamber guard (F3): entries whose classification is unstable
+// (consensusRate below this) get no fuel credit — survived / lastClass
+// stay untouched. Entries without a rate (single-run mode) pass through.
+const MIN_CONSENSUS = (() => {
+  const v = parseFloat(process.env.MYCELIUM_MIN_CONSENSUS ?? "0.6");
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.6;
+})();
+
 // ---- Report entry (posted by receptor sink) ----
 
 export interface MyceliumReportEntry {
@@ -92,8 +100,14 @@ export async function applyMyceliumReport(
   const now = Date.now();
   let updated = 0;
 
+  let lowConsensus = 0;
+
   for (const entry of entries) {
     if (!entry.pointId || !VALID_CLASSES.has(entry.classification)) continue;
+    if (entry.consensusRate != null && entry.consensusRate < MIN_CONSENSUS) {
+      lowConsensus++;
+      continue;
+    }
     try {
       const point = await getPointById(qdrantUrl, collection, entry.pointId);
       if (!point) continue;
@@ -120,8 +134,11 @@ export async function applyMyceliumReport(
     }
   }
 
-  if (updated > 0) {
-    console.log(`[mycelium-metrics] report applied: ${updated}/${entries.length} points updated`);
+  if (updated > 0 || lowConsensus > 0) {
+    console.log(
+      `[mycelium-metrics] report applied: ${updated}/${entries.length} points updated` +
+      (lowConsensus > 0 ? `, ${lowConsensus} skipped (consensus < ${MIN_CONSENSUS})` : ""),
+    );
   }
   return updated;
 }
