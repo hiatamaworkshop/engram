@@ -19,6 +19,7 @@ import type { UpperLayerConfig, SearchOptions, UpperLayerPointPayload } from "./
 import { DEFAULT_UPPER_LAYER_CONFIG } from "./types.js";
 import { configureEmbedding, embedText, embedTexts, isReady } from "./embedding.js";
 import { recordRecall } from "../recall-log.js";
+import { recordDedup } from "../dedup-log.js";
 import {
   ensureCollection,
   upsertPoints,
@@ -27,6 +28,7 @@ import {
   countPoints,
   getPointById,
   setPayload,
+  updateVectors,
   checkQdrantHealth,
 } from "./qdrant-client.js";
 import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js";
@@ -142,20 +144,43 @@ export async function ingestNodes(
 
     const hits = await searchPoints(config.qdrantUrl, config.collection, vector, projectFilter, 1);
     const top = hits[0];
+    const willMerge = Boolean(top && top.score >= DEDUP_THRESHOLD);
 
-    if (top && top.score >= DEDUP_THRESHOLD) {
-      // Merge into existing node: union tags, prefer new content/DCP if provided
+    // Observe every dedup decision, merged or not. The 0.92 cut discards
+    // its own evidence otherwise — see dedup-log.ts.
+    recordDedup({
+      summary: node.summary ?? "",
+      projectId,
+      topScore: top ? top.score : -1,
+      merged: willMerge,
+      targetSummary: top?.payload?.summary ?? "",
+      targetStatus: top?.payload?.status ?? "",
+      ts: now,
+    });
+
+    if (top && willMerge) {
+      // Merge into existing node: union tags, prefer new content/DCP if provided.
+      //
+      // The summary and its vector are replaced too. Keeping the old index
+      // while swapping the body is the incoherent middle: only the summary
+      // is embedded, so a node updated that way stays reachable solely by
+      // the wording it no longer says, and metabolism then kills it for
+      // not being recalled — punishing the correction, not the error.
+      // At >= 0.92 the two summaries are near-synonymous, so old queries
+      // still land. weight / status / ingestedAt stay untouched: a merge
+      // must not buy authority or reset the decay clock.
       const existing = top.payload;
       const mergedTags = Array.from(new Set([...(existing.tags ?? []), ...(node.tags ?? [])]));
       const patch: Partial<UpperLayerPointPayload> = {
+        summary: node.summary,
         tags: mergedTags,
-        hitCount: (existing.hitCount ?? 0) + 1,
         ...(node.content ? { content: node.content } : {}),
         ...(node.native ? { native: node.native } : {}),
         ...(node.schema ? { schema: node.schema } : {}),
         ...(node.index ? { index: node.index } : {}),
       };
       await setPayload(config.qdrantUrl, config.collection, [top.id], patch);
+      await updateVectors(config.qdrantUrl, config.collection, [{ id: top.id, vector }]);
       deduped++;
     } else {
       newPoints.push({

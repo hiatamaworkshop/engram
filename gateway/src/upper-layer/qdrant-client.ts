@@ -251,6 +251,30 @@ export async function setPayload(
   }
 }
 
+/**
+ * Replace vectors on existing points without touching their payload.
+ * upsertPoints would overwrite the whole payload — weight, hitCount and
+ * status included — so it must not be used to re-embed a merged node.
+ */
+export async function updateVectors(
+  url: string,
+  collection: string,
+  points: Array<{ id: string; vector: number[] }>,
+): Promise<void> {
+  if (points.length === 0) return;
+
+  const res = await fetch(`${url}/collections/${collection}/points/vectors`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Qdrant updateVectors failed (${res.status}): ${text}`);
+  }
+}
+
 // ---- Single point fetch ----
 
 export async function getPointById(

@@ -13,6 +13,7 @@ import { applyMyceliumReport, type MyceliumReportEntry } from "./mycelium-metric
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 import { loadSchemas, getSchema, listSchemas } from "./schema-registry.js";
 import { getRecallStats } from "./recall-log.js";
+import { getDedupStats } from "./dedup-log.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -212,6 +213,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // GET /dedup-log?limit=10 — write-path observation (score distribution + closest calls)
+  if (method === "GET" && url.startsWith("/dedup-log")) {
+    try {
+      const parsed = new URL(url, "http://localhost");
+      const limit = parseInt(parsed.searchParams.get("limit") ?? "10", 10);
+      sendJson(res, 200, getDedupStats(Math.min(Math.max(limit, 1), 30)));
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
   // GET /schemas — list all schema IDs
   if (method === "GET" && url === "/schemas") {
     sendJson(res, 200, { schemas: listSchemas() });
@@ -267,6 +280,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         "POST /mycelium/report": "Fuel loop write-back (myceliumMetrics from filter run)",
         "POST /deactivate": "Remove project from Digestor scope",
         "POST|GET /mcp": "Streamable HTTP MCP endpoint (5 tools, for remote clients)",
+        "GET  /recall-log": "Miss observation — recall score distribution + weakest queries",
+        "GET  /dedup-log": "Write-path observation — dedup score distribution + closest calls",
         "GET  /scan/:projectId": "Lightweight listing (?limit=10&tag=xxx&status=recent|fixed)",
         "GET  /schemas": "List all registered DCP schema IDs",
         "GET  /schemas/:id": "Full schema definition by ID",

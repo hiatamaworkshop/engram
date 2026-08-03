@@ -365,3 +365,40 @@ export async function getRecallLog(
     return null;
   }
 }
+
+export interface DedupProbe {
+  summary: string;
+  projectId: string;
+  topScore: number;
+  merged: boolean;
+  targetSummary: string;
+  targetStatus: string;
+  ts: number;
+}
+
+export interface DedupLogStats {
+  total: number;
+  merged: number;
+  mergedIntoFixed: number;
+  nearThreshold: number;
+  threshold: number;
+  buckets: Record<string, number>;
+  borderline: DedupProbe[];
+}
+
+/**
+ * Write-path observation — how close each ingest came to the dedup cut.
+ * Returns null on any failure: diagnostics, never load-bearing.
+ */
+export async function getDedupLog(
+  ctx: EngramContext,
+  limit = 5,
+): Promise<DedupLogStats | null> {
+  try {
+    const res = await fetch(`${ctx.gatewayUrl}/dedup-log?limit=${limit}`);
+    if (!res.ok) return null;
+    return (await res.json()) as DedupLogStats;
+  } catch {
+    return null;
+  }
+}

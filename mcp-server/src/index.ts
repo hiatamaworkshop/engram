@@ -29,7 +29,7 @@ import { z } from "zod";
 import { loadContext } from "./types.js";
 import type { NodeSeed } from "./types.js";
 import {
-  checkHealth, recallNodes, recallById, ingest, getStatus, getRecallLog, scan, feedback, activateProject, deactivateProject,
+  checkHealth, recallNodes, recallById, ingest, getStatus, getRecallLog, getDedupLog, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat, memoRecordRecall } from "./hot-memo.js";
 import { formatRecallDcp, formatScanDcp } from "./dcp-format.js";
@@ -316,6 +316,29 @@ server.tool(
             const score = w.topScore < 0 ? "none" : w.topScore.toFixed(2);
             const scope = w.projectId ? ` [${w.projectId}]` : "";
             lines.push(`    ${score}  ${w.query}${scope}`);
+          }
+        }
+      }
+
+      // Write-path observation — how close each ingest came to the dedup cut.
+      const dedupLog = await getDedupLog(ctx, 5);
+      if (dedupLog && dedupLog.total > 0) {
+        lines.push(
+          "",
+          `Dedup: ${dedupLog.merged}/${dedupLog.total} merged at >= ${dedupLog.threshold}` +
+            ` (into fixed: ${dedupLog.mergedIntoFixed}, near cut: ${dedupLog.nearThreshold})`,
+        );
+        const dist = Object.entries(dedupLog.buckets)
+          .filter(([, n]) => n > 0)
+          .map(([edge, n]) => `${edge}:${n}`)
+          .join(" ");
+        if (dist) lines.push(`  score distribution: ${dist}`);
+        if (dedupLog.borderline.length > 0) {
+          lines.push("  closest calls:");
+          for (const b of dedupLog.borderline) {
+            const verb = b.merged ? "merged" : "kept  ";
+            const target = b.targetSummary ? ` -> ${b.targetSummary}` : "";
+            lines.push(`    ${b.topScore.toFixed(3)} ${verb}  ${b.summary}${target}`);
           }
         }
       }
