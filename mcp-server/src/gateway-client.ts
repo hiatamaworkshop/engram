@@ -329,3 +329,39 @@ export async function getStatus(
   }
   return (await res.json()) as StatusResponse;
 }
+
+export interface RecallProbe {
+  query: string;
+  projectId?: string;
+  topScore: number;
+  returned: number;
+  ts: number;
+}
+
+export interface RecallLogStats {
+  total: number;
+  weak: number;
+  weakRate: number;
+  empty: number;
+  weakThreshold: number;
+  buckets: Record<string, number>;
+  worst: RecallProbe[];
+}
+
+/**
+ * Miss observation across the gateway's lifetime — wider than one agent
+ * session, since the gateway container outlives the MCP process.
+ * Returns null on any failure: this is diagnostics, never load-bearing.
+ */
+export async function getRecallLog(
+  ctx: EngramContext,
+  worst = 5,
+): Promise<RecallLogStats | null> {
+  try {
+    const res = await fetch(`${ctx.gatewayUrl}/recall-log?worst=${worst}`);
+    if (!res.ok) return null;
+    return (await res.json()) as RecallLogStats;
+  } catch {
+    return null;
+  }
+}

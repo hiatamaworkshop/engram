@@ -18,6 +18,7 @@ import type { NodeSeed, RecallResult, ScanEntry, NodeStatus, FeedbackSignal, Fee
 import type { UpperLayerConfig, SearchOptions, UpperLayerPointPayload } from "./types.js";
 import { DEFAULT_UPPER_LAYER_CONFIG } from "./types.js";
 import { configureEmbedding, embedText, embedTexts, isReady } from "./embedding.js";
+import { recordRecall } from "../recall-log.js";
 import {
   ensureCollection,
   upsertPoints,
@@ -226,6 +227,16 @@ export async function searchNodes(options: SearchOptions): Promise<RecallResult[
   // Filter out noise below minimum relevance threshold
   const minRelevance = 1 - config.maxDistance;
   const hits = rawHits.filter((hit) => hit.score >= minRelevance);
+
+  // Observe the miss side. What gets dropped here is the only evidence
+  // that a query found nothing — record it before it disappears.
+  recordRecall({
+    query,
+    projectId,
+    topScore: rawHits.length > 0 ? rawHits[0].score : -1,
+    returned: hits.length,
+    ts: Date.now(),
+  });
 
   // Queue hit bumps — Digestor flushes at next batch tick
   // (mycelium "read": appeared in recall results — weak usage signal)

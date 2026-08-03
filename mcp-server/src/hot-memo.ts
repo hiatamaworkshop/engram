@@ -26,9 +26,25 @@ interface PushRecord {
   timestamp: number;
 }
 
+/** One recall's best relevance. -1 when nothing came back at all. */
+interface RecallRecord {
+  query: string;
+  topRelevance: number;
+  timestamp: number;
+}
+
+/**
+ * Below this a recall counts as weak. Mirrors WEAK_THRESHOLD in the
+ * gateway's recall-log — both are provisional, both want the measured
+ * distribution from GET /recall-log to replace them.
+ */
+const WEAK_RELEVANCE = 0.5;
+
 const history: PushRecord[] = [];
+const recallHistory: RecallRecord[] = [];
 let toolCallsSinceLastPush = 0;
 let _trendShownThisSession = false;
+let _recallTrendShownThisSession = false;
 
 // ---- Public API ----
 
@@ -58,6 +74,20 @@ export function memoAdd(
   }
 }
 
+/**
+ * Record how well a recall scored. The miss side of the ratchet: weight
+ * says a node was pulled, this says a query found nothing worth pulling.
+ * Pass -1 for topRelevance when the recall returned no results at all.
+ */
+export function memoRecordRecall(query: string, topRelevance: number): void {
+  recallHistory.push({
+    query: query.slice(0, 60),
+    topRelevance,
+    timestamp: Date.now(),
+  });
+  if (recallHistory.length > MAX_HISTORY) recallHistory.shift();
+}
+
 /** Build DCP-native contextual memo. Returns empty string if nothing to say. */
 export function memoFormat(context: ToolContext): string {
   toolCallsSinceLastPush++;
@@ -72,9 +102,38 @@ export function memoFormat(context: ToolContext): string {
     }
   }
 
+  // Layer 1b: System Core — weak recall on the pull that just happened.
+  // Speaks only on a weak result, so a healthy pull stays silent.
+  if (context === "pull" && recallHistory.length > 0) {
+    const latest = recallHistory[recallHistory.length - 1];
+    if (latest.topRelevance < WEAK_RELEVANCE) {
+      const score = latest.topRelevance < 0 ? "none" : latest.topRelevance.toFixed(2);
+      rows.push(["quality", "recall", "weak", `top=${score} | ${latest.query}`]);
+    }
+  }
+
   // Layer 2: Data Status — session push count on status/ls
   if ((context === "status" || context === "ls") && history.length > 0) {
     rows.push(["session", "push-count", String(history.length), "this-session"]);
+  }
+
+  // Layer 2b: Data Status — weak recall tally on status/ls
+  if ((context === "status" || context === "ls") && recallHistory.length > 0) {
+    const weak = recallHistory.filter((r) => r.topRelevance < WEAK_RELEVANCE).length;
+    if (weak > 0) {
+      rows.push(["session", "recall-weak", `${weak}/${recallHistory.length}`, "this-session"]);
+    }
+  }
+
+  // Layer 3b: Data Menial — repeated weak recall. Knowledge that exists but
+  // cannot be found is a summary-vocabulary problem, not a value problem.
+  if (recallHistory.length >= 3 && !_recallTrendShownThisSession) {
+    const recent = recallHistory.slice(-3);
+    const weak = recent.filter((r) => r.topRelevance < WEAK_RELEVANCE).length;
+    if (weak >= 2) {
+      rows.push(["trend", "recall-weak", `${weak}/3`, "summary-vocabulary or missing knowledge"]);
+      _recallTrendShownThisSession = true;
+    }
   }
 
   // Layer 3: Data Menial — trend detection across recent pushes (once per session)

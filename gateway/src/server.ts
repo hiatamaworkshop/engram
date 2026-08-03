@@ -12,6 +12,7 @@ import { handleMcpRequest } from "./mcp-endpoint.js";
 import { applyMyceliumReport, type MyceliumReportEntry } from "./mycelium-metrics.js";
 import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, DeactivateRequest, HealthResponse, NodeStatus } from "./types.js";
 import { loadSchemas, getSchema, listSchemas } from "./schema-registry.js";
+import { getRecallStats } from "./recall-log.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -193,6 +194,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const sort = (sortRaw === "recent" || sortRaw === "weight") ? sortRaw : undefined;
       const result = await handleScan(projectId, Math.min(Math.max(limit, 1), 30), tag, status, sort);
       sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  // GET /recall-log?worst=10 — miss observation (score distribution + weakest queries)
+  if (method === "GET" && url.startsWith("/recall-log")) {
+    try {
+      const parsed = new URL(url, "http://localhost");
+      const worst = parseInt(parsed.searchParams.get("worst") ?? "10", 10);
+      sendJson(res, 200, getRecallStats(Math.min(Math.max(worst, 1), 30)));
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }

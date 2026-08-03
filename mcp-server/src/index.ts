@@ -29,9 +29,9 @@ import { z } from "zod";
 import { loadContext } from "./types.js";
 import type { NodeSeed } from "./types.js";
 import {
-  checkHealth, recallNodes, recallById, ingest, getStatus, scan, feedback, activateProject, deactivateProject,
+  checkHealth, recallNodes, recallById, ingest, getStatus, getRecallLog, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
-import { memoAdd, memoFormat } from "./hot-memo.js";
+import { memoAdd, memoFormat, memoRecordRecall } from "./hot-memo.js";
 import { formatRecallDcp, formatScanDcp } from "./dcp-format.js";
 import { setWatch, ingestEvent, formatState, registerExecutor, loadExternalServices, routeOutput, registerSink, setLastPushNodeId, recordEngramWeights } from "./receptor/index.js";
 import { startReceptorHttp, isReceptorPrimary, stopReceptorHttp } from "./receptor/http.js";
@@ -101,6 +101,15 @@ server.tool(
 
       const response = await recallNodes(ctx, query, projectId, limit, minWeight, status, queryType);
 
+      // Observe the miss side before any early return — a recall that finds
+      // nothing is the one case that used to leave no trace anywhere.
+      memoRecordRecall(
+        query,
+        response.results.length > 0
+          ? Math.max(...response.results.map((r) => r.relevance))
+          : -1,
+      );
+
       if (response.results.length === 0) {
         const scope = projectId ? ` in project:${projectId}` : "";
         const hints = [
@@ -114,7 +123,7 @@ server.tool(
           "- Browse tags with engram_ls",
         ].filter(Boolean).join("\n");
         return {
-          content: [{ type: "text", text: hints }],
+          content: [{ type: "text", text: hints + memoFormat("pull") }],
         };
       }
 
@@ -285,6 +294,29 @@ server.tool(
         lines.push("", "Projects:");
         for (const p of status.projects) {
           lines.push(`  ${p.projectId} (${p.count} nodes)`);
+        }
+      }
+
+      // Miss observation — what was searched for and not found.
+      const recallLog = await getRecallLog(ctx, 5);
+      if (recallLog && recallLog.total > 0) {
+        lines.push(
+          "",
+          `Recall misses: ${recallLog.weak}/${recallLog.total} below ${recallLog.weakThreshold}` +
+            ` (empty: ${recallLog.empty})`,
+        );
+        const dist = Object.entries(recallLog.buckets)
+          .filter(([, n]) => n > 0)
+          .map(([edge, n]) => `${edge}:${n}`)
+          .join(" ");
+        if (dist) lines.push(`  score distribution: ${dist}`);
+        if (recallLog.worst.length > 0) {
+          lines.push("  weakest queries:");
+          for (const w of recallLog.worst) {
+            const score = w.topScore < 0 ? "none" : w.topScore.toFixed(2);
+            const scope = w.projectId ? ` [${w.projectId}]` : "";
+            lines.push(`    ${score}  ${w.query}${scope}`);
+          }
         }
       }
 
