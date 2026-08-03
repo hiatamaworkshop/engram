@@ -38,8 +38,11 @@ This file is a DCP-native instruction set for LLM consumers. Append to ~/.claude
   ["never","push-obvious-info"],
 
   ["when","push","1-seed-1-topic"],
-  ["def","summary",{"chars":[10,150],"style":"keyword-rich","note":"only-embedded-field"}],
-  ["def","content",{"optional":true,"include":["root-cause","rationale","details"]}],
+  ["when","push","dcp-native",{"require":["native","schema"],"default-schema":"knowledge:v1"}],
+  ["def","summary",{"chars":[10,150],"lang":"en","style":"keyword-rich","note":"only-embedded-field"}],
+  ["never","summary-non-english","reason:dedup-0.92-cut-is-language-dependent"],
+  ["note","measured-2026-08-04:negation-of-existing-summary→en:0.7958(kept) ja:0.9221(merged)"],
+  ["def","content",{"optional":true,"lang":"en","include":["root-cause","rationale","details"]}],
   ["def","tags",{"layer1":["howto","where","why","gotcha"],"layer2":"domain-specific"}],
   ["never","tag-with-projectId","redundant:scan-filters"],
   ["never","generic-tags","use-layer-system"],

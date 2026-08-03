@@ -48,9 +48,19 @@ let _recallTrendShownThisSession = false;
 
 // ---- Public API ----
 
+/**
+ * Summaries must be English. Not a style preference: summary is the only
+ * embedded field, and the 0.92 dedup cut is language-dependent — measured
+ * 2026-08-04, a negation of an existing summary scores 0.7958 in English
+ * (kept as its own node) but 0.9221 in Japanese, i.e. silently merged into
+ * the claim it contradicts. Non-ASCII is a coarse proxy, and deliberately
+ * so: it is cheap, has no false negatives for CJK, and only ever warns.
+ */
+const NON_ASCII = /[^\x00-\x7F]/;
+
 /** Record pushed seeds with quality flags. */
 export function memoAdd(
-  seeds: Array<{ summary: string; tags?: string[] }>,
+  seeds: Array<{ summary: string; tags?: string[]; native?: unknown[] }>,
 ): void {
   toolCallsSinceLastPush = 0;
 
@@ -63,6 +73,12 @@ export function memoAdd(
     }
     if (seed.summary.length < 20) {
       flags.push("brief");
+    }
+    if (NON_ASCII.test(seed.summary)) {
+      flags.push("non-english");
+    }
+    if (!seed.native) {
+      flags.push("no-dcp");
     }
 
     history.push({
@@ -136,16 +152,20 @@ export function memoFormat(context: ToolContext): string {
     }
   }
 
-  // Layer 3: Data Menial — trend detection across recent pushes (once per session)
+  // Layer 3: Data Menial — trend detection across recent pushes (once per session).
+  // Generic over every flag: a rule that only warns per-push is a rule that can
+  // be ignored three times in a row without anything escalating.
   if (history.length >= 3 && !_trendShownThisSession) {
     const recent = history.slice(-3);
-    const briefCount = recent.filter((p) => p.flags.includes("brief")).length;
-    const noTagCount = recent.filter((p) => p.flags.includes("no-type-tag")).length;
-    if (briefCount >= 2 || noTagCount >= 2) {
-      const parts: string[] = [];
-      if (briefCount >= 2) parts.push("brief");
-      if (noTagCount >= 2) parts.push("no-type-tag");
-      rows.push(["trend", "push-quality", parts.join(","), "recent-3"]);
+    const counts = new Map<string, number>();
+    for (const p of recent) {
+      for (const f of p.flags) counts.set(f, (counts.get(f) ?? 0) + 1);
+    }
+    const repeated = [...counts.entries()]
+      .filter(([, n]) => n >= 2)
+      .map(([f]) => f);
+    if (repeated.length > 0) {
+      rows.push(["trend", "push-quality", repeated.join(","), "recent-3"]);
       _trendShownThisSession = true;
     }
   }

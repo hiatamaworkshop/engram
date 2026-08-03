@@ -171,9 +171,9 @@ server.tool(
 // ============================================================
 
 const nodeSeedSchema = z.object({
-  summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars). Specific, starts with verb/noun."),
+  summary: z.string().min(10).max(200).describe("Knowledge headline (10-200 chars), ENGLISH ONLY. Specific, starts with verb/noun. English is not a style rule: this is the only embedded field, and the 0.92 dedup cut behaves differently per language — a negation of an existing summary scores 0.7958 in English (kept separate) but 0.9221 in Japanese (silently merged into the claim it contradicts)."),
   tags: z.array(z.string()).min(0).max(5).default([]).describe("0-5 lowercase hyphenated tags. Auto-generated from summary if empty."),
-  content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference."),
+  content: z.string().optional().describe("Detailed explanation, rationale, gotchas for future reference. English."),
   // DCP native fields (recommended — see DATA_COST_PROTOCOL.md)
   native: z.array(z.unknown()).optional().describe("DCP compact positional array. Recommended for AI-to-AI efficiency. e.g. [\"fix\",\"docker\",\"port conflict\",0.9]"),
   schema: z.string().optional().describe("DCP schema ID. e.g. \"knowledge:v1\". Required when native is provided."),
@@ -182,7 +182,7 @@ const nodeSeedSchema = z.object({
 
 server.tool(
   "engram_push",
-  `Submit 1-8 knowledge seeds. 1 seed = 1 topic. DCP native format recommended (include native + schema fields). Primary schema: knowledge:v1 → [action:string(add|replace|remove|fix|discover|configure|gotcha), domain:string, detail:string|object, confidence:number(0-1)]. Example: native:["fix","docker","port 3100 conflict",0.9], schema:"knowledge:v1". Other schemas available via gateway GET /schemas.`,
+  `Submit 1-8 knowledge seeds. 1 seed = 1 topic. Summary and content are ENGLISH ONLY (the dedup threshold is language-dependent — see the summary field). DCP native format expected (include native + schema fields). Primary schema: knowledge:v1 → [action:string(add|replace|remove|fix|discover|configure|gotcha), domain:string, detail:string|object, confidence:number(0-1)]. Example: native:["fix","docker","port 3100 conflict",0.9], schema:"knowledge:v1". Other schemas available via gateway GET /schemas.`,
   {
     capsuleSeeds: z.array(nodeSeedSchema).min(1).max(8).describe("Pre-extracted knowledge nodes (1-8 NodeSeeds)"),
     projectId: z.string().optional().describe("Project identifier (defaults to ENGRAM_PROJECT_ID)"),
@@ -218,7 +218,7 @@ server.tool(
         resolvedSessionId,
       );
 
-      memoAdd(capsuleSeeds as Array<{ summary: string; tags?: string[] }>);
+      memoAdd(capsuleSeeds as Array<{ summary: string; tags?: string[]; native?: unknown[] }>);
 
       // Link session points to this push event
       setLastPushNodeId(resolvedSessionId);
