@@ -440,6 +440,7 @@ function parseHookPayload(json: Record<string, unknown>): RawHookEvent | null {
   // Bash: extract exit_code from tool_response
   if (toolName === "Bash") {
     event.exit_code = extractExitCode(toolResponse);
+    event.interrupted = extractInterrupted(toolResponse);
   }
 
   // Search tools: inject resultCount into tool_input for normalizer
@@ -463,7 +464,8 @@ function parseHookPayload(json: Record<string, unknown>): RawHookEvent | null {
  * There is NO explicit exit_code field. We infer failure from:
  *   1. returnCodeInterpretation exists (any non-success result)
  *   2. stderr is non-empty (fallback heuristic)
- *   3. interrupted === true
+ *
+ * interrupted is deliberately NOT handled here — see extractInterrupted().
  */
 function extractExitCode(response: unknown): number | undefined {
   if (response == null) return undefined;
@@ -474,9 +476,6 @@ function extractExitCode(response: unknown): number | undefined {
     // Direct exit_code field (future-proofing)
     if (typeof r.exit_code === "number") return r.exit_code;
     if (typeof r.exitCode === "number") return r.exitCode;
-
-    // Interrupted → treat as failure
-    if (r.interrupted === true) return 130; // SIGINT convention
 
     // returnCodeInterpretation exists → non-zero exit
     if (typeof r.returnCodeInterpretation === "string") return 1;
@@ -492,6 +491,19 @@ function extractExitCode(response: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Detect user interrupt (Ctrl-C) from tool_response.
+ *
+ * Kept out of extractExitCode on purpose: an interrupt is a human-side
+ * signal, not evidence the command failed. Folding it into exit_code puts
+ * it in bashFailRate, so "user cancelled a slow command" reads as
+ * trial-and-error frustration and drags the state toward stuck.
+ */
+function extractInterrupted(response: unknown): boolean {
+  if (response == null || typeof response !== "object") return false;
+  return (response as Record<string, unknown>).interrupted === true;
 }
 
 /**

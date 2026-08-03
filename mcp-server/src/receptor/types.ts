@@ -20,7 +20,7 @@ export interface NormalizedEvent {
   eventId: number;
   action: NormalizedAction;
   path?: string;
-  result?: "success" | "failure" | "empty";
+  result?: "success" | "failure" | "empty" | "interrupted";
   ts: number;
   promptLength?: number;     // user_prompt only: character count
   turnInterval?: number;     // user_prompt only: ms since last user prompt

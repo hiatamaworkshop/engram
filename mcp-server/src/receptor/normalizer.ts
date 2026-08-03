@@ -29,6 +29,7 @@ export interface RawHookEvent {
   tool_name: string;
   tool_input?: Record<string, unknown>;
   exit_code?: number;
+  interrupted?: boolean;    // Bash: user pressed Ctrl-C — not a command failure
   // Claude Code hooks provide these fields
   prompt_content?: string;  // UserPromptSubmit: raw user text (used for length only)
 }
@@ -45,7 +46,7 @@ let _lastPromptTs = 0;
 // ---- Normalize ----
 
 export function normalize(raw: RawHookEvent): NormalizedEvent | null {
-  const { tool_name, tool_input, exit_code } = raw;
+  const { tool_name, tool_input, exit_code, interrupted } = raw;
   const eventId = _nextEventId++;
 
   // UserPromptSubmit → user_prompt (dialogue input)
@@ -94,7 +95,12 @@ export function normalize(raw: RawHookEvent): NormalizedEvent | null {
 
   // Determine result
   let result: NormalizedEvent["result"] = "success";
-  if (action === "shell_exec" && exit_code !== undefined && exit_code !== 0) {
+  if (action === "shell_exec" && interrupted === true) {
+    // Own channel, not "failure": bashFailRate must stay a measure of
+    // commands failing. A user interrupt says something about the human,
+    // not about the command, and mixing the two inflates trial_error.
+    result = "interrupted";
+  } else if (action === "shell_exec" && exit_code !== undefined && exit_code !== 0) {
     result = "failure";
   }
   if (action === "search" && tool_input) {
