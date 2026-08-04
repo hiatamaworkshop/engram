@@ -28,7 +28,6 @@ import {
   countPoints,
   getPointById,
   setPayload,
-  updateVectors,
   checkQdrantHealth,
 } from "./qdrant-client.js";
 import { queueBump, getCachedCounts, getCachedProjectList } from "../digestor.js";
@@ -118,6 +117,13 @@ function scheduleRetry(): void {
 
 const DEDUP_THRESHOLD = 0.92;
 
+/**
+ * Prefix for content carried across a summary-replacing merge without a
+ * replacement body. Greppable; recall surfaces it as-is so the reader sees
+ * the content predates the current wording.
+ */
+const SUPERSEDED_MARK = "[carried from superseded summary: ";
+
 export async function ingestNodes(
   nodes: NodeSeed[],
   projectId: string,
@@ -171,16 +177,35 @@ export async function ingestNodes(
       // must not buy authority or reset the decay clock.
       const existing = top.payload;
       const mergedTags = Array.from(new Set([...(existing.tags ?? []), ...(node.tags ?? [])]));
-      const patch: Partial<UpperLayerPointPayload> = {
+
+      // When the summary is replaced but no new content arrives, the old
+      // content survives under a wording it was not written for. It is kept
+      // for traceability, but marked so the mismatch is declared instead of
+      // silent. Marked once — the marker names the summary the content was
+      // authored under, and a second carry must not overwrite that.
+      let carriedContent: string | undefined;
+      if (!node.content && existing.content && !existing.content.startsWith(SUPERSEDED_MARK)) {
+        const oldSummary = (existing.summary ?? "").slice(0, 120);
+        carriedContent = `${SUPERSEDED_MARK}"${oldSummary}"]\n${existing.content}`;
+      }
+
+      // Whole-point replace in ONE request. setPayload + updateVectors was
+      // two requests, and a failure between them left the new summary
+      // indexed under the old vector — the exact incoherence this merge
+      // path exists to prevent.
+      const mergedPayload: UpperLayerPointPayload = {
+        ...existing,
         summary: node.summary,
         tags: mergedTags,
         ...(node.content ? { content: node.content } : {}),
+        ...(carriedContent ? { content: carriedContent } : {}),
         ...(node.native ? { native: node.native } : {}),
         ...(node.schema ? { schema: node.schema } : {}),
         ...(node.index ? { index: node.index } : {}),
       };
-      await setPayload(config.qdrantUrl, config.collection, [top.id], patch);
-      await updateVectors(config.qdrantUrl, config.collection, [{ id: top.id, vector }]);
+      await upsertPoints(config.qdrantUrl, config.collection, [
+        { id: top.id, vector, payload: mergedPayload },
+      ]);
       deduped++;
     } else {
       newPoints.push({

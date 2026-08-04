@@ -53,10 +53,13 @@ let _recallTrendShownThisSession = false;
  * embedded field, and the 0.92 dedup cut is language-dependent — measured
  * 2026-08-04, a negation of an existing summary scores 0.7958 in English
  * (kept as its own node) but 0.9221 in Japanese, i.e. silently merged into
- * the claim it contradicts. Non-ASCII is a coarse proxy, and deliberately
- * so: it is cheap, has no false negatives for CJK, and only ever warns.
+ * the claim it contradicts. Matches CJK script ranges only (kana, unified
+ * ideographs, hangul, fullwidth forms) — not bare non-ASCII, which would
+ * flag legitimate English punctuation (—, ≥, →) and train the reader to
+ * ignore the one flag that matters.
  */
-const NON_ASCII = /[^\x00-\x7F]/;
+const CJK_SCRIPT =
+  /[　-ヿ㐀-䶿一-鿿豈-﫿가-힯＀-￯]/;
 
 /** Record pushed seeds with quality flags. */
 export function memoAdd(
@@ -74,7 +77,7 @@ export function memoAdd(
     if (seed.summary.length < 20) {
       flags.push("brief");
     }
-    if (NON_ASCII.test(seed.summary)) {
+    if (CJK_SCRIPT.test(seed.summary)) {
       flags.push("non-english");
     }
     if (!seed.native) {
