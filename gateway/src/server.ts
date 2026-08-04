@@ -14,6 +14,7 @@ import type { RecallRequest, IngestRequest, FeedbackRequest, ActivateRequest, De
 import { loadSchemas, getSchema, listSchemas } from "./schema-registry.js";
 import { getRecallStats } from "./recall-log.js";
 import { getDedupStats } from "./dedup-log.js";
+import { getDigestStats } from "./digest-log.js";
 
 const cfg = loadConfig();
 const PORT = parseInt(process.env.PORT ?? String(cfg.server.port), 10);
@@ -225,6 +226,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // GET /digest-log?recent=10 — metabolism observation (deaths, demotions, promotions)
+  if (method === "GET" && url.startsWith("/digest-log")) {
+    try {
+      const parsed = new URL(url, "http://localhost");
+      const recent = parseInt(parsed.searchParams.get("recent") ?? "10", 10);
+      sendJson(res, 200, getDigestStats(Math.min(Math.max(recent, 1), 30)));
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
   // GET /schemas — list all schema IDs
   if (method === "GET" && url === "/schemas") {
     sendJson(res, 200, { schemas: listSchemas() });
@@ -282,6 +295,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         "POST|GET /mcp": "Streamable HTTP MCP endpoint (5 tools, for remote clients)",
         "GET  /recall-log": "Miss observation — recall score distribution + weakest queries",
         "GET  /dedup-log": "Write-path observation — dedup score distribution + closest calls",
+        "GET  /digest-log": "Metabolism observation — deaths, demotions, promotions + died-unseen rate",
         "GET  /scan/:projectId": "Lightweight listing (?limit=10&tag=xxx&status=recent|fixed)",
         "GET  /schemas": "List all registered DCP schema IDs",
         "GET  /schemas/:id": "Full schema definition by ID",

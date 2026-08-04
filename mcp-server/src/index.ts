@@ -29,7 +29,7 @@ import { z } from "zod";
 import { loadContext } from "./types.js";
 import type { NodeSeed } from "./types.js";
 import {
-  checkHealth, recallNodes, recallById, ingest, getStatus, getRecallLog, getDedupLog, scan, feedback, activateProject, deactivateProject,
+  checkHealth, recallNodes, recallById, ingest, getStatus, getRecallLog, getDedupLog, getDigestLog, scan, feedback, activateProject, deactivateProject,
 } from "./gateway-client.js";
 import { memoAdd, memoFormat, memoRecordRecall } from "./hot-memo.js";
 import { formatRecallDcp, formatScanDcp } from "./dcp-format.js";
@@ -316,6 +316,32 @@ server.tool(
             const score = w.topScore < 0 ? "none" : w.topScore.toFixed(2);
             const scope = w.projectId ? ` [${w.projectId}]` : "";
             lines.push(`    ${score}  ${w.query}${scope}`);
+          }
+        }
+      }
+
+      // Metabolism observation — the arbiter's rulings, previously console-only.
+      const digestLog = await getDigestLog(ctx, 5);
+      if (digestLog && (digestLog.promoted + digestLog.expired + digestLog.demoted) > 0) {
+        lines.push(
+          "",
+          `Metabolism: promoted ${digestLog.promoted}, died ${digestLog.expired}, demoted ${digestLog.demoted}` +
+            ` (${digestLog.ticks} active ticks)`,
+        );
+        if (digestLog.expired > 0) {
+          lines.push(`  died unseen (never recalled): ${digestLog.diedUnseen}/${digestLog.expired}`);
+          const ages = Object.entries(digestLog.deathAges)
+            .map(([label, n]) => `${label}:${n}`)
+            .join(" ");
+          if (ages) lines.push(`  death age: ${ages}`);
+        }
+        if (digestLog.recent.length > 0) {
+          lines.push("  recent verdicts:");
+          for (const e of digestLog.recent) {
+            const age = e.ageMs < 0 ? "?" : `${Math.round(e.ageMs / 3_600_000 * 10) / 10}h`;
+            lines.push(
+              `    ${e.kind.padEnd(9)} w=${e.weight} hits=${e.hitCount} age=${age}  ${e.summary} [${e.projectId}]`,
+            );
           }
         }
       }

@@ -34,6 +34,7 @@ import {
 import type { UpperLayerPointPayload } from "./upper-layer/types.js";
 import type { NodeStatus } from "./types.js";
 import { decayedUsage } from "./mycelium-metrics.js";
+import { recordLifecycle, recordTick } from "./digest-log.js";
 
 // ---- Config ----
 
@@ -305,6 +306,9 @@ async function runProjectBatch(projectId: string): Promise<void> {
 
   // Collect expired node info for sink notification
   const expiredNodes: ExpiredNodeInfo[] = [];
+  const nowMs = Date.now();
+  const ageOf = (p: UpperLayerPointPayload): number =>
+    p.ingestedAt ? nowMs - p.ingestedAt : -1;
 
   // ---- Pass 1: Recent nodes ----
 
@@ -321,6 +325,15 @@ async function runProjectBatch(projectId: string): Promise<void> {
 
     if (weight >= config.promotionThreshold && hitCount >= config.promotionHitCount) {
       toPromote.push(point.id);
+      recordLifecycle({
+        kind: "promotion",
+        summary: p.summary ?? "",
+        projectId,
+        weight,
+        hitCount,
+        ageMs: ageOf(p),
+        ts: nowMs,
+      });
     } else {
       const newTtl = currentTtl - decrement;
       const newWeight = round2(weight - effectiveDecay);
@@ -334,6 +347,15 @@ async function runProjectBatch(projectId: string): Promise<void> {
           projectId,
           weight: p.weight ?? 0,
           reason: "ttl_expired",
+        });
+        recordLifecycle({
+          kind: "death",
+          summary: p.summary ?? "",
+          projectId,
+          weight,
+          hitCount,
+          ageMs: ageOf(p),
+          ts: nowMs,
         });
       } else {
         const key = `${newTtl}:${newWeight}`;
@@ -391,6 +413,15 @@ async function runProjectBatch(projectId: string): Promise<void> {
         weight,
         reason: "soft_demotion",
       });
+      recordLifecycle({
+        kind: "demotion",
+        summary: p.summary ?? "",
+        projectId,
+        weight,
+        hitCount: p.hitCount ?? 0,
+        ageMs: ageOf(p),
+        ts: nowMs,
+      });
     } else {
       const key = `${newWeight}`;
       const group = fixedUpdate.get(key) ?? [];
@@ -435,6 +466,20 @@ async function runProjectBatch(projectId: string): Promise<void> {
     `promoted=${toPromote.length} expired=${toExpire.length} demoted=${toDemote.length} ` +
     `updated=${recentUpdated}+${fixedUpdated}`,
   );
+
+  // Only ticks that changed something are worth a slot in the ring buffer —
+  // idle projects would otherwise flush real verdicts out of it.
+  if (toPromote.length + toExpire.length + toDemote.length > 0) {
+    recordTick({
+      projectId,
+      total: allPoints.length,
+      promoted: toPromote.length,
+      expired: toExpire.length,
+      demoted: toDemote.length,
+      decayMultiplier: density.decayMultiplier,
+      ts: nowMs,
+    });
+  }
 
   // Refresh per-project counts cache after batch
   try {

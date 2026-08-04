@@ -402,3 +402,41 @@ export async function getDedupLog(
     return null;
   }
 }
+
+export interface LifecycleEvent {
+  kind: "death" | "demotion" | "promotion";
+  summary: string;
+  projectId: string;
+  weight: number;
+  hitCount: number;
+  ageMs: number;
+  ts: number;
+}
+
+export interface DigestLogStats {
+  ticks: number;
+  promoted: number;
+  expired: number;
+  demoted: number;
+  diedUnseen: number;
+  unseenRate: number;
+  deathAges: Record<string, number>;
+  recent: LifecycleEvent[];
+}
+
+/**
+ * Metabolism observation — what the digestor promoted, demoted and killed.
+ * Returns null on any failure: diagnostics, never load-bearing.
+ */
+export async function getDigestLog(
+  ctx: EngramContext,
+  recent = 5,
+): Promise<DigestLogStats | null> {
+  try {
+    const res = await fetch(`${ctx.gatewayUrl}/digest-log?recent=${recent}`);
+    if (!res.ok) return null;
+    return (await res.json()) as DigestLogStats;
+  } catch {
+    return null;
+  }
+}
