@@ -284,7 +284,18 @@ function evaluate(signals: FireSignal[]): ScoredMethod[] {
 /** Auto-mode execution results (consumed by method resolver). */
 let _autoQueue: ScoredMethod[] = [];
 
+type DispatchListener = (fired: ScoredMethod[]) => void;
+const _dispatchListeners: DispatchListener[] = [];
+
+/** Observe what was dispatched (label sampling). Listeners must not throw into dispatch. */
+export function onDispatch(listener: DispatchListener): void {
+  _dispatchListeners.push(listener);
+}
+
 function dispatch(fired: ScoredMethod[]): void {
+  for (const l of _dispatchListeners) {
+    try { l(fired); } catch { /* observers must not break dispatch */ }
+  }
   const now = Date.now();
 
   for (const method of fired) {

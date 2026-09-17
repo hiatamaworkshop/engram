@@ -17,8 +17,9 @@ import {
 } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
+import { recordForLabel, sampleForLabel, clearLabelSampler } from "./labels.js";
 import {
-  onFireSignals, formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue,
+  onDispatch, onFireSignals, formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue,
   type ScoredMethod,
 } from "./passive.js";
 import { detectStaleness } from "../pre-neuron/staleness-detector.js";
@@ -66,6 +67,8 @@ export function onSignal(listener: SignalListener): void {
 // ---- Passive receptor (interpretation layer) ----
 // Registered as built-in listener. Scores methods from receptor-rules.json.
 _listeners.push(onFireSignals);
+// Human-label sampling (§7): keep the window behind agent-visible dispatches
+onDispatch((fired) => sampleForLabel(fired, _lastSignals));
 
 // Re-export passive receptor API for hotmemo integration
 export { formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue };
@@ -382,6 +385,7 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
     clearPersonaState();
     clearSessionPoints();
     clearAdoption();
+    clearLabelSampler();
     _lastHeatmapFlush = 0;
 
     // Phase 3: Apply prior persona to fresh ambient
@@ -549,6 +553,7 @@ export function ingestEvent(raw: RawHookEvent): void {
   }
   commander.record(event);
   observeAdoption(event, commander.shortSnapshot().pattern);
+  recordForLabel(event);
 
   // Pre-neuron monitor: staleness check (fire-and-forget, after record)
   if (touchesPath && event.path && (event.action === "file_read" || event.action === "file_edit")) {

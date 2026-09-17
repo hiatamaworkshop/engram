@@ -17,16 +17,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import calibratedFile from "./receptor-calibrated.json" with { type: "json" };
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 export const DELTA_BOUND = 0.30;
 
 export type Delta = Record<string, number>;
 
-export const LEARNED_DELTA_PATH = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname ?? ".", ".."),
-  "receptor-output",
-  "learned-delta.json",
-);
+export const LEARNED_DELTA_PATH = path.join(RECEPTOR_OUTPUT_DIR, "learned-delta.json");
 
 export function clampDelta(v: number): number {
   return Math.max(-DELTA_BOUND, Math.min(DELTA_BOUND, v));

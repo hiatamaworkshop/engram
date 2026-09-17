@@ -15,6 +15,7 @@
 import type { NormalizedEvent, PatternKind } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 /** Tool events (user prompts excluded) a delivery stays open for. */
 export const ADOPTION_WINDOW = 10;
@@ -193,11 +194,7 @@ export function extractBasenames(text: string): Set<string> {
   return out;
 }
 
-const SINK_PATH = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname ?? ".", ".."),
-  "receptor-output",
-  "adoption.jsonl",
-);
+const SINK_PATH = path.join(RECEPTOR_OUTPUT_DIR, "adoption.jsonl");
 
 function fileSink(rec: AdoptionRecord): void {
   fs.mkdirSync(path.dirname(SINK_PATH), { recursive: true });
