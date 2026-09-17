@@ -17,7 +17,8 @@ import {
 } from "./emotion.js";
 import { AmbientEstimator } from "./ambient.js";
 import { MetaNeuron } from "./meta.js";
-import { recordForLabel, sampleForLabel, clearLabelSampler } from "./labels.js";
+import { recordForLabel, recordDirectives, sampleForLabel, clearLabelSampler } from "./labels.js";
+import { matchDirectives } from "./intent.js";
 import {
   onDispatch, onFireSignals, formatRecommendations, drainRecommendations, drainRecommendationsDcp, drainAutoQueue,
   type ScoredMethod,
@@ -532,6 +533,12 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
 /** Ingest a raw hook event. Called from hook shell script via HTTP or internal. */
 export function ingestEvent(raw: RawHookEvent): void {
   if (!_watching) return;
+
+  // Directive terms are read before normalize(): short prompts ("stop",
+  // "continue") fall under the length cutoff but are exactly the directives.
+  if (raw.tool_name === "UserPromptSubmit" && raw.prompt_content) {
+    recordDirectives(matchDirectives(raw.prompt_content));
+  }
 
   const event = normalize(raw);
   if (!event) return;

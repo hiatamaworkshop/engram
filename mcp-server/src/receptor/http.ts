@@ -189,11 +189,15 @@ function requestHandler(req: IncomingMessage, res: ServerResponse): void {
         const type = json.type as string; // "user" or "agent"
         recordTurn(type === "user" ? "user" : "agent");
 
-        // Dialogue ingestion: if user turn carries content, ingest as user_prompt
-        if (type === "user" && typeof json.content === "string") {
+        // Dialogue ingestion: engram-turn-hook.sh forwards the UserPromptSubmit
+        // stdin as `hook` ({ prompt }); `content` is the older direct form.
+        const content = typeof json.content === "string" ? json.content
+          : typeof json.hook?.prompt === "string" ? json.hook.prompt
+          : undefined;
+        if (type === "user" && content !== undefined) {
           ingestEvent({
             tool_name: "UserPromptSubmit",
-            prompt_content: json.content,
+            prompt_content: content,
           });
         }
 

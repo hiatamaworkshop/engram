@@ -39,6 +39,8 @@ export interface LabelSample {
   emotion: EmotionVector;
   signals: { kind: string; intensity: number }[];
   events: { eventId: number; action: string; result?: string; path?: string }[];
+  /** Recent user directives as canonical English terms (intent.ts). No prompt text. */
+  directives?: { ts: number; terms: string[] }[];
 }
 
 export interface LabelRecord {
@@ -47,6 +49,8 @@ export interface LabelRecord {
   axes: Partial<Record<LabelAxis, AxisLabel>>;
   signals: Record<string, boolean>;
   failures: Record<string, boolean>;
+  /** Did the matched directive terms read the user correctly? */
+  directivesRead?: boolean;
 }
 
 /** A method the agent will actually see (hotmemo), as opposed to file/log only. */
@@ -65,6 +69,8 @@ export function isAgentVisible(m: DispatchedMethod): boolean {
 // ---- Sampler state ----
 
 let _recent: NormalizedEvent[] = [];
+let _directives: { ts: number; terms: string[] }[] = [];
+const DIRECTIVE_WINDOW = 5;
 let _dispatches = 0;
 let _sampled = 0;
 
@@ -81,6 +87,13 @@ export function setLabelSampleSink(fn: Sink): void {
 export function recordForLabel(event: NormalizedEvent): void {
   _recent.push(event);
   if (_recent.length > WINDOW) _recent.shift();
+}
+
+/** Directive terms matched in a user prompt. Prompts with no match are not kept. */
+export function recordDirectives(matches: { term: string }[]): void {
+  if (matches.length === 0) return;
+  _directives.push({ ts: Date.now(), terms: matches.map(m => m.term) });
+  if (_directives.length > DIRECTIVE_WINDOW) _directives.shift();
 }
 
 /** Called with what the passive receptor just dispatched and the signals behind it. */
@@ -101,6 +114,7 @@ export function sampleForLabel(fired: DispatchedMethod[], signals: FireSignal[])
       emotion: { ...s0.emotion },
       signals: signals.map(s => ({ kind: s.kind, intensity: Math.round(s.intensity * 1000) / 1000 })),
       events: _recent.map(e => ({ eventId: e.eventId, action: e.action, result: e.result, path: e.path })),
+      directives: _directives.map(d => ({ ts: d.ts, terms: [...d.terms] })),
     });
     _sampled++;
   } catch {
@@ -110,6 +124,7 @@ export function sampleForLabel(fired: DispatchedMethod[], signals: FireSignal[])
 
 export function clearLabelSampler(): void {
   _recent = [];
+  _directives = [];
   _dispatches = 0;
   _sampled = 0;
 }
@@ -138,14 +153,17 @@ export interface LabelSummary {
   axes: Record<LabelAxis, { over: number; ok: number; under: number }>;
   signals: Record<string, { valid: number; invalid: number }>;
   failures: { real: number; notReal: number };
+  directives: { correct: number; wrong: number };
 }
 
 export function summarize(labels: LabelRecord[]): LabelSummary {
   const axes = Object.fromEntries(LABEL_AXES.map(a => [a, { over: 0, ok: 0, under: 0 }])) as LabelSummary["axes"];
   const signals: LabelSummary["signals"] = {};
   const failures = { real: 0, notReal: 0 };
+  const directives = { correct: 0, wrong: 0 };
 
   for (const l of labels) {
+    if (l.directivesRead !== undefined) directives[l.directivesRead ? "correct" : "wrong"]++;
     for (const a of LABEL_AXES) {
       const v = l.axes[a];
       if (v) axes[a][v]++;
@@ -158,5 +176,5 @@ export function summarize(labels: LabelRecord[]): LabelSummary {
       failures[ok ? "real" : "notReal"]++;
     }
   }
-  return { labeled: labels.length, axes, signals, failures };
+  return { labeled: labels.length, axes, signals, failures, directives };
 }

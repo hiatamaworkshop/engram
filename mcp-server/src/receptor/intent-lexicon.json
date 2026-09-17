@@ -1,0 +1,32 @@
+{
+  "$schema": "Directive lexicon for user prompts (RECEPTOR_PRECISION_GAPS §6). intents: canonical English terms grouped by intent — the only vocabulary the code knows. locales: translations registered per canonical term; every key must be a term listed under intents. segmentation: 'whitespace' matches on word boundaries, 'none' matches substrings (languages without spaces). Matches are logged as the canonical English term, whatever language the prompt was in.",
+
+  "intents": {
+    "proceed":  ["do", "continue", "go ahead", "proceed", "go on", "yes", "ok", "lgtm"],
+    "stop":     ["stop", "wait", "hold on", "cancel", "abort"],
+    "negate":   ["no", "wrong", "not that", "incorrect"],
+    "redirect": ["instead", "actually", "rather", "different approach", "change the plan", "revert"]
+  },
+
+  "locales": {
+    "ja": {
+      "segmentation": "none",
+      "terms": {
+        "do":              ["やって", "実行して"],
+        "continue":        ["続けて", "続行"],
+        "go ahead":        ["進めて"],
+        "yes":             ["はい"],
+        "stop":            ["止めて", "ストップ"],
+        "wait":            ["待って"],
+        "cancel":          ["キャンセル", "中止"],
+        "no":              ["いいえ"],
+        "wrong":           ["違う", "間違"],
+        "not that":        ["そうじゃな"],
+        "instead":         ["代わりに"],
+        "actually":        ["やっぱり"],
+        "change the plan": ["方針を変え"],
+        "revert":          ["元に戻"]
+      }
+    }
+  }
+}

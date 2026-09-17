@@ -44,6 +44,9 @@ function show(s: LabelSample, n: number, total: number): void {
     const mark = e.result && e.result !== "success" ? ` [${e.result}]` : "";
     console.log(`  #${e.eventId} ${e.action}${mark} ${e.path ?? ""}`);
   }
+  for (const d of s.directives ?? []) {
+    console.log(`  directive ${new Date(d.ts).toLocaleTimeString()}: ${d.terms.join(", ")}`);
+  }
 }
 
 async function labelOne(s: LabelSample): Promise<LabelRecord> {
@@ -61,6 +64,10 @@ async function labelOne(s: LabelSample): Promise<LabelRecord> {
   for (const e of s.events.filter(e => e.result === "failure")) {
     const a = await ask(`  #${e.eventId} ${e.action} ${e.path ?? ""} really failed? [y n s] > `, ["y", "n", "s"]);
     if (a !== "s") rec.failures[String(e.eventId)] = a === "y";
+  }
+  if (s.directives && s.directives.length > 0) {
+    const a = await ask(`  directive terms match what you meant? [y n s] > `, ["y", "n", "s"]);
+    if (a !== "s") rec.directivesRead = a === "y";
   }
   return rec;
 }
@@ -87,6 +94,8 @@ function report(): void {
   }
   const fn = s.failures.real + s.failures.notReal;
   console.log(`\nfailure judged correctly: ${pct(s.failures.real, fn)}  (n=${fn})`);
+  const dn = s.directives.correct + s.directives.wrong;
+  console.log(`directives read correctly: ${pct(s.directives.correct, dn)}  (n=${dn})`);
 }
 
 async function main(): Promise<void> {
