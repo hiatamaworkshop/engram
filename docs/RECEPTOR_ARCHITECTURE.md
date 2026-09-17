@@ -1318,6 +1318,7 @@ persona は種族の集合的経験（遺伝子に刻まれた本能的傾向）
 - **Behavioral Prior EMA ブレンド**: prior の累積更新（`prior[axis] = α × sessionEnd + (1-α) × prior`）。現在は最新 persona を丸ごと使用
 - **Sphere 接続**: sphere-ready.jsonl → Sphere `/contribute` の HTTP 配線（シャローコピー / 単発検索 / phi-agent の3案）
 - **SpherePayload の capsule 変換**: 現在の SpherePayload を ExperienceCapsule 形式 (`schemaVersion:4, normalNodes:[...]`) に変換するロジック
+- **精密性の穴** (観測漏れ / 失敗判定の意味的誤り / 採用観測 / learn.ts の自己参照 / 発話の意味): [RECEPTOR_PRECISION_GAPS.md](RECEPTOR_PRECISION_GAPS.md)
 
 ---
 

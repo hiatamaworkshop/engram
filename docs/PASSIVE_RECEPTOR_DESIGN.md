@@ -385,6 +385,7 @@ receptor-rules.json に登録するだけで接続できる汎用基盤。
 - sensitivity の変更 API（engram_tune 相当の MCP ツール）
 - hotmemo レイヤーの表示フォーマット詳細
 - notify の推奨をエージェントが採用したかの観測方法（次のツール呼び出し名との一致？）
+  → 検討: `RECEPTOR_PRECISION_GAPS.md` §4
 
 ---
 
