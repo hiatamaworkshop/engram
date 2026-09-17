@@ -539,14 +539,16 @@ export function ingestEvent(raw: RawHookEvent): void {
   // Feed to subsystems
   // Dialogue input: skip heatmap and staleness (no file path involved)
   const isDialogue = event.action === "user_prompt";
-  if (!isDialogue) {
+  // A failed Read / Edit touched nothing — its path may not even exist
+  const touchesPath = !isDialogue && event.result !== "failure";
+  if (touchesPath) {
     heatmap.agentState = metaNeuron.state;
     heatmap.record(event);
   }
   commander.record(event);
 
   // Pre-neuron monitor: staleness check (fire-and-forget, after record)
-  if (!isDialogue && event.path && (event.action === "file_read" || event.action === "file_edit")) {
+  if (touchesPath && event.path && (event.action === "file_read" || event.action === "file_edit")) {
     const normalizedPath = event.path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
     detectStaleness(normalizedPath, heatmap);
   }

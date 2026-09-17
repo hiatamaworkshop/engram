@@ -115,8 +115,11 @@ export function computeImpulse(
     } else if (result === "success") {
       applyImpulse(vec, EVENT_IMPULSE[`${action}.success`]);
     }
-    // Always apply the base action impulse (non-result-specific)
-    applyImpulse(vec, EVENT_IMPULSE[action]);
+    // Base action impulse is credit for work done — a failed call did none
+    // (a rejected Write must not raise confidence).
+    if (result !== "failure") {
+      applyImpulse(vec, EVENT_IMPULSE[action]);
+    }
 
     // For search with "found" result (non-empty, non-failure)
     if (action === "search" && result !== "empty" && result !== "failure") {

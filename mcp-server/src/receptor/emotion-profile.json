@@ -18,6 +18,8 @@
       "shell_exec.failure":  { "frustration": 0.10, "confidence": -0.04 },
       "shell_exec.success":  { "confidence": 0.08, "flow": 0.04, "frustration": -0.08, "seeking": 0.03 },
       "file_edit":           { "confidence": 0.04, "seeking": 0.02, "flow": 0.02 },
+      "file_edit.failure":   { "frustration": 0.05, "confidence": -0.02 },
+      "file_read.failure":   { "seeking": -0.05 },
       "search.empty":        { "seeking": -0.10 },
       "search.found":        { "seeking": 0.05 },
       "file_read":           { "seeking": -0.02 },

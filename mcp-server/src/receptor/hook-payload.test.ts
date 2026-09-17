@@ -9,6 +9,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parseHookPayload } from "./hook-payload.js";
 import { normalize } from "./normalizer.js";
+import { computeImpulse } from "./emotion.js";
+import type { WindowSnapshot } from "./commander.js";
 
 function resultOf(payload: Record<string, unknown>) {
   const raw = parseHookPayload(payload);
@@ -91,6 +93,31 @@ describe("PostToolUseFailure", () => {
   });
 
   it("unmapped tools are still skipped", () => {
-    assert.equal(resultOf(fail("WebFetch", { url: "https://x" }, "404")), null);
+    assert.equal(resultOf(fail("TodoWrite", { todos: [] }, "invalid")), null);
+  });
+
+  it("WebFetch failure is a search failure without a path", () => {
+    const e = resultOf(fail("WebFetch", { url: "https://x" }, "404"));
+    assert.equal(e?.action, "search");
+    assert.equal(e?.result, "failure");
+    assert.equal(e?.path, undefined);
+  });
+});
+
+describe("failure impulses", () => {
+  const snap = { pattern: "stagnation" } as unknown as WindowSnapshot;
+  const meta = { totalEvents: 1, elapsedMs: 0 };
+
+  it("failed edit gets no work credit", () => {
+    const e = resultOf(fail("Write", { file_path: "a.ts" }, "denied"))!;
+    const v = computeImpulse(snap, meta, e);
+    assert.ok(v.frustration > 0);
+    assert.ok(v.confidence < 0);
+    assert.equal(v.flow, 0);
+  });
+
+  it("failed read lowers seeking", () => {
+    const e = resultOf(fail("Read", { file_path: "no-such" }, "File does not exist."))!;
+    assert.ok(computeImpulse(snap, meta, e).seeking < 0);
   });
 });

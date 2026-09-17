@@ -18,6 +18,11 @@ const CLAUDE_CODE_MAP: Record<string, NormalizedAction> = {
   MultiEdit: "file_edit",
   Grep: "search",
   Glob: "search",
+  // Web research is exploration too. Kept on "search" rather than a new
+  // action so pattern / seeking need no change; no path is extracted, so
+  // URLs never reach the heatmap.
+  WebFetch: "search",
+  WebSearch: "search",
   NotebookEdit: "file_edit",
   Bash: "shell_exec",
   PowerShell: "shell_exec", // same tool_response shape as Bash (measured 2026-09-17)
@@ -110,13 +115,11 @@ export function normalize(raw: RawHookEvent): NormalizedEvent | null {
   } else if (action === "shell_exec" && exit_code !== undefined && exit_code !== 0) {
     result = "failure";
   } else if (failed === true) {
-    // file_read / file_edit / search failures. Recorded but kept out of
-    // bashFailRate, and emotion-profile has no file_read / file_edit
-    // failure impulse yet — which axis they should move is still
-    // undecided (RECEPTOR_PRECISION_GAPS §10).
+    // file_read / file_edit / search failures. Kept out of bashFailRate;
+    // their emotion impulses are the *.failure keys in emotion-profile.
     result = "failure";
   }
-  if (action === "search" && tool_input) {
+  if (action === "search" && result !== "failure" && tool_input) {
     // Grep/Glob with 0 results → empty
     const count = tool_input.resultCount ?? tool_input.matchCount;
     if (count === 0) result = "empty";
