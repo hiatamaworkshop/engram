@@ -11,10 +11,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { EmotionAxis } from "./types.js";
+import { DELTA_BOUND, loadLearnedDelta, saveLearnedDelta } from "./delta.js";
 
 // ---- Paths ----
 
-const LEARNED_PATH = path.join(import.meta.dirname!, "receptor-learned.json");
+// Writes only the learned residual (delta.ts) — never the calibrated base.
 const OUTPUT_DIR = path.join(
   process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
   "receptor-output",
@@ -27,7 +28,6 @@ const EMA_PATH = path.join(OUTPUT_DIR, "learn-ema.json");
 const AXES: EmotionAxis[] = ["frustration", "seeking", "confidence", "fatigue"];
 // flow excluded — A gate invariant
 
-const DELTA_BOUND = 0.30;
 const ALPHA = 0.03;       // learning rate (conservative — max ~0.03 change per session)
 const EMA_BETA = 0.3;     // EMA smoothing for expected frequency (0.3 = recent-weighted)
 const MIN_SESSION_MS = 300_000; // 5 min minimum session for learning
@@ -49,11 +49,6 @@ const LABEL_TO_AXES: Record<string, EmotionAxis[]> = {
 interface EmaState {
   freq: Record<string, number>;  // expected fires/hour per axis
   sessions: number;              // number of sessions contributing
-}
-
-interface LearnedFile {
-  $schema: string;
-  delta: Record<string, number>;
 }
 
 // ---- Core ----
@@ -112,16 +107,8 @@ export function applyLearnedDelta(sessionDurationMs: number): string | null {
     ema = { freq: { ...actualFreq }, sessions: 0 };
   }
 
-  // 5. Load current delta
-  let learned: LearnedFile;
-  try {
-    learned = JSON.parse(fs.readFileSync(LEARNED_PATH, "utf-8")) as LearnedFile;
-  } catch {
-    learned = {
-      $schema: "Learned delta per emotion axis. Adjusts passive receptor sensitivity. Bounds: ±0.30. Flow excluded (A gate invariant).",
-      delta: {},
-    };
-  }
+  // 5. Load current learned residual
+  const learned = { delta: loadLearnedDelta() };
 
   // 6. Compute deviation and update delta per axis
   const changes: string[] = [];
@@ -154,8 +141,7 @@ export function applyLearnedDelta(sessionDurationMs: number): string | null {
 
   // 7. Write back
   try {
-    fs.writeFileSync(LEARNED_PATH, JSON.stringify(learned, null, 2) + "\n");
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    saveLearnedDelta(learned.delta);
     fs.writeFileSync(EMA_PATH, JSON.stringify(ema, null, 2) + "\n");
   } catch (err) {
     console.error("[learn] write error:", err);

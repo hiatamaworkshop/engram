@@ -25,6 +25,7 @@ import { detectStaleness } from "../pre-neuron/staleness-detector.js";
 import { formatPreNeuronStatus } from "../pre-neuron/index.js";
 import { stopReceptorHttp } from "./http.js";
 import { applyLearnedDelta } from "./learn.js";
+import { effectiveDelta } from "./delta.js";
 import { buildPackage, savePackage, loadPackage } from "./experience-package.js";
 import { observeEvent as observeAdoption, closeAdoption, clearAdoption } from "./adoption.js";
 
@@ -458,10 +459,8 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
     let finalizedPersona: import("./persona-snapshot.js").Persona | null = null;
     if (_personaMode || _priorBlockMode) {
       try {
-        const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
-        const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
         const model = process.env.ENGRAM_MODEL || undefined;
-        finalizedPersona = personaFinalizeSession(elapsed * 1000, learned.delta, getProjectMeta() ?? undefined, model);
+        finalizedPersona = personaFinalizeSession(elapsed * 1000, effectiveDelta(), getProjectMeta() ?? undefined, model);
         if (finalizedPersona && _personaMode) {
           exportPersona(finalizedPersona).catch(e => console.error("[receptor] persona export error:", e));
           personaMsg = ` Persona exported (${personaSnapshotCount()} snapshots).`;

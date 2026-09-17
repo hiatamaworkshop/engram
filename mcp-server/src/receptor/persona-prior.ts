@@ -19,6 +19,7 @@ import type { Persona, Snapshot } from "./persona-snapshot.js";
 import { getProfileHash, buildPersonaFromRawSnapshots } from "./persona-snapshot.js";
 import type { AmbientEstimator } from "./ambient.js";
 import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector, NormalizedAction } from "./types.js";
+import { effectiveDelta } from "./delta.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -303,12 +304,7 @@ function rebuildPersonaFromSnapshots(): Persona | null {
     if (snapshots.length === 0) return null;
 
     // Read learnedDelta if available
-    let learnedDelta: Record<string, number> = {};
-    try {
-      const learnedPath = path.join(import.meta.dirname!, "receptor-learned.json");
-      const learned = JSON.parse(fs.readFileSync(learnedPath, "utf-8")) as { delta: Record<string, number> };
-      learnedDelta = learned.delta;
-    } catch { /* no learned delta available */ }
+    const learnedDelta = effectiveDelta();
 
     const model = process.env.ENGRAM_MODEL || undefined;
     const persona = buildPersonaFromRawSnapshots(snapshots, learnedDelta, undefined, model);

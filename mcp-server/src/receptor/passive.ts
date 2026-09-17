@@ -20,8 +20,8 @@
 import type { FireSignal, EmotionVector, EmotionAxis } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import rules from "./receptor-rules.json" with { type: "json" };
-import learned from "./receptor-learned.json" with { type: "json" };
 import { noteDelivered } from "./adoption.js";
+import { effectiveDelta } from "./delta.js";
 
 // ---- Types ----
 
@@ -94,16 +94,9 @@ const EMOTION_KEYS: EmotionAxis[] = [
 
 // ---- Learned delta (cross-session calibration) ----
 
-const DELTA_BOUND = 0.30;
-const _learnedDelta: Record<string, number> = {};
-
-// Load and clamp deltas from receptor-learned.json
-{
-  const raw = (learned as { delta: Record<string, number> }).delta;
-  for (const [axis, val] of Object.entries(raw)) {
-    _learnedDelta[axis] = Math.max(-DELTA_BOUND, Math.min(DELTA_BOUND, val));
-  }
-}
+// calibrated base + learned residual, clamped (delta.ts). Read once per process:
+// learn.ts only writes at watch stop, so a change lands on the next start.
+const _learnedDelta: Record<string, number> = effectiveDelta();
 
 /** Get learned delta for a signal kind's primary axis. Returns 0 if unknown. */
 function learnedDelta(signalKind: string): number {

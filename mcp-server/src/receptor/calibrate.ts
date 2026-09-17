@@ -8,7 +8,9 @@
 //
 // Usage:  npx tsx src/receptor/calibrate.ts [--dry-run] [--verbose]
 //
-// Output: writes updated receptor-learned.json (unless --dry-run)
+// Output: writes receptor-calibrated.json (unless --dry-run) — the base only.
+// learn.ts's residual lives in receptor-output/learned-delta.json and is
+// never touched here (delta.ts).
 
 import { EmotionAccumulator, computeImpulse } from "./emotion.js";
 import { normalize, type RawHookEvent } from "./normalizer.js";
@@ -16,7 +18,7 @@ import type { EmotionVector, EmotionAxis, PatternKind } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import type { WindowSnapshot } from "./commander.js";
 import scenarios from "./calibration-scenarios.json" with { type: "json" };
-import learned from "./receptor-learned.json" with { type: "json" };
+import { DELTA_BOUND, clampDelta, calibratedDelta, loadLearnedDelta } from "./delta.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -28,7 +30,6 @@ const VERBOSE = args.includes("--verbose");
 
 // ---- Constants ----
 
-const DELTA_BOUND = 0.30;
 const LEARNING_RATE = 0.5;  // how aggressively to correct
 const CALIBRATION_AXES: EmotionAxis[] = [
   "frustration", "seeking", "confidence", "fatigue",
@@ -155,24 +156,32 @@ function printResults(results: ScenarioResult[], newDelta: Record<string, number
     console.log();
   }
 
-  console.log("--- Delta update ---");
-  const currentDelta = (learned as { delta: Record<string, number> }).delta;
+  console.log("--- Calibrated delta update ---");
+  const currentDelta = calibratedDelta();
   for (const axis of CALIBRATION_AXES) {
     const prev = (currentDelta[axis] ?? 0).toFixed(3);
     const next = newDelta[axis].toFixed(3);
     const change = prev !== next ? ` (${prev} → ${next})` : " (unchanged)";
     console.log(`  ${axis.padEnd(12)} δ = ${next}${change}`);
   }
+
+  const learnedNow = loadLearnedDelta();
+  console.log(`\n--- Effective after write (calibrated + learned residual) ---`);
+  for (const axis of CALIBRATION_AXES) {
+    const eff = clampDelta(newDelta[axis] + (learnedNow[axis] ?? 0));
+    console.log(`  ${axis.padEnd(12)} ${eff.toFixed(3)}  (learned ${(learnedNow[axis] ?? 0).toFixed(3)})`);
+  }
+  if (Object.keys(learnedNow).length === 0) console.log("  (no learned residual yet)");
   console.log();
 }
 
 function writeDelta(newDelta: Record<string, number>): void {
   const output = {
-    $schema: "Learned delta per emotion axis. Adjusts passive receptor sensitivity. Bounds: ±0.30. Flow excluded (A gate invariant).",
+    $schema: "Calibrated delta per emotion axis (base). Written by calibrate.ts from calibration-scenarios.json. learn.ts adds a residual on top (receptor-output/learned-delta.json). Bounds: ±0.30. Flow excluded (A gate invariant).",
     delta: newDelta,
   };
 
-  const filePath = path.join(import.meta.dirname!, "receptor-learned.json");
+  const filePath = path.join(import.meta.dirname!, "receptor-calibrated.json");
   fs.writeFileSync(filePath, JSON.stringify(output, null, 2) + "\n");
   console.log(`✓ Written to ${filePath}`);
 }
