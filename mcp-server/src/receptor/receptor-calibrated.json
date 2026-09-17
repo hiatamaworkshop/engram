@@ -1,5 +1,5 @@
 {
-  "$schema": "Learned delta per emotion axis. Adjusts passive receptor sensitivity. Bounds: ±0.30. Flow excluded (A gate invariant).",
+  "$schema": "Calibrated delta per emotion axis (base). Written by calibrate.ts from calibration-scenarios.json. learn.ts adds a residual on top (receptor-output/learned-delta.json). Bounds: ±0.30. Flow excluded (A gate invariant).",
   "delta": {
     "frustration": -0.014,
     "seeking": -0.011,
