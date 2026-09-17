@@ -22,6 +22,7 @@ import type { AgentState, SessionPoint, EngramWeightEntry, EmotionVector, Normal
 import { effectiveDelta } from "./delta.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Types ----
 
@@ -57,10 +58,7 @@ export interface CompatResult {
 
 // ---- Constants ----
 
-const SPHERE_OUTPUT_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const SPHERE_OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
 const PERSONA_SNAPSHOTS_PATH = path.join(SPHERE_OUTPUT_DIR, "persona-snapshots.jsonl");
 

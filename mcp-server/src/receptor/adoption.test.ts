@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import type { NormalizedEvent, NormalizedAction, PatternKind } from "./types.js";
 import {
   ADOPTION_WINDOW, noteDelivered, observeEvent, closeAdoption, clearAdoption,
-  setAdoptionSink, extractBasenames, type AdoptionRecord,
+  setAdoptionSink, setDeliveryCarrier, extractBasenames, type AdoptionRecord,
 } from "./adoption.js";
 
 let log: AdoptionRecord[] = [];
@@ -66,6 +66,14 @@ describe("message rules", () => {
     assert.equal(log.length, 0);
     observeEvent(ev("memory_write"), "implementation");
     assert.equal(log[0].verdict, "adopted");
+  });
+
+  it("push reminder carried by engram_status: the next push is the agent's own", () => {
+    setDeliveryCarrier(false);
+    noteDelivered("engram_push_reminder", "confidence high");
+    observeEvent(ev("memory_write"), "implementation");
+    assert.equal(log[0].verdict, "adopted");
+    assert.equal(log[0].after, 1);
   });
 
   it("frustration alert: leaving trial_error is adopted", () => {

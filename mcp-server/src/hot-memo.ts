@@ -13,6 +13,7 @@
 
 import { drainRecommendationsDcp, formatSubsystemDcp } from "./receptor/index.js";
 import { formatPreNeuronDcp } from "./pre-neuron/index.js";
+import { setDeliveryCarrier } from "./receptor/adoption.js";
 
 const LAYER1_TAGS = new Set(["howto", "where", "why", "gotcha"]);
 const MAX_HISTORY = 10;
@@ -179,6 +180,8 @@ export function memoFormat(context: ToolContext): string {
   }
 
   // Layer 5: Receptor — passive receptor recommendations (DCP rows)
+  // engram_status is the one carrier that is not a memory_read/write event
+  setDeliveryCarrier(context !== "status");
   const receptorRows = drainRecommendationsDcp();
   rows.push(...receptorRows);
 

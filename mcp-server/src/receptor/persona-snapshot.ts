@@ -13,6 +13,7 @@ import type { AmbientEstimator } from "./ambient.js";
 import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Profile hash (computed once at module load) ----
 // SHA-256 of emotion-profile.json — defines the semantic context of all delta values.
@@ -107,10 +108,7 @@ export interface Persona {
 
 // ---- Output path (kill-safe append) ----
 
-const OUTPUT_DIR = join(
-  process.env.ENGRAM_DATA_DIR ?? join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const PERSONA_SNAPSHOTS_PATH = join(OUTPUT_DIR, "persona-snapshots.jsonl");
 
 // ---- Singleton state ----

@@ -25,6 +25,7 @@ import {
 } from "./sphere-capsule.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Anonymized centroid (what leaves the machine) ----
 
@@ -267,10 +268,7 @@ async function pushToFacade(capsule: ExperienceCapsule): Promise<boolean> {
 
 // ---- File export (JSONL fallback) ----
 
-const SPHERE_OUTPUT_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const SPHERE_OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const SPHERE_OUTPUT_PATH = path.join(SPHERE_OUTPUT_DIR, "sphere-ready.jsonl");
 
 /**

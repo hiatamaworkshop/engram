@@ -13,6 +13,7 @@
 import { pushSubsystemResult, type SubsystemEntry } from "./subsystem-fifo.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Types ----
 
@@ -76,10 +77,7 @@ registerSink("silent", () => {});
 
 // file: append formatted output to a fixed file path.
 // Path is resolved relative to the receptor data directory.
-const FILE_SINK_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const FILE_SINK_DIR = RECEPTOR_OUTPUT_DIR;
 const FILE_SINK_PATH = path.join(FILE_SINK_DIR, "receptor-results.jsonl");
 
 registerSink("file", (payload, formatted) => {

@@ -71,6 +71,17 @@ export function setAdoptionSink(fn: Sink): void {
 
 // ---- Delivery ----
 
+/**
+ * Whether the engram call carrying the next hotmemo reports its own hook event
+ * as memory_read / memory_write. engram_status does not normalize to either,
+ * so after a status delivery the next memory event is the agent's own.
+ */
+let _carrierObserved = true;
+
+export function setDeliveryCarrier(observedAsMemoryEvent: boolean): void {
+  _carrierObserved = observedAsMemoryEvent;
+}
+
 /** A recommendation or executor result reached the agent via hotmemo. */
 export function noteDelivered(method: string, text: string): void {
   const rule: Rule = MESSAGE_RULES[method] ?? "paths";
@@ -82,7 +93,7 @@ export function noteDelivered(method: string, text: string): void {
     seen: 0,
     candidates,
     deliveryPattern: _pattern,
-    swallowMemory: true,
+    swallowMemory: _carrierObserved,
   });
 }
 
@@ -168,6 +179,7 @@ export function clearAdoption(): void {
   _open = [];
   _pattern = "stagnation";
   _recentTouched = [];
+  _carrierObserved = true;
 }
 
 // ---- Helpers ----

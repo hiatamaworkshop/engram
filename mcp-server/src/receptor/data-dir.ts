@@ -1,9 +1,11 @@
 // ============================================================
 // Receptor — runtime data directory
 // ============================================================
+// The one place every receptor module resolves its output directory.
 // The MCP server runs from dist/receptor, so its data lands in
 // dist/receptor-output. CLIs run with tsx from src/receptor would otherwise
 // resolve src/receptor-output and read a different, stale directory.
+// tsc never deletes this directory, so a rebuild keeps the data.
 
 import * as path from "node:path";
 

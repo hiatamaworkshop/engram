@@ -18,6 +18,7 @@ import type { Persona } from "./persona-snapshot.js";
 import type { AgentState } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Prior Block types (mirrored from persona-prior.ts to avoid circular dep) ----
 
@@ -63,10 +64,7 @@ export interface ExperiencePackage {
 
 // ---- Sink path ----
 
-const OUTPUT_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const PACKAGE_PATH = path.join(OUTPUT_DIR, "experience-package.json");
 
 /**

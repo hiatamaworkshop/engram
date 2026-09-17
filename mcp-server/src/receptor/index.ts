@@ -119,6 +119,7 @@ import {
 import type { ProjectMeta } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Load project metadata for Sphere Facade routing ----
 
@@ -140,10 +141,7 @@ try {
 
 const HEATMAP_FLUSH_MIN_MS = 300_000; // minimum 5min between flushes
 let _lastHeatmapFlush = 0;
-const _heatmapSinkDir = path.join(
-  process.env.ENGRAM_DATA_DIR ?? (import.meta.dirname ? path.join(import.meta.dirname, "..") : "."),
-  "receptor-output",
-);
+const _heatmapSinkDir = RECEPTOR_OUTPUT_DIR;
 const _heatmapSinkPath = path.join(_heatmapSinkDir, "heatmap.json");
 
 function flushHeatmap(): void {

@@ -10,16 +10,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 import type { EmotionAxis } from "./types.js";
 import { DELTA_BOUND, loadLearnedDelta, saveLearnedDelta } from "./delta.js";
 
 // ---- Paths ----
 
 // Writes only the learned residual (delta.ts) — never the calibrated base.
-const OUTPUT_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const SESSION_POINTS_PATH = path.join(OUTPUT_DIR, "session-points.jsonl");
 const EMA_PATH = path.join(OUTPUT_DIR, "learn-ema.json");
 

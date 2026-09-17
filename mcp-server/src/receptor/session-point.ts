@@ -10,6 +10,7 @@
 import type { FireSignal, FireSignalKind, SessionPoint, EngramWeightEntry } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RECEPTOR_OUTPUT_DIR } from "./data-dir.js";
 
 // ---- Profile: idle freeze threshold (same as emotion accumulator) ----
 
@@ -22,10 +23,7 @@ try {
 
 // ---- Output path ----
 
-const OUTPUT_DIR = path.join(
-  process.env.ENGRAM_DATA_DIR ?? path.join(import.meta.dirname!, ".."),
-  "receptor-output",
-);
+const OUTPUT_DIR = RECEPTOR_OUTPUT_DIR;
 const SESSION_POINTS_PATH = path.join(OUTPUT_DIR, "session-points.jsonl");
 const WEIGHT_SNAPSHOT_PATH = path.join(OUTPUT_DIR, "engram-weights.jsonl");
 

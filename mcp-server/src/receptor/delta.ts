@@ -6,13 +6,13 @@
 //   calibrated  src/receptor/receptor-calibrated.json   calibrate.ts (developer,
 //               committed, recomputed from scenarios)
 //   learned     receptor-output/learned-delta.json       learn.ts (this environment,
-//               runtime data — outside dist so a rebuild cannot wipe it)
+//               runtime data — not a JSON module, so tsc never overwrites it)
 //
 // effective = clamp(calibrated + learned, ±DELTA_BOUND)
 //
 // Before this split both wrote receptor-learned.json: calibrate recomputed from
 // zero and silently erased whatever learn mode had accumulated, and learn wrote
-// into dist/, which the next `npm run build` overwrote.
+// dist/receptor/receptor-learned.json, which tsc re-emits from src on every build.
 
 import * as fs from "node:fs";
 import * as path from "node:path";

@@ -1,10 +1,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
-**/receptor-output/adoption.jsonl
-**/receptor-output/label-queue.jsonl
-**/receptor-output/labels.jsonl
-**/receptor-output/learned-delta.json
+**/receptor-output/
 
 # OS
 .DS_Store
