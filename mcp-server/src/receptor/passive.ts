@@ -21,6 +21,7 @@ import type { FireSignal, EmotionVector, EmotionAxis } from "./types.js";
 import { ZERO_EMOTION } from "./types.js";
 import rules from "./receptor-rules.json" with { type: "json" };
 import learned from "./receptor-learned.json" with { type: "json" };
+import { noteDelivered } from "./adoption.js";
 
 // ---- Types ----
 
@@ -393,6 +394,8 @@ export function drainRecommendationsDcp(): DcpRow[] {
     const signal = m.action.tool ? "suggest" : "notify";
     const detail = m.action.message || m.action.tool || m.id;
     const key = `${signal}:${detail}`;
+    // Opens the adoption window: this is the moment the agent sees it
+    noteDelivered(m.id, detail);
     if (!seen.has(key)) {
       seen.add(key);
       rows.push(["receptor", "passive", signal, detail]);

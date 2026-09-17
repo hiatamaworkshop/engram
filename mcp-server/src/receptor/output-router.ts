@@ -10,7 +10,7 @@
 //
 // Default (omitted output): { targets: ["hotmemo"], format: "raw" }
 
-import { pushSubsystemResult } from "./subsystem-fifo.js";
+import { pushSubsystemResult, type SubsystemEntry } from "./subsystem-fifo.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -53,12 +53,12 @@ export function registerSink(target: OutputTarget, fn: SinkFn): void {
 // ---- Built-in sinks ----
 
 /** Extract subsystem entry from output payload. */
-function toSubsystemEntry(payload: OutputPayload, formatted: string): { system: string; fn: string; ts: number; message: string } {
+function toSubsystemEntry(payload: OutputPayload, formatted: string): SubsystemEntry {
   const system = payload.toolName.split("_")[0] || payload.toolName;
   const fn = payload.toolName.split("_").slice(1).join("_") || "run";
   const msgStart = formatted.indexOf("| ");
   const message = msgStart >= 0 ? formatted.slice(msgStart + 2).trim() : formatted;
-  return { system, fn, ts: Date.now(), message };
+  return { system, fn, ts: Date.now(), message, methodId: payload.methodId };
 }
 
 // hotmemo: unified into subsystem FIFO (same ring buffer as all executors)

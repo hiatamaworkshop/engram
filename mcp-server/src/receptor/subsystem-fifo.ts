@@ -8,21 +8,20 @@
 // Hotmemo: shows only unseen entries (shownAt marker).
 // engram_watch: shows all entries regardless.
 
-// ---- Types ----
+import { noteDelivered } from "./adoption.js";
 
-interface FifoEntry {
-  system: string;
-  fn: string;
-  ts: number;
-  message: string;
-  shownAt: number;  // 0 = unseen
-}
+// ---- Types ----
 
 export interface SubsystemEntry {
   system: string;
   fn: string;
   ts: number;
   message: string;
+  methodId?: string;  // receptor-rules method that produced it (adoption tracking)
+}
+
+interface FifoEntry extends SubsystemEntry {
+  shownAt: number;  // 0 = unseen
 }
 
 // ---- Constants ----
@@ -103,7 +102,11 @@ export function formatSubsystemDcp(displayLimit = 3): DcpRow[] {
 
   const now = Date.now();
   const shown = unseen.slice(-displayLimit);
-  for (const e of shown) e.shownAt = now;
+  for (const e of shown) {
+    e.shownAt = now;
+    // hotmemo is what the agent actually reads — the adoption window opens here
+    noteDelivered(e.methodId ?? `${e.system}_${e.fn}`, e.message);
+  }
 
   return shown.map(e => ["subsystem", e.system, e.fn, e.message] as DcpRow);
 }

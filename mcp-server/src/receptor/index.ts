@@ -26,6 +26,7 @@ import { formatPreNeuronStatus } from "../pre-neuron/index.js";
 import { stopReceptorHttp } from "./http.js";
 import { applyLearnedDelta } from "./learn.js";
 import { buildPackage, savePackage, loadPackage } from "./experience-package.js";
+import { observeEvent as observeAdoption, closeAdoption, clearAdoption } from "./adoption.js";
 
 // ---- Singleton state ----
 
@@ -379,6 +380,7 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
     clearFutureProbe();
     clearPersonaState();
     clearSessionPoints();
+    clearAdoption();
     _lastHeatmapFlush = 0;
 
     // Phase 3: Apply prior persona to fresh ambient
@@ -435,6 +437,7 @@ export function setWatch(enabled: boolean, opts?: WatchOptions): { watching: boo
 
     // Stop session point recording
     stopSessionPoints();
+    closeAdoption();
     // Final heatmap flush before stop
     if (heatmap.totalHits > 0) flushHeatmap();
     // Save commander session counts for next session's Prior Block
@@ -546,6 +549,7 @@ export function ingestEvent(raw: RawHookEvent): void {
     heatmap.record(event);
   }
   commander.record(event);
+  observeAdoption(event, commander.shortSnapshot().pattern);
 
   // Pre-neuron monitor: staleness check (fire-and-forget, after record)
   if (touchesPath && event.path && (event.action === "file_read" || event.action === "file_edit")) {
