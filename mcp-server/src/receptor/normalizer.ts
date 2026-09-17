@@ -18,7 +18,9 @@ const CLAUDE_CODE_MAP: Record<string, NormalizedAction> = {
   MultiEdit: "file_edit",
   Grep: "search",
   Glob: "search",
+  NotebookEdit: "file_edit",
   Bash: "shell_exec",
+  PowerShell: "shell_exec", // same tool_response shape as Bash (measured 2026-09-17)
   Agent: "delegation",
   // engram tools are detected by prefix in normalize()
 };
@@ -30,6 +32,8 @@ export interface RawHookEvent {
   tool_input?: Record<string, unknown>;
   exit_code?: number;
   interrupted?: boolean;    // Bash: user pressed Ctrl-C — not a command failure
+  empty?: boolean;          // shell: non-zero exit the tool declared benign (grep no match)
+  failed?: boolean;         // non-shell tool reported via PostToolUseFailure
   // Claude Code hooks provide these fields
   prompt_content?: string;  // UserPromptSubmit: raw user text (used for length only)
 }
@@ -46,7 +50,7 @@ let _lastPromptTs = 0;
 // ---- Normalize ----
 
 export function normalize(raw: RawHookEvent): NormalizedEvent | null {
-  const { tool_name, tool_input, exit_code, interrupted } = raw;
+  const { tool_name, tool_input, exit_code, interrupted, empty, failed } = raw;
   const eventId = _nextEventId++;
 
   // UserPromptSubmit → user_prompt (dialogue input)
@@ -100,7 +104,16 @@ export function normalize(raw: RawHookEvent): NormalizedEvent | null {
     // commands failing. A user interrupt says something about the human,
     // not about the command, and mixing the two inflates trial_error.
     result = "interrupted";
+  } else if (action === "shell_exec" && empty === true) {
+    // Not "failure" either: grep finding nothing is an answer, not an error.
+    result = "empty";
   } else if (action === "shell_exec" && exit_code !== undefined && exit_code !== 0) {
+    result = "failure";
+  } else if (failed === true) {
+    // file_read / file_edit / search failures. Recorded but kept out of
+    // bashFailRate, and emotion-profile has no file_read / file_edit
+    // failure impulse yet — which axis they should move is still
+    // undecided (RECEPTOR_PRECISION_GAPS §10).
     result = "failure";
   }
   if (action === "search" && tool_input) {

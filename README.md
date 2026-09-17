@@ -99,6 +99,11 @@ cp hooks/engram-git-commit.sh hooks/engram-session-recall.sh ~/.claude/hooks/
       "matcher": ".*",
       "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/engram-receptor-hook.sh", "timeout": 2 }]
     }],
+    // Failed tool calls (non-zero exit, missing file) arrive only here, never on PostToolUse
+    "PostToolUseFailure": [{
+      "matcher": ".*",
+      "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/engram-receptor-hook.sh", "timeout": 2 }]
+    }],
     "Stop": [{
       "matcher": "",
       "hooks": [{ "type": "command", "command": "ENGRAM_TURN_TYPE=stop bash ~/.claude/hooks/engram-turn-hook.sh", "timeout": 2 }]

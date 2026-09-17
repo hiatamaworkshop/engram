@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
-# Engram — Receptor event forwarder (PostToolUse hook)
+# Engram — Receptor event forwarder (PostToolUse / PostToolUseFailure hook)
 # ============================================================
-# Reads Claude Code PostToolUse stdin, POSTs to ALL active receptor
+# Reads Claude Code hook stdin, POSTs to ALL active receptor
 # HTTP endpoints. Each MCP process writes receptor.{pid}.port.
 # Failed endpoints are cleaned up (stale process detection).
 # Non-blocking: curl with --max-time 1, silent failure.

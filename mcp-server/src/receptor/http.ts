@@ -2,10 +2,10 @@
 // Receptor — HTTP Listener (hook event ingestion)
 // ============================================================
 // Lightweight HTTP server on localhost:RECEPTOR_PORT (default 3101).
-// Receives PostToolUse hook payloads from Claude Code, extracts
+// Receives PostToolUse / PostToolUseFailure hook payloads from Claude Code, extracts
 // relevant fields, and feeds into ingestEvent().
 //
-// The hook script is a dumb pipe (cat | curl). All parsing is here.
+// The hook script is a dumb pipe (cat | curl). All parsing is in hook-payload.ts.
 
 import { createServer, request as httpRequest, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { writeFileSync, unlinkSync, mkdirSync, readdirSync } from "node:fs";
@@ -14,7 +14,7 @@ import { ingestEvent, recordTurn, getState, getDebugSnapshot, flushWeightSnapsho
 import { getSnapshots as personaGetSnapshots } from "./persona-snapshot.js";
 import { buildPriorBlock, formatPriorBlock, loadWeightSnapshot } from "./persona-prior.js";
 import type { SessionPointWithGap } from "./persona-prior.js";
-import type { RawHookEvent } from "./normalizer.js";
+import { parseHookPayload } from "./hook-payload.js";
 
 const PREFERRED_PORT = parseInt(process.env.RECEPTOR_PORT ?? "3101", 10);
 const DISCOVERY_DIR = join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".engram");
@@ -397,165 +397,4 @@ export function stopReceptorHttp(): void {
     _boundPort = null;
     removeDiscovery();
   }
-}
-
-// ---- Payload parsing ----
-
-/**
- * Parse Claude Code PostToolUse hook payload into RawHookEvent.
- *
- * Hook stdin JSON shape:
- *   { tool_name, tool_input, tool_response, session_id, ... }
- *
- * We extract: tool_name, tool_input (enriched), exit_code (for Bash).
- */
-function parseHookPayload(json: Record<string, unknown>): RawHookEvent | null {
-  const rawName = json.tool_name;
-  if (!rawName || typeof rawName !== "string") return null;
-
-  // Strip MCP prefix: mcp__engram__engram_pull → engram_pull
-  let toolName = rawName;
-  if (toolName.startsWith("mcp__")) {
-    const parts = toolName.split("__");
-    toolName = parts[parts.length - 1];
-  }
-
-  // UserPromptSubmit: extract prompt content from tool_input
-  if (toolName === "UserPromptSubmit") {
-    const input = (json.tool_input as Record<string, unknown>) ?? {};
-    return {
-      tool_name: "UserPromptSubmit",
-      prompt_content: (input.content as string) ?? (input.prompt as string) ?? "",
-    };
-  }
-
-  const toolInput = (json.tool_input as Record<string, unknown>) ?? {};
-  const toolResponse = json.tool_response;
-
-  const event: RawHookEvent = {
-    tool_name: toolName,
-    tool_input: { ...toolInput },
-  };
-
-  // Bash: extract exit_code from tool_response
-  if (toolName === "Bash") {
-    event.exit_code = extractExitCode(toolResponse);
-    event.interrupted = extractInterrupted(toolResponse);
-  }
-
-  // Search tools: inject resultCount into tool_input for normalizer
-  if (toolName === "Grep" || toolName === "Glob") {
-    const count = extractSearchResultCount(toolResponse);
-    if (count !== undefined) {
-      event.tool_input = { ...event.tool_input, resultCount: count };
-    }
-  }
-
-  return event;
-}
-
-/**
- * Try to extract Bash exit code from tool_response.
- *
- * Actual Claude Code PostToolUse payload (verified 2026-03-14):
- *   tool_response: { stdout, stderr, interrupted, isImage, noOutputExpected }
- *   On failure:    { stdout, stderr, interrupted, returnCodeInterpretation, ... }
- *
- * There is NO explicit exit_code field. We infer failure from:
- *   1. returnCodeInterpretation exists (any non-success result)
- *   2. stderr is non-empty (fallback heuristic)
- *
- * interrupted is deliberately NOT handled here — see extractInterrupted().
- */
-function extractExitCode(response: unknown): number | undefined {
-  if (response == null) return undefined;
-
-  if (typeof response === "object") {
-    const r = response as Record<string, unknown>;
-
-    // Direct exit_code field (future-proofing)
-    if (typeof r.exit_code === "number") return r.exit_code;
-    if (typeof r.exitCode === "number") return r.exitCode;
-
-    // returnCodeInterpretation exists → non-zero exit
-    if (typeof r.returnCodeInterpretation === "string") return 1;
-
-    // stderr non-empty → likely failure (heuristic)
-    if (typeof r.stderr === "string" && r.stderr.trim().length > 0) {
-      // Some commands output to stderr legitimately (e.g. npm warnings)
-      // Only treat as failure if stdout is empty
-      if (typeof r.stdout === "string" && r.stdout.trim().length === 0) {
-        return 1;
-      }
-    }
-  }
-
-  return undefined;
-}
-
-/**
- * Detect user interrupt (Ctrl-C) from tool_response.
- *
- * Kept out of extractExitCode on purpose: an interrupt is a human-side
- * signal, not evidence the command failed. Folding it into exit_code puts
- * it in bashFailRate, so "user cancelled a slow command" reads as
- * trial-and-error frustration and drags the state toward stuck.
- */
-function extractInterrupted(response: unknown): boolean {
-  if (response == null || typeof response !== "object") return false;
-  return (response as Record<string, unknown>).interrupted === true;
-}
-
-/**
- * Try to extract search result count from Grep/Glob response.
- *
- * Actual Claude Code PostToolUse payload (verified 2026-03-14):
- *   Grep: { mode, filenames: [...], numFiles: N }
- *   Glob: { filenames: [...], numFiles: N, durationMs, truncated }
- *
- * Primary: numFiles field (structured JSON).
- * Fallback: filenames array length, then text pattern matching.
- */
-function extractSearchResultCount(response: unknown): number | undefined {
-  if (response == null) return undefined;
-
-  if (typeof response === "object") {
-    const r = response as Record<string, unknown>;
-
-    // Primary: numFiles field (Grep & Glob both provide this)
-    if (typeof r.numFiles === "number") return r.numFiles;
-
-    // Secondary: count filenames array
-    if (Array.isArray(r.filenames)) return r.filenames.length;
-
-    // Grep content mode: may have numMatches or similar
-    if (typeof r.numMatches === "number") return r.numMatches;
-
-    // Fallback: text-based extraction (for future format changes)
-    let text = "";
-    if (typeof r.text === "string") text = r.text;
-    else if (Array.isArray(r.content)) {
-      for (const item of r.content) {
-        if (typeof item === "object" && item !== null) {
-          const ci = item as Record<string, unknown>;
-          if (typeof ci.text === "string") { text = ci.text; break; }
-        }
-      }
-    }
-
-    if (text) {
-      const foundMatch = text.match(/^Found (\d+) (?:files?|total)/m);
-      if (foundMatch) return parseInt(foundMatch[1], 10);
-      if (/No files found|No matches/i.test(text)) return 0;
-    }
-  }
-
-  // String response (unlikely but defensive)
-  if (typeof response === "string") {
-    const m = response.match(/^Found (\d+) (?:files?|total)/m);
-    if (m) return parseInt(m[1], 10);
-    if (/No files found|No matches/i.test(response)) return 0;
-  }
-
-  return undefined;
 }

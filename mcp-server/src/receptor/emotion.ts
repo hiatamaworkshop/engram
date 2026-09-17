@@ -106,8 +106,12 @@ export function computeImpulse(
     const result = lastEvent.result;
 
     // Compound key: "action.result" or just "action"
-    if (result === "failure" || result === "empty") {
+    if (result === "failure") {
       applyImpulse(vec, EVENT_IMPULSE[`${action}.failure`] ?? EVENT_IMPULSE[`${action}.empty`]);
+    } else if (result === "empty") {
+      // No fallback to .failure: shell_exec.empty (grep no match) must not
+      // read as frustration.
+      applyImpulse(vec, EVENT_IMPULSE[`${action}.empty`]);
     } else if (result === "success") {
       applyImpulse(vec, EVENT_IMPULSE[`${action}.success`]);
     }
