@@ -47,26 +47,49 @@ process.stdin.on('end', async () => {
 
     // Extract latest commit info
     const msg = execSync('git log -1 --pretty=format:%s', { encoding: 'utf8' }).trim();
-    let files = '', stats = '';
+
+    // The seed is the commit's rationale, not its diff. A subject-only commit
+    // says nothing git log does not already say, and those dumps died unseen
+    // in digest-log — so no body, no push.
+    const why = execSync('git log -1 --pretty=format:%b', { encoding: 'utf8' })
+      .split('\\n')
+      .filter(l => !/^[A-Za-z-]+: .*<[^>]*>\\s*$/.test(l))  // Co-Authored-By etc.
+      .join('\\n')
+      .trim();
+    if (!why) process.exit(0);
+
+    // English-only summaries: this path bypasses hot-memo's non-english flag,
+    // and a ja summary can merge into the claim it contradicts (0.9221 > 0.92).
+    if (/[　-ヿ㐀-䶿一-鿿豈-﫿가-힯＀-￯]/.test(msg)) {
+      process.exit(0);
+    }
+
+    let files = [];
     try {
-      files = execSync('git diff --name-only HEAD~1 HEAD', { encoding: 'utf8' }).trim();
-      stats = execSync('git diff --stat HEAD~1 HEAD', { encoding: 'utf8' }).trim();
+      files = execSync('git diff --name-only HEAD~1 HEAD', { encoding: 'utf8' }).trim().split('\\n');
     } catch {
       // Initial commit — no HEAD~1
       try {
-        files = execSync('git show --name-only --pretty=format: HEAD', { encoding: 'utf8' }).trim();
+        files = execSync('git show --name-only --pretty=format: HEAD', { encoding: 'utf8' }).trim().split('\\n');
       } catch { /* give up on file list */ }
     }
+    files = files.filter(Boolean);
 
-    const summary = 'git commit: ' + msg.slice(0, 130);
-    const content = files
-      ? 'Changed files:\\n' + files + (stats ? '\\n\\nDiff stats:\\n' + stats : '')
-      : '';
+    // Layer 2 tags: top-level areas the commit touched
+    const areas = [...new Set(files
+      .filter(f => f.includes('/'))
+      .map(f => f.split('/')[0].replace(/^\\./, '').toLowerCase())
+      .filter(Boolean))].slice(0, 3);
+
+    const MAX_FILES = 15;
+    const fileList = files.slice(0, MAX_FILES).join('\\n')
+      + (files.length > MAX_FILES ? '\\n(+' + (files.length - MAX_FILES) + ' more)' : '');
+    const content = why + (fileList ? '\\n\\nFiles:\\n' + fileList : '');
 
     const body = {
       projectId,
       trigger: 'git-commit',
-      capsuleSeeds: [{ summary, tags: ['git-commit'], content }]
+      capsuleSeeds: [{ summary: msg.slice(0, 150), tags: ['why', 'git-commit', ...areas], content }]
     };
     if (userId && userId !== 'default') body.userId = userId;
 
